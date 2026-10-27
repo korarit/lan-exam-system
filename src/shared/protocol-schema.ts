@@ -1,0 +1,202 @@
+import { z } from 'zod'
+
+/* ============================================================
+ * ข้อความเครือข่าย (over TLS 1.3, Length-prefixed framing)
+ * ============================================================ */
+
+export const PROTOCOL_VERSION = 1
+
+export const NetMsgType = {
+  clientHello: 'CLIENT_HELLO',
+  serverProof: 'SERVER_PROOF',
+  joinRequest: 'JOIN_REQUEST',
+  joinAccepted: 'JOIN_ACCEPTED',
+  joinRejected: 'JOIN_REJECTED',
+  heartbeatPing: 'HEARTBEAT_PING',
+  heartbeatPong: 'HEARTBEAT_PONG',
+  resumeRequest: 'RESUME_REQUEST',
+  roomClosed: 'ROOM_CLOSED',
+  error: 'ERROR'
+} as const
+
+export type NetMsgTypeValue = (typeof NetMsgType)[keyof typeof NetMsgType]
+
+/** ตรวจว่าเป็น base64 ที่ถอดออกมาได้ N bytes (ทำงานได้ทั้งฝั่ง Node และ browser) */
+function base64OfLength(bytes: number) {
+  const regex = /^[A-Za-z0-9+/]+={0,2}$/
+  const byteLength = (s: string): number => {
+    const padding = s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0
+    return Math.floor((s.length * 3) / 4) - padding
+  }
+  return z
+    .string()
+    .regex(regex, { message: 'must be standard base64' })
+    .refine((s) => byteLength(s) === bytes, { message: `must decode to ${bytes} bytes` })
+}
+
+const nonceSchema = base64OfLength(32)
+const hmacSchema = base64OfLength(32)
+const sessionKeySchema = base64OfLength(32)
+
+/* ---------- Payload schema ต่อ message type ---------- */
+
+export const ClientHelloPayloadSchema = z
+  .object({
+    protocolVersion: z.literal(PROTOCOL_VERSION),
+    clientNonce: nonceSchema
+  })
+  .strict()
+
+export const ServerProofPayloadSchema = z
+  .object({
+    serverNonce: nonceSchema,
+    /** HMAC(roomPinKey, certFingerprint + clientNonce + serverNonce) */
+    hmacProof: hmacSchema
+  })
+  .strict()
+
+export const JoinRequestPayloadSchema = z
+  .object({
+    studentId: z.string().min(1).max(40),
+    studentName: z.string().min(1).max(80),
+    /** HMAC(roomPinKey, certFingerprint + serverNonce + clientNonce + studentId) */
+    clientAuthHmac: hmacSchema
+  })
+  .strict()
+
+export const JoinRejectedReasonSchema = z.enum([
+  'bad-auth',
+  'room-closed',
+  'room-full',
+  'duplicate-id',
+  'rate-limited',
+  'unknown-message'
+])
+export type JoinRejectedReason = z.infer<typeof JoinRejectedReasonSchema>
+
+export const JoinAcceptedPayloadSchema = z
+  .object({
+    sessionToken: z.string().min(16).max(64),
+    /** คีย์ต่อ session สำหรับ HMAC ทุกข้อความถัดไป */
+    dynamicSessionKey: sessionKeySchema,
+    serverTimeMs: z.number().int(),
+    remainingExamSeconds: z.number().int().nonnegative(),
+    studentCount: z.number().int().nonnegative()
+  })
+  .strict()
+
+export const JoinRejectedPayloadSchema = z
+  .object({ reason: JoinRejectedReasonSchema })
+  .strict()
+
+export const FocusStateSchema = z.enum(['focused', 'blurred', 'fullscreen-exit'])
+export type FocusState = z.infer<typeof FocusStateSchema>
+
+export const HeartbeatPingPayloadSchema = z
+  .object({
+    focusState: FocusStateSchema,
+    currentQuestionIndex: z.number().int().nonnegative().nullable()
+  })
+  .strict()
+
+export const HeartbeatPongPayloadSchema = z
+  .object({
+    serverTimeMs: z.number().int(),
+    remainingExamSeconds: z.number().int().nonnegative()
+  })
+  .strict()
+
+export const ResumeRequestPayloadSchema = z
+  .object({ sessionToken: z.string().min(16).max(64) })
+  .strict()
+
+export const RoomClosedPayloadSchema = z.object({}).strict()
+
+export const ErrorPayloadSchema = z
+  .object({ message: z.string().max(200) })
+  .strict()
+
+/** Envelope กลางของทุกข้อความ (Length-prefixed frame บรรจุ JSON ของ envelope นี้) */
+export const NetEnvelopeSchema = z
+  .object({
+    msgId: z.uuid(),
+    seq: z.number().int().nonnegative(),
+    timestamp: z.number().int(),
+    type: z.string(),
+    payload: z.unknown(),
+    /** เติมเมื่อได้ dynamicSessionKey แล้ว */
+    hmac: hmacSchema.optional()
+  })
+  .strict()
+
+export type NetEnvelope = z.infer<typeof NetEnvelopeSchema>
+
+export const NetMessagePayloadSchemas: Record<string, z.ZodType> = {
+  [NetMsgType.clientHello]: ClientHelloPayloadSchema,
+  [NetMsgType.serverProof]: ServerProofPayloadSchema,
+  [NetMsgType.joinRequest]: JoinRequestPayloadSchema,
+  [NetMsgType.joinAccepted]: JoinAcceptedPayloadSchema,
+  [NetMsgType.joinRejected]: JoinRejectedPayloadSchema,
+  [NetMsgType.heartbeatPing]: HeartbeatPingPayloadSchema,
+  [NetMsgType.heartbeatPong]: HeartbeatPongPayloadSchema,
+  [NetMsgType.resumeRequest]: ResumeRequestPayloadSchema,
+  [NetMsgType.roomClosed]: RoomClosedPayloadSchema,
+  [NetMsgType.error]: ErrorPayloadSchema
+}
+
+/* ============================================================
+ * UDP Discovery Beacon
+ * ============================================================ */
+
+export const UdpBeaconSchema = z
+  .object({
+    magic: z.literal('ZTEXAM_V1'),
+    roomId: z.uuid(),
+    roomName: z.string().max(80),
+    hostName: z.string().max(60),
+    examMode: z.enum(['closed', 'in-app-docs', 'external-tools']),
+    tcpPort: z.number().int().min(1024).max(65535),
+    /** 16 ตัวแรกของ SHA-256 certificate fingerprint */
+    certFpShort: z.string().length(16),
+    studentCount: z.number().int().nonnegative(),
+    examStatus: z.enum(['lobby', 'in-progress', 'ended']),
+    timestamp: z.number().int()
+  })
+  .strict()
+
+export type UdpBeacon = z.infer<typeof UdpBeaconSchema>
+
+export interface DiscoveredRoom extends UdpBeacon {
+  sourceIp: string
+  lastSeenAtMs: number
+}
+
+/* ============================================================
+ * สถานะการเชื่อมต่อ (Fail-closed state machine)
+ * ============================================================ */
+
+export const StudentConnectionStateSchema = z.enum([
+  'idle',
+  'connecting',
+  'ready',
+  'frozen',
+  'reconnecting',
+  'rejected',
+  'closed'
+])
+export type StudentConnectionState = z.infer<typeof StudentConnectionStateSchema>
+
+export interface StudentConnectionStatus {
+  state: StudentConnectionState
+  reason?: string | undefined
+  sessionToken?: string | undefined
+}
+
+export interface HostStudentStatus {
+  studentId: string
+  studentName: string
+  online: boolean
+  focusState: FocusState | null
+  currentQuestionIndex: number | null
+  lastSeenAtMs: number | null
+}
