@@ -64,11 +64,33 @@ export const ScreenSessionPayloadSchema = z
   .object({
     /** คีย์ AES-256 ต่อเซสชัน (base64 32 bytes) — ห้ามเขียนลงดิสก์ */
     screenBufferKey: z.string().min(1).max(64),
-    /** ระยะห่างภาพย่อ ms (1000 ปกติ / 2000 เมื่อห้องเกิน 50 คน) */
-    thumbnailIntervalMs: z.number().int().min(250).max(10_000)
+    /** ระยะห่างภาพย่อ ms (15000 ปกติ — live ขึ้น UDP / ดูย้อนหลัง) */
+    thumbnailIntervalMs: z.number().int().min(250).max(30_000),
+    /** พอร์ต UDP ที่เครื่องแม่เปิดรับสตรีมหน้าจอ (ไม่มี = ปิดใช้งาน UDP ใช้ TCP fallback เท่านั้น) */
+    udpScreenPort: z.number().int().min(1024).max(65535).optional()
   })
   .strict()
 export type ScreenSessionPayload = z.infer<typeof ScreenSessionPayloadSchema>
+
+/** นักเรียน → เครื่องแม่: ประกาศตำแหน่ง UDP sender (channelId จับคู่ datagram บน UDP) */
+export const ScreenUdpRegisterPayloadSchema = z
+  .object({
+    /** 8 bytes สุ่มเฉพาะนักเรียนต่อเซสชัน (hex 16 ตัวอักษร) */
+    channelId: z.string().regex(/^[0-9a-f]{16}$/, 'must be 16 hex chars'),
+    udpPort: z.number().int().min(1024).max(65535),
+    protoVersion: z.literal(1)
+  })
+  .strict()
+export type ScreenUdpRegisterPayload = z.infer<typeof ScreenUdpRegisterPayloadSchema>
+
+/** เครื่องแม่ → นักเรียน: ยืนยัน (หรือปฏิเสธ) การลงทะเบียนช่องทาง UDP */
+export const ScreenUdpReadyPayloadSchema = z
+  .object({
+    ok: z.boolean(),
+    reason: z.string().max(120).optional()
+  })
+  .strict()
+export type ScreenUdpReadyPayload = z.infer<typeof ScreenUdpReadyPayloadSchema>
 
 /** เครื่องแม่ → นักเรียน: ขอดูหน้าจอสด / รายการย้อนหลัง / หยุดส่ง */
 export const ScreenInspectRequestPayloadSchema = z
@@ -84,7 +106,9 @@ export type ScreenInspectRequestPayload = z.infer<typeof ScreenInspectRequestPay
 export const FetchRingSegmentPayloadSchema = z
   .object({
     requestId: z.string().min(1).max(64),
-    segmentId: z.string().min(1).max(80)
+    segmentId: z.string().min(1).max(80),
+    /** บังคับช่องทางตอบ (เช่น re-fetch หน้า TCP หลัง UDP atom พลาด) — ค่าเริ่มต้น: UDP ก่อนถ้าพร้อม */
+    transport: z.enum(['udp', 'tcp']).optional()
   })
   .strict()
 export type FetchRingSegmentPayload = z.infer<typeof FetchRingSegmentPayloadSchema>

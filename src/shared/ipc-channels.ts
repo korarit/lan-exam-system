@@ -332,6 +332,17 @@ export interface HostScreenSegmentDataEvent {
   mimeType: string
   dataBase64: string
 }
+/** เซกเมนต์ที่สตรีมสดมาทาง UDP ระหว่างโหมดดู — meta + ข้อมูล .webm พร้อมกัน */
+export interface HostScreenLiveSegmentEvent {
+  studentId: string
+  segmentId: string
+  displayId: string
+  mimeType: string
+  dataBase64: string
+  seqNo: number
+  startTimeMs: number
+  endTimeMs: number
+}
 /** ฝั่ง renderer นักเรียน: บอกให้เริ่ม/หยุด screen worker และโหมด live */
 export interface StudentScreenSessionEvent {
   active: boolean
@@ -342,6 +353,8 @@ export interface StudentScreenInspectEvent {
   requestId: string
   mode: 'live' | 'playback' | 'stop'
   displayId?: string | undefined
+  /** ช่องทางส่งภาพสด (udp-segments = วิดีโอ 720p/30fps, jpeg-fallback = ย้อนไปภาพย่อ 5 fps ทาง TLS) */
+  transport?: 'udp-segments' | 'jpeg-fallback' | undefined
 }
 
 /* ---------- Channel maps (single source of truth for IPC surface) ---------- */
@@ -497,6 +510,7 @@ export interface IpcEventMap {
   'host:screen-thumbnail': HostScreenThumbnailEvent
   'host:screen-segments': HostScreenSegmentsEvent
   'host:screen-segment-data': HostScreenSegmentDataEvent
+  'host:screen-live-segment': HostScreenLiveSegmentEvent
 }
 
 export type IpcInvokeChannel = keyof IpcInvokeMap
@@ -861,7 +875,7 @@ export const IpcEventSchemas: {
   'screen:session': z
     .object({
       active: z.boolean(),
-      thumbnailIntervalMs: z.number().int().min(250).max(10_000).optional(),
+      thumbnailIntervalMs: z.number().int().min(250).max(30_000).optional(),
       reason: z.string().max(200).optional()
     })
     .strict(),
@@ -869,7 +883,8 @@ export const IpcEventSchemas: {
     .object({
       requestId: z.string().min(1).max(64),
       mode: z.enum(['live', 'playback', 'stop']),
-      displayId: z.string().min(1).max(40).optional()
+      displayId: z.string().min(1).max(40).optional(),
+      transport: z.enum(['udp-segments', 'jpeg-fallback']).optional()
     })
     .strict(),
   'host:screen-thumbnail': z
@@ -898,6 +913,18 @@ export const IpcEventSchemas: {
       displayId: z.string().min(1).max(40),
       mimeType: z.string().max(60),
       dataBase64: z.string().max(4_200_000)
+    })
+    .strict(),
+  'host:screen-live-segment': z
+    .object({
+      studentId: z.string().min(1).max(40),
+      segmentId: z.string().min(1).max(80),
+      displayId: z.string().min(1).max(40),
+      mimeType: z.string().max(60),
+      dataBase64: z.string().max(6_000_000),
+      seqNo: z.number().int().nonnegative(),
+      startTimeMs: z.number().int().nonnegative(),
+      endTimeMs: z.number().int().nonnegative()
     })
     .strict()
 }

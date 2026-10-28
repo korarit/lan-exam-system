@@ -23,7 +23,9 @@ import {
   ScreenInspectRequestPayloadSchema,
   FetchRingSegmentPayloadSchema,
   PinRingSegmentsPayloadSchema,
-  RingSegmentListPayloadSchema
+  RingSegmentListPayloadSchema,
+  ScreenUdpRegisterPayloadSchema,
+  ScreenUdpReadyPayloadSchema
 } from './screen-protocol'
 export type {
   RingSegmentMeta,
@@ -71,7 +73,10 @@ export const NetMsgType = {
   screenInspectRequest: 'SCREEN_INSPECT_REQUEST',
   ringSegmentList: 'RING_SEGMENT_LIST',
   fetchRingSegment: 'FETCH_RING_SEGMENT',
-  pinRingSegments: 'PIN_RING_SEGMENTS'
+  pinRingSegments: 'PIN_RING_SEGMENTS',
+  /* ---------- Screen Monitoring (Phase 3c — UDP transport) ---------- */
+  screenUdpRegister: 'SCREEN_UDP_REGISTER',
+  screenUdpReady: 'SCREEN_UDP_READY'
 } as const
 
 export type NetMsgTypeValue = (typeof NetMsgType)[keyof typeof NetMsgType]
@@ -246,7 +251,9 @@ export const NetMessagePayloadSchemas: Record<string, z.ZodType> = {
   [NetMsgType.screenInspectRequest]: ScreenInspectRequestPayloadSchema,
   [NetMsgType.ringSegmentList]: RingSegmentListPayloadSchema,
   [NetMsgType.fetchRingSegment]: FetchRingSegmentPayloadSchema,
-  [NetMsgType.pinRingSegments]: PinRingSegmentsPayloadSchema
+  [NetMsgType.pinRingSegments]: PinRingSegmentsPayloadSchema,
+  [NetMsgType.screenUdpRegister]: ScreenUdpRegisterPayloadSchema,
+  [NetMsgType.screenUdpReady]: ScreenUdpReadyPayloadSchema
 }
 
 /* ============================================================
