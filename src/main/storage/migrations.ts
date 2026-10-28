@@ -117,5 +117,22 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_recorded_domains_session
         ON recorded_domains(session_id, approved);
     `
+  },
+  {
+    /** Phase 3b: คอลัมน์เสริมของ audit_logs — hash chain แบบมี seq_no + HMAC ของเครื่องแม่ */
+    version: 4,
+    sql: `
+      ALTER TABLE audit_logs ADD COLUMN seq_no              INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE audit_logs ADD COLUMN client_timestamp_ms INTEGER;
+      ALTER TABLE audit_logs ADD COLUMN category            TEXT    NOT NULL DEFAULT '';
+      ALTER TABLE audit_logs ADD COLUMN score_delta         REAL    NOT NULL DEFAULT 0;
+      ALTER TABLE audit_logs ADD COLUMN summary_text        TEXT    NOT NULL DEFAULT '';
+      ALTER TABLE audit_logs ADD COLUMN host_hmac           TEXT    NOT NULL DEFAULT '';
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_session_seq
+        ON audit_logs(session_id, seq_no);
+      CREATE INDEX IF NOT EXISTS idx_audit_student
+        ON audit_logs(session_id, student_id, seq_no);
+    `
   }
 ]

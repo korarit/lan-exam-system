@@ -63,6 +63,14 @@ const api: ZtExamApi = {
   approveDomain: (req) => call('host:approve-domain', req),
   setDomainEnforcement: (req) => call('host:set-domain-enforcement', req),
 
+  getTriageOverview: () => call('host:get-triage-overview', undefined),
+  getStudentEvidence: (req) => call('host:get-student-evidence', req),
+  resolveTriage: (req) => call('host:resolve-triage', req),
+  sendProctorWarning: (req) => call('host:send-proctor-warning', req),
+  setStudentFreeze: (req) => call('host:set-student-freeze', req),
+  exportIncidentReport: () => call('host:export-incident-report', undefined),
+  exportAuditBundle: () => call('host:export-audit-bundle', undefined),
+
   onRoleChanged: (listener) => subscribe('app:role-changed', listener),
   onEvent: (channel, listener) => subscribe(channel, listener)
 }

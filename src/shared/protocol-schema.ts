@@ -49,7 +49,11 @@ export const NetMsgType = {
   examCompleted: 'EXAM_COMPLETED',
   /* ---------- Guard (Phase 3a) ---------- */
   guardEvent: 'GUARD_EVENT',
-  policyUpdate: 'POLICY_UPDATE'
+  policyUpdate: 'POLICY_UPDATE',
+  /* ---------- Proctor actions (Phase 3b) ---------- */
+  proctorWarning: 'PROCTOR_WARNING',
+  freezeExam: 'FREEZE_EXAM',
+  unfreezeExam: 'UNFREEZE_EXAM'
 } as const
 
 export type NetMsgTypeValue = (typeof NetMsgType)[keyof typeof NetMsgType]
@@ -161,6 +165,24 @@ export const PolicyUpdatePayloadSchema = z
   .strict()
 export type PolicyUpdatePayload = { policy: SignedDetectionPolicy }
 
+/** เครื่องแม่ → เครื่องนักเรียน: ข้อความเตือนจากผู้คุมสอบขึ้นจอ (Phase 3b) */
+export const ProctorWarningPayloadSchema = z
+  .object({
+    message: z.string().min(1).max(300),
+    sentAtMs: z.number().int().nonnegative()
+  })
+  .strict()
+export type ProctorWarningPayload = z.infer<typeof ProctorWarningPayloadSchema>
+
+/** เครื่องแม่ → เครื่องนักเรียน: สั่ง Freeze/Unfreeze เครื่อง (Phase 3b) */
+export const FreezeStatePayloadSchema = z
+  .object({
+    frozen: z.boolean(),
+    reason: z.string().max(160).optional()
+  })
+  .strict()
+export type FreezeStatePayload = z.infer<typeof FreezeStatePayloadSchema>
+
 /** Envelope กลางของทุกข้อความ (Length-prefixed frame บรรจุ JSON ของ envelope นี้) */
 export const NetEnvelopeSchema = z
   .object({
@@ -198,7 +220,10 @@ export const NetMessagePayloadSchemas: Record<string, z.ZodType> = {
   [NetMsgType.timeUp]: ExamTimeUpPayloadSchema,
   [NetMsgType.examCompleted]: ExamCompletedPayloadSchema,
   [NetMsgType.guardEvent]: GuardEventPayloadSchema,
-  [NetMsgType.policyUpdate]: PolicyUpdatePayloadSchema
+  [NetMsgType.policyUpdate]: PolicyUpdatePayloadSchema,
+  [NetMsgType.proctorWarning]: ProctorWarningPayloadSchema,
+  [NetMsgType.freezeExam]: FreezeStatePayloadSchema,
+  [NetMsgType.unfreezeExam]: FreezeStatePayloadSchema
 }
 
 /* ============================================================

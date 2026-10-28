@@ -58,6 +58,14 @@ export interface ZtExamApi {
   listRecordedDomains(): Promise<IpcInvokeMap['host:list-recorded-domains']['res']>
   approveDomain(req: IpcInvokeMap['host:approve-domain']['req']): Promise<IpcInvokeMap['host:approve-domain']['res']>
   setDomainEnforcement(req: IpcInvokeMap['host:set-domain-enforcement']['req']): Promise<IpcInvokeMap['host:set-domain-enforcement']['res']>
+  /* ---------- Audit Hash Chain & Triage (Phase 3b) ---------- */
+  getTriageOverview(): Promise<IpcInvokeMap['host:get-triage-overview']['res']>
+  getStudentEvidence(req: IpcInvokeMap['host:get-student-evidence']['req']): Promise<IpcInvokeMap['host:get-student-evidence']['res']>
+  resolveTriage(req: IpcInvokeMap['host:resolve-triage']['req']): Promise<IpcInvokeMap['host:resolve-triage']['res']>
+  sendProctorWarning(req: IpcInvokeMap['host:send-proctor-warning']['req']): Promise<IpcInvokeMap['host:send-proctor-warning']['res']>
+  setStudentFreeze(req: IpcInvokeMap['host:set-student-freeze']['req']): Promise<IpcInvokeMap['host:set-student-freeze']['res']>
+  exportIncidentReport(): Promise<IpcInvokeMap['host:export-incident-report']['res']>
+  exportAuditBundle(): Promise<IpcInvokeMap['host:export-audit-bundle']['res']>
   /* ---------- Event subscribe (คืน unsubscribe() กัน memory leak ใน React) ---------- */
   onRoleChanged(listener: (event: RoleChangedEvent) => void): Unsubscribe
   onEvent<C extends IpcEventChannel>(

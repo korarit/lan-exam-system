@@ -27,6 +27,30 @@ import {
 } from './exam-schema'
 import { DetectionEventSchema, type DetectionEvent } from './policy-schema'
 export type { DetectionEvent } from './policy-schema'
+import {
+  ProctorWarningPayloadSchema,
+  FreezeStatePayloadSchema
+} from './protocol-schema'
+import {
+  TriageOverviewEventSchema,
+  StudentEvidenceResponseSchema,
+  type TriageOverviewEvent,
+  type StudentEvidenceResponse,
+  type ResolveTriageResponse
+} from './triage'
+export type {
+  TriageLevel,
+  AlertResolution,
+  TriageAlertView,
+  StudentTriageView,
+  TriageCounts,
+  TriageOverviewEvent,
+  StudentEvidenceInfo,
+  StudentEvidenceResponse,
+  AuditEntryView,
+  ChainVerification,
+  ResolveTriageResponse
+} from './triage'
 
 /* ---------- Payload types ---------- */
 
@@ -200,6 +224,34 @@ export interface OkResponse {
   ok: boolean
 }
 
+/* ---------- Audit & Triage payloads (Phase 3b) ---------- */
+
+export interface StudentEvidenceRequest {
+  studentId: string
+}
+export interface ResolveTriageRequest {
+  studentId: string
+  resolution: 'cleared' | 'confirmed'
+  note?: string | undefined
+}
+export interface SendProctorWarningRequest {
+  studentId: string
+  message: string
+}
+export interface SetStudentFreezeRequest {
+  studentId: string
+  frozen: boolean
+}
+export interface ExportFileResponse {
+  ok: boolean
+  filePath?: string | undefined
+  reason?: string | undefined
+}
+export interface StudentFreezeStateEvent {
+  frozen: boolean
+  reason?: string | undefined
+}
+
 /* ---------- Channel maps (single source of truth for IPC surface) ---------- */
 
 /* ---------- Zod schemas สำหรับ payload ของ network channels ---------- */
@@ -285,6 +337,13 @@ export interface IpcInvokeMap {
   'host:list-recorded-domains': { req: void; res: ListRecordedDomainsResponse }
   'host:approve-domain': { req: ApproveDomainRequest; res: ApproveDomainResponse }
   'host:set-domain-enforcement': { req: SetDomainEnforcementRequest; res: OkResponse }
+  'host:get-triage-overview': { req: void; res: TriageOverviewEvent }
+  'host:get-student-evidence': { req: StudentEvidenceRequest; res: StudentEvidenceResponse }
+  'host:resolve-triage': { req: ResolveTriageRequest; res: ResolveTriageResponse }
+  'host:send-proctor-warning': { req: SendProctorWarningRequest; res: OkResponse }
+  'host:set-student-freeze': { req: SetStudentFreezeRequest; res: OkResponse }
+  'host:export-incident-report': { req: void; res: ExportFileResponse }
+  'host:export-audit-bundle': { req: void; res: ExportFileResponse }
 }
 
 /** Main -> Renderer (webContents.send) push event channels */
@@ -305,6 +364,9 @@ export interface IpcEventMap {
   'exam:tick': ExamTickEvent
   'host:guard-events': HostGuardEventsEvent
   'host:recorded-domains-updated': RecordedDomainsUpdatedEvent
+  'host:triage-updated': TriageOverviewEvent
+  'exam:proctor-warning': { message: string; sentAtMs: number }
+  'exam:freeze-state': StudentFreezeStateEvent
 }
 
 export type IpcInvokeChannel = keyof IpcInvokeMap
@@ -488,6 +550,56 @@ export const IpcInvokeSchemas: {
   'host:set-domain-enforcement': {
     request: z.object({ mode: z.enum(['warn', 'block']) }).strict(),
     response: z.object({ ok: z.boolean() }).strict()
+  },
+  'host:get-triage-overview': {
+    request: z.void(),
+    response: TriageOverviewEventSchema
+  },
+  'host:get-student-evidence': {
+    request: z.object({ studentId: z.string().min(1).max(40) }).strict(),
+    response: StudentEvidenceResponseSchema
+  },
+  'host:resolve-triage': {
+    request: z
+      .object({
+        studentId: z.string().min(1).max(40),
+        resolution: z.enum(['cleared', 'confirmed']),
+        note: z.string().max(500).optional()
+      })
+      .strict(),
+    response: z.object({ ok: z.boolean(), affectedAlerts: z.number().int().nonnegative() }).strict()
+  },
+  'host:send-proctor-warning': {
+    request: z
+      .object({ studentId: z.string().min(1).max(40), message: z.string().min(1).max(300) })
+      .strict(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'host:set-student-freeze': {
+    request: z
+      .object({ studentId: z.string().min(1).max(40), frozen: z.boolean() })
+      .strict(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'host:export-incident-report': {
+    request: z.void(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        filePath: z.string().max(1_000).optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'host:export-audit-bundle': {
+    request: z.void(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        filePath: z.string().max(1_000).optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
   }
 }
 
@@ -549,5 +661,8 @@ export const IpcEventSchemas: {
       events: z.array(DetectionEventSchema).min(1).max(20)
     })
     .strict(),
-  'host:recorded-domains-updated': RecordedDomainsUpdatedEventSchema
+  'host:recorded-domains-updated': RecordedDomainsUpdatedEventSchema,
+  'host:triage-updated': TriageOverviewEventSchema,
+  'exam:proctor-warning': ProctorWarningPayloadSchema,
+  'exam:freeze-state': FreezeStatePayloadSchema
 }
