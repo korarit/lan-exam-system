@@ -65,7 +65,7 @@ export default function StudentPanel(): React.JSX.Element {
       }
     })
     const unsubScreenInspect = window.ztExam.onEvent('screen:inspect', (event) => {
-      getScreenWorker().setLive(event.mode === 'live', event.requestId, event.displayId)
+      getScreenWorker().setLive(event.mode === 'live', event.requestId, event.displayId, event.transport)
     })
     return () => {
       unsubRooms()

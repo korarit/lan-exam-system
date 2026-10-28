@@ -2,18 +2,19 @@ import type { ScreenSourceInfo } from '@shared/ipc-channels'
 
 /* ============================================================
  * Phase 3c: ScreenWorker (renderer นักเรียน)
- * - เปิด getUserMedia ต่อทุกจอ (chromeMediaSource desktop)
- * - Thumbnail ~1 fps (320px, WebP q0.55) ส่งขึ้น main → TLS binary frame
- * - Ring Buffer: MediaRecorder หมุนทุก 10 วินาที (สลับตัวเก่า-ใหม่
- *   ไม่ให้ภาพขาดช่วง) ส่งเซกเมนต์ .webm ขึ้น main เพื่อเข้ารหัสลงดิสก์
- * - Live mode (ตอนเครื่องแม่ขอดู): 1280px, JPEG q0.7, ~5 fps
+ * - เปิด getUserMedia ต่อทุกจอ (chromeMediaSource desktop) ที่ 1280x720, 30 fps
+ * - Thumbnail ทุก thumbnailIntervalMs (ค่าเริ่มต้น 15s เมื่อใช้ transport เดิม TCP)
+ * - Recorder 2 วินาทีต่อเซกเมนต์ (1.5 Mbps, สลับตัวเก่า-ใหม่ไม่ให้ภาพขาดช่วง)
+ *   → ลง ring buffer ทาง main เสมอ + สตรีมสดผ่าน UDP ขณะผู้คุมเปิดดู (DVR-style)
+ * - Live mode jpeg-fallback: 1280px, JPEG q0.7, ~5 fps ผ่าน TLS (เฉพาะเมื่อ UDP ไม่พร้อม)
  * ============================================================ */
 
-const RING_SEGMENT_MS = 10_000
+const RING_SEGMENT_MS = 2_000
 const RING_MIME_CANDIDATES = ['video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm']
 const LIVE_INTERVAL_MS = 200
 const THUMB_WIDTH = 320
 const LIVE_WIDTH = 1280
+const RECORD_BITRATE = 1_500_000
 
 interface DisplayCapture {
   source: ScreenSourceInfo
@@ -24,6 +25,7 @@ interface DisplayCapture {
   recorderTimer: ReturnType<typeof setTimeout> | null
   thumbnailTimer: ReturnType<typeof setInterval> | null
   liveTimer: ReturnType<typeof setInterval> | null
+  /** จะส่งเซกเมนต์เพื่อสตรีมสดหรือไม่ (จอที่ผู้คุมกำลังดู) */
   liveDisplayFilter: boolean
   recorderStartedAtMs: number
 }
@@ -33,6 +35,8 @@ export class ScreenWorker {
   private active = false
   private thumbnailIntervalMs = 1000
   private liveRequestId: string | null = null
+  /** transport ของ live mode ล่าสุด ('udp-segments' = main สตรีมเซกเมนต์ทาง UDP) */
+  private liveTransport: 'udp-segments' | 'jpeg-fallback' | null = null
 
   get isActive(): boolean {
     return this.active
@@ -67,14 +71,35 @@ export class ScreenWorker {
     this.captures = []
   }
 
-  /** สลับโหมดภาพสด (SCREEN_INSPECT_REQUEST โหมด live/stop) */
-  setLive(active: boolean, requestId: string, displayId?: string): void {
+  /**
+   * สลับโหมดภาพสด (SCREEN_INSPECT_REQUEST โหมด live/stop)
+   * - transport 'udp-segments': ไม่ต้องทำอะไรเพิ่ม — recorder 2s ทำงานอยู่แล้ว
+   *   main จะสตรีมเซกเมนต์ใหม่ออกทาง UDP เอง
+   * - transport 'jpeg-fallback'/ไม่ระบุ: ส่งเฟรม JPEG โดยตรง (5 fps) ผ่าน TLS
+   */
+  setLive(
+    active: boolean,
+    requestId: string,
+    displayId?: string,
+    transport?: 'udp-segments' | 'jpeg-fallback'
+  ): void {
     this.liveRequestId = active ? requestId : null
+    const segmentMode = active && transport === 'udp-segments'
     for (const capture of this.captures) {
-      capture.liveDisplayFilter = displayId === undefined || capture.source.displayId === displayId
-      if (active && capture.liveTimer === null) {
+      if (!active) {
+        capture.liveDisplayFilter = true
+      } else {
+        capture.liveDisplayFilter = displayId === undefined || capture.source.displayId === displayId
+      }
+      // โหมด segment ไม่ใช้ JPEG interval — ปิดทิ้งถ้าเปิดค้างไว้
+      if (active && segmentMode && capture.liveTimer !== null) {
+        clearInterval(capture.liveTimer)
+        capture.liveTimer = null
+      }
+      if (active && !segmentMode && capture.liveTimer === null) {
         capture.liveTimer = setInterval(() => {
           if (!this.active || this.liveRequestId === null) return
+          if (this.liveTransport === 'udp-segments') return
           if (!capture.liveDisplayFilter) return
           void this.captureFrame(capture, LIVE_WIDTH, 'image/jpeg', 0.7, 'live')
         }, LIVE_INTERVAL_MS)
@@ -83,19 +108,20 @@ export class ScreenWorker {
         capture.liveTimer = null
       }
     }
+    this.liveTransport = active ? (transport ?? 'jpeg-fallback') : null
   }
 
   private async openDisplay(source: ScreenSourceInfo): Promise<DisplayCapture> {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
-        // Electron: จับ desktop ด้วย source id จาก main process
+        // Electron: จับ desktop ด้วย source id จาก main process (720p / 30 fps สำหรับ live stream)
         mandatory: {
           chromeMediaSource: 'desktop',
           chromeMediaSourceId: source.sourceId,
-          maxWidth: 1920,
-          maxHeight: 1080,
-          maxFrameRate: 15
+          maxWidth: 1280,
+          maxHeight: 720,
+          maxFrameRate: 30
         }
       } as unknown as MediaTrackConstraints
     })
@@ -117,10 +143,10 @@ export class ScreenWorker {
       recorderStartedAtMs: Date.now()
     }
 
-    // 1) Ring buffer recorder: หมุนทุก 10 วินาที (double-buffered ไม่ให้ภาพขาดช่วง)
+    // 1) Recorder 2 วินาที: ring buffer + (ขณะถูกดู) สตรีมสดผ่าน UDP — double-buffered ไม่ให้ภาพขาดช่วง
     this.rotateRecorder(capture)
 
-    // 2) Thumbnail ~1 fps
+    // 2) Thumbnail ตามช่วงที่เครื่องแม่กำหนด (ผ่าน TLS)
     capture.thumbnailTimer = setInterval(() => {
       if (!this.active) return
       void this.captureFrame(capture, THUMB_WIDTH, 'image/webp', 0.55, 'thumbnail')
@@ -129,7 +155,7 @@ export class ScreenWorker {
     return capture
   }
 
-  /** สลับ recorder: เริ่มตัวใหม่ก่อน แล้วหยุดตัวเก่า (แต่ละไฟล์เล่นได้ในตัว) */
+  /** สลับ recorder: เริ่มตัวใหม่ก่อน แล้วหยุดตัวเก่า (แต่ละไฟล์เล่นได้ในตัว) — เซกเมนต์ละ 2 วินาที */
   private rotateRecorder(capture: DisplayCapture): void {
     if (!this.active) return
     const mimeType = RING_MIME_CANDIDATES.find((candidate) => MediaRecorder.isTypeSupported(candidate))
@@ -140,7 +166,7 @@ export class ScreenWorker {
     const startedAtMs = Date.now()
     const recorder = new MediaRecorder(capture.stream, {
       mimeType,
-      videoBitsPerSecond: 400_000
+      videoBitsPerSecond: RECORD_BITRATE
     })
     const chunks: Blob[] = []
     recorder.ondataavailable = (event) => {

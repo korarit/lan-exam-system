@@ -27,11 +27,14 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
   const ingestThumbnail = useHostScreenStore((s) => s.ingestThumbnail)
   const ingestSegments = useHostScreenStore((s) => s.ingestSegments)
   const ingestSegmentData = useHostScreenStore((s) => s.ingestSegmentData)
+  const ingestLiveSegment = useHostScreenStore((s) => s.ingestLiveSegment)
   const overview = useTriageStore((s) => s.overview)
   const [mode, setMode] = useState<'live' | 'playback'>('playback')
   const [selectedDisplayId, setSelectedDisplayId] = useState<string | null>(null)
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null)
   const [fetching, setFetching] = useState(false)
+  /** โหมดสด: ติดตามเซกเมนต์ใหม่อัตโนมัติ (ปิดเมื่อผู้คุมลาก timeline ไปย้อนหลัง) */
+  const [followLive, setFollowLive] = useState(true)
 
   useEffect(() => {
     const unsubThumb = window.ztExam.onEvent('host:screen-thumbnail', (event) => {
@@ -46,12 +49,17 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
         setFetching(false)
       }
     })
+    // Phase 3c (UDP): เซกเมนต์สด 720p/30fps สตรีมมาทาง UDP — DVR timeline เล่นได้ทันที
+    const unsubLive = window.ztExam.onEvent('host:screen-live-segment', (event) => {
+      if (event.studentId === props.studentId) ingestLiveSegment(event)
+    })
     return () => {
       unsubThumb()
       unsubSegments()
       unsubData()
+      unsubLive()
     }
-  }, [props.studentId, ingestThumbnail, ingestSegments, ingestSegmentData])
+  }, [props.studentId, ingestThumbnail, ingestSegments, ingestSegmentData, ingestLiveSegment])
 
   // เปิด modal = ขอรายการวิดีโอย้อนหลัง 5 นาทีทันที (ลง Audit ให้เองที่เครื่องแม่)
   useEffect(() => {
@@ -104,6 +112,42 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
     }
   }, [selectedSegmentId, segmentData])
 
+  /* ---------- DVR (โหมดสด): ติดตามเซกเมนต์ใหม่อัตโนมัติ + เลื่อนย้อนได้เหมือน YouTube ---------- */
+
+  const newestSegment = segments.length > 0 ? segments[segments.length - 1] : null
+
+  // โหมดสด + followLive: ค้างอยู่ตัวใหม่ล่าสุดเมื่อข้อมูลมาถึง (ผู้คุมลาก timeline → follow จะปิดเอง)
+  useEffect(() => {
+    if (mode !== 'live' || !followLive) return
+    if (!newestSegment) return
+    if (!segmentData[newestSegment.segmentId]) return
+    setSelectedSegmentId(newestSegment.segmentId)
+  }, [mode, followLive, newestSegment, segmentData])
+
+  /** เลือกเซกเมนต์เอง = ปิดการติดตามสด (ดูย้อนหลัง) */
+  function selectSegment(segment: RingSegmentMeta): void {
+    setFollowLive(false)
+    setSelectedSegmentId(segment.segmentId)
+  }
+
+  /** เซกเมนต์จบ → วิ่งไปตัวถัดไป (ต่อเนื่องเหมือน YouTube) */
+  function advanceToNext(): void {
+    if (segments.length === 0) return
+    const index = segments.findIndex((segment) => segment.segmentId === selectedSegmentId)
+    const next = segments[index + 1]
+    if (next) {
+      setSelectedSegmentId(next.segmentId)
+      return
+    }
+    // ถึงตัวล่าสุดแล้ว — กลับไปติดตามสดต่อเมื่ออยู่โหมด live
+    if (mode === 'live') setFollowLive(true)
+  }
+
+  /** กลับเข้าสู่ไหลสดล่าสุด (ตามจอใหม่ล่าสุดทันที) */
+  function followLatestLive(): void {
+    setFollowLive(true)
+  }
+
   const nowMs = Math.max(props.nowMs, Date.now())
   const historyStartMs = nowMs - HISTORY_WINDOW_MS
   const unpinnedOldest = segments.find((s) => s.pinnedReason === undefined)
@@ -124,13 +168,15 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
     if (next === mode) return
     setMode(next)
     setSelectedSegmentId(null)
+    setFollowLive(true)
     await window.ztExam
       .screenInspect({ studentId: props.studentId, mode: next === 'live' ? 'live' : 'playback' })
       .catch(() => undefined)
   }
 
   function fetchSegment(segment: RingSegmentMeta): void {
-    setSelectedSegmentId(segment.segmentId)
+    // คลิก Timeline = ผู้คุมเลือกดูเอง → ปิดการติดตามสดชั่วคราว
+    selectSegment(segment)
     if (segmentData[segment.segmentId]) return
     setFetching(true)
     void window.ztExam
@@ -168,7 +214,7 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
               mode === 'live' ? 'bg-red-700 text-white' : 'border border-slate-700 text-slate-300 hover:bg-slate-800'
             }`}
           >
-            <Radio size={13} /> ดูสด
+            <Radio size={13} /> ดูสด (720p · UDP)
           </button>
           <button
             type="button"
@@ -179,6 +225,15 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
           >
             <History size={13} /> ย้อนหลัง 5 นาที
           </button>
+          {mode === 'live' && !followLive && (
+            <button
+              type="button"
+              onClick={followLatestLive}
+              className="inline-flex items-center gap-1 rounded-lg bg-red-900/60 px-3 py-1.5 text-xs font-medium text-red-200 transition hover:bg-red-800"
+            >
+              <Radio size={13} /> กลับไปดูสด
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -219,15 +274,17 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
 
         {/* Viewer */}
         <div className="flex min-h-0 flex-1 flex-col gap-3 p-5">
-          {videoUrl && mode === 'playback' ? (
+          {videoUrl ? (
             <video
               key={videoUrl}
               src={videoUrl}
               controls
               autoPlay
+              onEnded={advanceToNext}
               className="max-h-[46vh] w-full rounded-xl border border-slate-800 bg-black"
             />
-          ) : liveFrame ? (
+          ) : liveFrame && mode === 'live' && liveFrame.mode === 'live' ? (
+            /* Fallback ภาพนิ่ง (JPEG ผ่าน TLS) เมื่อ UDP transport ยังไม่พร้อม */
             <img
               src={`data:${liveFrame.mimeType};base64,${liveFrame.imageBase64}`}
               alt="student screen"
@@ -240,9 +297,9 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
                   <Loader2 size={16} className="animate-spin" /> กำลังดึงเซกเมนต์จากเครื่องนักเรียน…
                 </span>
               ) : mode === 'live' ? (
-                'กำลังรอภาพสดจากเครื่องนักเรียน… (5-10 fps)'
+                'กำลังรอวิดีโอสด 720p/30fps ผ่านช่องทาง UDP…'
               ) : (
-                'ยังไม่มีภาพ — รอเครื่องนักเรียนส่งภาพย่อ / รายการวิดีโอย้อนหลัง'
+                'ยังไม่มีภาพ — คลิกเซกเมนต์บน Timeline ด้านล่าง'
               )}
             </div>
           )}
