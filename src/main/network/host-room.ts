@@ -30,6 +30,7 @@ export interface HostRoomInfo {
   tcpPort: number
   certFingerprint: string
   certFpShort: string
+  mode: 'closed' | 'in-app-docs' | 'external-tools'
 }
 
 export interface HostRoomManagerOptions {
@@ -65,6 +66,11 @@ export class HostRoomManager extends EventEmitter {
   /** โหมดการสอบของห้องปัจจุบัน (null = ยังไม่เปิดห้อง) */
   get examMode(): 'closed' | 'in-app-docs' | 'external-tools' | null {
     return this.beacon?.examMode ?? null
+  }
+
+  /** สถานะการสอบของห้อง (lobby / in-progress / ended) — Doc Preview ใช้กันเปิดตอนสอบรัน */
+  get examStatus(): UdpBeacon['examStatus'] | null {
+    return this.beacon?.examStatus ?? null
   }
 
   get students(): HostStudentStatus[] {
@@ -121,7 +127,8 @@ export class HostRoomManager extends EventEmitter {
       roomPin,
       tcpPort,
       certFingerprint: cert.certFingerprint,
-      certFpShort: cert.certFpShort
+      certFpShort: cert.certFpShort,
+      mode: config.mode
     }
 
     const beacon: UdpBeacon = {

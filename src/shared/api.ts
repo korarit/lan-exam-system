@@ -52,6 +52,12 @@ export interface ZtExamApi {
   /* ---------- Guard (Phase 3a) ---------- */
   markInternalCopy(req: IpcInvokeMap['student:internal-copy']['req']): Promise<StudentSubmitResponse>
   sendTypingMetrics(req: IpcInvokeMap['student:typing-metrics']['req']): Promise<StudentSubmitResponse>
+  /* ---------- Doc Preview & Domain Allowlist (Phase 3a-plus) ---------- */
+  openDocPreview(req: IpcInvokeMap['host:open-doc-preview']['req']): Promise<IpcInvokeMap['host:open-doc-preview']['res']>
+  closeDocPreview(): Promise<IpcInvokeMap['host:close-doc-preview']['res']>
+  listRecordedDomains(): Promise<IpcInvokeMap['host:list-recorded-domains']['res']>
+  approveDomain(req: IpcInvokeMap['host:approve-domain']['req']): Promise<IpcInvokeMap['host:approve-domain']['res']>
+  setDomainEnforcement(req: IpcInvokeMap['host:set-domain-enforcement']['req']): Promise<IpcInvokeMap['host:set-domain-enforcement']['res']>
   /* ---------- Event subscribe (คืน unsubscribe() กัน memory leak ใน React) ---------- */
   onRoleChanged(listener: (event: RoleChangedEvent) => void): Unsubscribe
   onEvent<C extends IpcEventChannel>(

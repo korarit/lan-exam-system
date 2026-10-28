@@ -13,10 +13,16 @@ import {
   Play,
   StopCircle,
   ClipboardList,
-  GraduationCap
+  GraduationCap,
+  Globe,
+  ExternalLink,
+  CheckCircle2,
+  CircleDashed,
+  ShieldCheck
 } from 'lucide-react'
 import type { ExamMode, EnforcementMode } from '@shared/types/exam'
-import type { DetectionEvent, HostGuardEventsEvent } from '@shared/ipc-channels'
+import type { DetectionEvent, HostGuardEventsEvent, RecordedDomainItem } from '@shared/ipc-channels'
+import { DEFAULT_FORBIDDEN_DOMAINS } from '@shared/policy-schema'
 import { useHostNetworkStore } from '../store/network-store'
 import { useAppStore } from '../store/app-store'
 import type { HostExamSummariesEvent } from '@shared/ipc-channels'
@@ -25,6 +31,12 @@ const MODE_LABELS: Record<ExamMode, string> = {
   closed: 'Closed — ปิดเครือข่าย',
   'in-app-docs': 'In-App Docs — เอกสารในแอป',
   'external-tools': 'External Tools — อนุญาต VS Code'
+}
+
+/** ป้ายเตือนเชิงข้อมูล: รายการที่ชนโดเมน AI ที่รู้จัก (ระบบไม่ขวาง — ให้ครูสังเกตเอง) */
+function isKnownForbiddenDomain(domain: string): boolean {
+  const host = domain.toLowerCase()
+  return DEFAULT_FORBIDDEN_DOMAINS.some((f) => host === f || host.endsWith(`.${f}`))
 }
 
 export default function HostPanel(): React.JSX.Element {
@@ -48,6 +60,15 @@ export default function HostPanel(): React.JSX.Element {
   /* ---------- Guard events (Phase 3a) ---------- */
   const [guardEvents, setGuardEvents] = useState<Array<HostGuardEventsEvent>>([])
   const studentNames = new Map(students.map((s) => [s.studentId, s.studentName]))
+
+  /* ---------- Doc Preview & Domain Allowlist (Phase 3a-plus) ---------- */
+  const [docUrl, setDocUrl] = useState('')
+  const [recordedDomains, setRecordedDomains] = useState<RecordedDomainItem[]>([])
+  const [domainEnforcement, setDomainEnforcement] = useState<'warn' | 'block'>('warn')
+  const [openingDoc, setOpeningDoc] = useState(false)
+  const isDocsMode = room?.mode === 'in-app-docs'
+  const isLobby = examState === 'idle'
+  const pendingDomains = recordedDomains.filter((r) => !r.approved)
 
   useEffect(() => {
     // กู้สถานะห้องเมื่อกลับมาที่หน้านี้ (เช่น reload)
@@ -82,12 +103,20 @@ export default function HostPanel(): React.JSX.Element {
         })
       }
     })
+    // โดเมนที่ record จาก Doc Preview (Phase 3a-plus) — push หลัง flush ทุกรอบ
+    const unsubDomains = window.ztExam.onEvent('host:recorded-domains-updated', (event) =>
+      setRecordedDomains(event.records)
+    )
+    if (isDocsMode) {
+      void window.ztExam.listRecordedDomains().then((res) => setRecordedDomains(res.records))
+    }
     return () => {
       unsub()
       unsubState()
       unsubSummaries()
       unsubCompleted()
       unsubGuard()
+      unsubDomains()
     }
   }, [setRoom, notify])
 
@@ -131,11 +160,57 @@ export default function HostPanel(): React.JSX.Element {
     }
   }
 
+  /* ---------- Doc Preview & Domain Allowlist (Phase 3a-plus) ---------- */
+
+  async function openDocPreview(): Promise<void> {
+    if (!docUrl.trim()) return
+    setOpeningDoc(true)
+    try {
+      const res = await window.ztExam.openDocPreview({ url: docUrl.trim() })
+      if (!res.ok) {
+        notify({
+          severity: 'warning',
+          message:
+            res.reason === 'EXAM_NOT_IN_LOBBY'
+              ? 'เปิดเอกสารได้เฉพาะก่อนเริ่มสอบ (Lobby)'
+              : res.reason === 'MODE_NOT_IN_APP_DOCS'
+                ? 'การเตรียมเอกสารใช้กับโหมด In-App Docs เท่านั้น'
+                : 'URL ไม่ถูกต้อง (ใช้ได้เฉพาะ http/https)'
+        })
+      }
+    } catch {
+      notify({ severity: 'critical', message: 'เปิดเอกสารไม่สำเร็จ' })
+    } finally {
+      setOpeningDoc(false)
+    }
+  }
+
+  async function approveDomain(domain: string, approved: boolean): Promise<void> {
+    const res = await window.ztExam.approveDomain({ domain, approved })
+    if (!res.ok) {
+      notify({ severity: 'warning', message: 'อัปเดตรายการโดเมนไม่สำเร็จ' })
+    }
+  }
+
+  async function approveAllDomains(): Promise<void> {
+    const res = await window.ztExam.approveDomain({ domain: '*', approved: true })
+    if (res.ok) {
+      notify({ severity: 'info', message: `อนุมัติทั้งหมด (${res.updatedCount ?? 0} รายการ)` })
+    }
+  }
+
+  async function changeDomainEnforcement(mode: 'warn' | 'block'): Promise<void> {
+    setDomainEnforcement(mode)
+    await window.ztExam.setDomainEnforcement({ mode })
+  }
+
   async function createRoom(): Promise<void> {
     setCreating(true)
     try {
       const info = await window.ztExam.createRoom({ roomName, mode, enforcement })
       setRoom(info)
+      // ค่าเริ่มต้นของการบังคับโดเมนสืบจาก enforcement ของห้อง (ครูตั้งทับได้ในการ์ด)
+      setDomainEnforcement(enforcement === 'block-and-report' ? 'block' : 'warn')
       notify({ severity: 'info', message: `เปิดห้อง "${info.roomName}" สำเร็จ` })
     } catch (err) {
       notify({
@@ -371,6 +446,124 @@ export default function HostPanel(): React.JSX.Element {
           </div>
         )}
       </div>
+
+      {/* ---------- เตรียมเอกสาร & โดเมนที่อนุญาต (Phase 3a-plus — Mode 2) ---------- */}
+      {isDocsMode && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+          <div className="mb-4 flex items-center gap-2">
+            <Globe size={18} className="text-indigo-400" />
+            <h3 className="font-semibold">เตรียมเอกสาร &amp; โดเมนที่อนุญาต</h3>
+            {pendingDomains.length > 0 && (
+              <span className="ml-auto rounded-full border border-amber-800/60 bg-amber-950/40 px-3 py-1 text-xs text-amber-300">
+                รอตัดสิน {pendingDomains.length} รายการ
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[240px]">
+              <ExternalLink size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input
+                value={docUrl}
+                onChange={(e) => setDocUrl(e.target.value)}
+                placeholder="https://docs.example.com/exam-material"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+            <button
+              type="button"
+              disabled={!isLobby || openingDoc || docUrl.trim().length === 0}
+              onClick={() => void openDocPreview()}
+              className="inline-flex items-center gap-2 rounded-xl border border-indigo-700/60 px-4 py-2 text-sm text-indigo-200 transition hover:bg-indigo-950/60 disabled:opacity-40"
+            >
+              {openingDoc ? 'กำลังเปิด…' : 'เปิดตรวจเอกสาร'}
+            </button>
+          </div>
+          {!isLobby && (
+            <p className="mt-2 text-xs text-slate-500">
+              การเปิดเอกสารทำได้เฉพาะช่วงเตรียมห้อง (ก่อนเริ่มสอบ)
+            </p>
+          )}
+
+          <label className="mt-4 mb-1.5 block text-xs text-slate-500" htmlFor="domain-enforcement">
+            เมื่อนักเรียนใช้โดเมนนอกเหนือรายการ
+          </label>
+          <select
+            id="domain-enforcement"
+            value={domainEnforcement}
+            onChange={(e) => void changeDomainEnforcement(e.target.value as 'warn' | 'block')}
+            className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none sm:max-w-xs"
+          >
+            <option value="warn">เตือน (แจ้งครู — ปล่อยผ่าน)</option>
+            <option value="block">บล็อก (ตัดทันที + แจ้งครู)</option>
+          </select>
+
+          {recordedDomains.length > 0 && (
+            <div className="mt-4">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs text-slate-500">
+                  โดเมนที่เว็บเอกสารเรียกใช้จริง ({recordedDomains.length} รายการ)
+                </span>
+                <button
+                  type="button"
+                  disabled={pendingDomains.length === 0}
+                  onClick={() => void approveAllDomains()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-800/60 px-3 py-1.5 text-xs text-emerald-300 transition hover:bg-emerald-950/60 disabled:opacity-40"
+                >
+                  <ShieldCheck size={13} /> อนุญาตทั้งหมด
+                </button>
+              </div>
+              <ul className="max-h-64 space-y-1.5 overflow-y-auto">
+                {recordedDomains.map((r) => (
+                  <li
+                    key={`${r.domain}|${r.topDomain}|${r.source}`}
+                    className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm"
+                  >
+                    {r.approved ? (
+                      <CheckCircle2 size={14} className="shrink-0 text-emerald-400" />
+                    ) : (
+                      <CircleDashed size={14} className="shrink-0 text-amber-400" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <code className="truncate font-mono text-xs text-slate-200">{r.domain}</code>
+                        {isKnownForbiddenDomain(r.domain) && (
+                          <span className="rounded bg-red-950/60 px-1.5 py-0.5 text-[10px] text-red-300">
+                            ชนโดเมน AI ที่รู้จัก — โปรดตรวจเอง
+                          </span>
+                        )}
+                        {r.source === 'top-url' && (
+                          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">โดเมนหลัก</span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                        เรียกจาก {r.topDomain} · {r.hits} ครั้ง
+                      </div>
+                    </div>
+                    {r.approved ? (
+                      <button
+                        type="button"
+                        onClick={() => void approveDomain(r.domain, false)}
+                        className="shrink-0 rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-400 transition hover:bg-slate-800"
+                      >
+                        ยกเลิก
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void approveDomain(r.domain, true)}
+                        className="shrink-0 rounded-lg border border-emerald-800/60 px-2.5 py-1 text-xs text-emerald-300 transition hover:bg-emerald-950/60"
+                      >
+                        อนุญาต
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ---------- Guard events (Phase 3a): ฟีดเหตุการณ์ตรวจจับแบบ real-time ---------- */}
       {guardEvents.length > 0 && (

@@ -57,6 +57,12 @@ const api: ZtExamApi = {
   markInternalCopy: (req) => call('student:internal-copy', req),
   sendTypingMetrics: (req) => call('student:typing-metrics', req),
 
+  openDocPreview: (req) => call('host:open-doc-preview', req),
+  closeDocPreview: () => call('host:close-doc-preview', undefined),
+  listRecordedDomains: () => call('host:list-recorded-domains', undefined),
+  approveDomain: (req) => call('host:approve-domain', req),
+  setDomainEnforcement: (req) => call('host:set-domain-enforcement', req),
+
   onRoleChanged: (listener) => subscribe('app:role-changed', listener),
   onEvent: (channel, listener) => subscribe(channel, listener)
 }

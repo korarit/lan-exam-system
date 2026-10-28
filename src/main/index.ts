@@ -10,6 +10,9 @@ import {
   createStudentExamEventForwarder,
   makeKioskHooks
 } from './ipc/exam-handlers'
+import { registerDomainHandlers } from './ipc/domain-handlers'
+import { DomainAllowlistService } from './host/domain-allowlist'
+import { DocPreviewController } from './host/doc-preview'
 import { createMainWindow, enforceKioskInputBlocking } from './window'
 import { HostDatabase, getDefaultDatabasePath } from './storage/db'
 import { HostRoomManager } from './network/host-room'
@@ -38,6 +41,8 @@ let mainWindow: BrowserWindow | null = null
 let hostDb: HostDatabase | null = null
 let roomManager: HostRoomManager | null = null
 let sessionManager: CoreSessionManager | null = null
+let domainAllowlist: DomainAllowlistService | null = null
+let docPreview: DocPreviewController | null = null
 const discovery = new RoomDiscoveryListener()
 let studentClient: ExamTlsClient | null = null
 let guardEngine: GuardEngine | null = null
@@ -61,9 +66,29 @@ function ensureSessionManager(): CoreSessionManager {
       // พฤติกรรมน่าสงสัยของ exam (จุด cursor ผิด / พยายามดูข้อล่วงหน้า)
       // Phase 3b จะเก็บลง audit hash chain — ตอนนี้แสดง log ของเครื่องแม่ก่อน
       console.warn(`[exam-anomaly] ${source ?? '?'}: ${reason}`)
-    }
+    },
+    // Phase 3a-plus: โดเมนที่ครูอนุมัติ + พฤติกรรมเตือน/บล็อก จากการ์ดเตรียมเอกสาร
+    getAllowedDomains: () => {
+      const roomId = roomManager?.room?.roomId
+      return roomId ? ensureDomainAllowlist().listApproved(roomId) : []
+    },
+    getDomainEnforcement: () => ensureDomainAllowlist().resolveDomainEnforcement(roomManager?.room?.roomId ?? null)
   })
   return sessionManager
+}
+
+function ensureDomainAllowlist(): DomainAllowlistService {
+  domainAllowlist ??= new DomainAllowlistService(ensureHostDatabase())
+  return domainAllowlist
+}
+
+function ensureDocPreview(): DocPreviewController {
+  docPreview ??= new DocPreviewController({
+    getRoom: () => roomManager,
+    allowlist: ensureDomainAllowlist(),
+    sendHostEvent: sendEventToWindow
+  })
+  return docPreview
 }
 
 function ensureRoomManager(): HostRoomManager {
@@ -71,7 +96,12 @@ function ensureRoomManager(): HostRoomManager {
     db: ensureHostDatabase(),
     maxStudents: 60,
     onStudentsChanged: (students) => sendEventToWindow('host:students-updated', { students }),
-    onRoomClosed: () => sendEventToWindow('host:students-updated', { students: [] }),
+    onRoomClosed: () => {
+      sendEventToWindow('host:students-updated', { students: [] })
+      // Phase 3a-plus: เก็บกวาดของค้างของห้องเก่า (preview + ค่าทับ enforcement)
+      docPreview?.close()
+      ensureDomainAllowlist().setEnforcementOverride(null)
+    },
     onStudentEstablished: (studentId) => {
       // deferred: session manager ยังไม่ถูกสร้าง ณ เวลา create room ก็ยังได้ (late-binding)
       studentEstablishedHandler?.(studentId)
@@ -159,6 +189,12 @@ void app.whenReady().then(() => {
     getStudentClient: ensureStudentClient,
     getGuardEngine: () => (state.role === 'student' ? ensureGuardEngine() : null),
     ...makeKioskHooks(() => mainWindow, runtime.windowedKiosk)
+  })
+  registerDomainHandlers(router, state, {
+    getSessionManager: ensureSessionManager,
+    getDocPreview: ensureDocPreview,
+    getAllowlist: ensureDomainAllowlist,
+    getSessionId: () => roomManager?.room?.roomId ?? null
   })
   studentEstablishedHandler = (studentId) => {
     try {

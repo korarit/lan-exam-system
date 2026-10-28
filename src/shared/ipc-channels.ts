@@ -62,6 +62,7 @@ export interface HostRoomInfo {
   tcpPort: number
   certFingerprint: string
   certFpShort: string
+  mode: 'closed' | 'in-app-docs' | 'external-tools'
 }
 export interface GetRoomResponse {
   room: HostRoomInfo | null
@@ -161,6 +162,44 @@ export interface HostGuardEventsEvent {
   events: DetectionEvent[]
 }
 
+/* ---------- Doc Preview & Domain Allowlist payloads (Phase 3a-plus) ---------- */
+
+/** โดเมนที่ระบบ record จาก Doc Preview (ต่อห้องสอบ) */
+export interface RecordedDomainItem {
+  domain: string
+  topDomain: string
+  hits: number
+  source: 'preview' | 'top-url'
+  approved: boolean
+  lastSeenAtMs: number
+}
+export interface RecordedDomainsUpdatedEvent {
+  records: RecordedDomainItem[]
+}
+export interface OpenDocPreviewResponse {
+  ok: boolean
+  reason?: string | undefined
+}
+export interface ListRecordedDomainsResponse {
+  records: RecordedDomainItem[]
+}
+export interface ApproveDomainRequest {
+  /** hostname — ค่าพิเศษ '*' = อนุมัติ/ยกเลิกทั้งหมดที่รอตัดสิน */
+  domain: string
+  approved: boolean
+}
+export interface ApproveDomainResponse {
+  ok: boolean
+  reason?: string | undefined
+  updatedCount?: number | undefined
+}
+export interface SetDomainEnforcementRequest {
+  mode: 'warn' | 'block'
+}
+export interface OkResponse {
+  ok: boolean
+}
+
 /* ---------- Channel maps (single source of truth for IPC surface) ---------- */
 
 /* ---------- Zod schemas สำหรับ payload ของ network channels ---------- */
@@ -172,8 +211,24 @@ const HostRoomInfoSchema = z
     roomPin: z.string().regex(/^\d{6}$/),
     tcpPort: z.number().int().min(1024).max(65535),
     certFingerprint: z.string().length(64),
-    certFpShort: z.string().length(16)
+    certFpShort: z.string().length(16),
+    mode: ExamModeSchema
   })
+  .strict()
+
+const RecordedDomainItemSchema = z
+  .object({
+    domain: z.string().min(1).max(200),
+    topDomain: z.string().min(1).max(200),
+    hits: z.number().int().nonnegative(),
+    source: z.enum(['preview', 'top-url']),
+    approved: z.boolean(),
+    lastSeenAtMs: z.number().int().nonnegative()
+  })
+  .strict()
+
+const RecordedDomainsUpdatedEventSchema = z
+  .object({ records: z.array(RecordedDomainItemSchema).max(2_048) })
   .strict()
 
 const DiscoveredRoomIpcSchema = UdpBeaconSchema.extend({
@@ -225,6 +280,11 @@ export interface IpcInvokeMap {
   'student:enter-kiosk': { req: void; res: KioskEnterResponse }
   'student:internal-copy': { req: InternalCopyRequest; res: StudentSubmitResponse }
   'student:typing-metrics': { req: TypingMetricsRequest; res: StudentSubmitResponse }
+  'host:open-doc-preview': { req: { url: string }; res: OpenDocPreviewResponse }
+  'host:close-doc-preview': { req: void; res: OkResponse }
+  'host:list-recorded-domains': { req: void; res: ListRecordedDomainsResponse }
+  'host:approve-domain': { req: ApproveDomainRequest; res: ApproveDomainResponse }
+  'host:set-domain-enforcement': { req: SetDomainEnforcementRequest; res: OkResponse }
 }
 
 /** Main -> Renderer (webContents.send) push event channels */
@@ -244,6 +304,7 @@ export interface IpcEventMap {
   'exam:completed': ExamCompletedPayload
   'exam:tick': ExamTickEvent
   'host:guard-events': HostGuardEventsEvent
+  'host:recorded-domains-updated': RecordedDomainsUpdatedEvent
 }
 
 export type IpcInvokeChannel = keyof IpcInvokeMap
@@ -397,6 +458,36 @@ export const IpcInvokeSchemas: {
       .object({ intervalsMs: z.array(z.number().int().min(0).max(10_000)).min(1).max(500) })
       .strict(),
     response: z.object({ ok: z.boolean() }).strict()
+  },
+  'host:open-doc-preview': {
+    request: z.object({ url: z.string().min(5).max(2_048) }).strict(),
+    response: z
+      .object({ ok: z.boolean(), reason: z.string().max(60).optional() })
+      .strict()
+  },
+  'host:close-doc-preview': {
+    request: z.void(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'host:list-recorded-domains': {
+    request: z.void(),
+    response: z.object({ records: z.array(RecordedDomainItemSchema).max(2_048) }).strict()
+  },
+  'host:approve-domain': {
+    request: z
+      .object({ domain: z.string().min(1).max(200), approved: z.boolean() })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        reason: z.string().max(60).optional(),
+        updatedCount: z.number().int().nonnegative().optional()
+      })
+      .strict()
+  },
+  'host:set-domain-enforcement': {
+    request: z.object({ mode: z.enum(['warn', 'block']) }).strict(),
+    response: z.object({ ok: z.boolean() }).strict()
   }
 }
 
@@ -457,5 +548,6 @@ export const IpcEventSchemas: {
       studentId: z.string().min(1).max(40),
       events: z.array(DetectionEventSchema).min(1).max(20)
     })
-    .strict()
+    .strict(),
+  'host:recorded-domains-updated': RecordedDomainsUpdatedEventSchema
 }

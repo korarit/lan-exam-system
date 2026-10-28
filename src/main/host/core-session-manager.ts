@@ -10,7 +10,7 @@ import {
   type NavigateToPayload
 } from '@shared/exam-schema'
 import { NetMsgType } from '@shared/protocol-schema'
-import { buildDefaultPolicy, type DetectionEvent, type DetectionPolicyBody } from '@shared/policy-schema'
+import { buildDefaultPolicy, type DetectionEvent, type DetectionPolicyBody, type DomainEnforcement } from '@shared/policy-schema'
 import { generateRandomBytes } from '../crypto/primitives'
 import { signPolicy } from '../guard/policy-signing'
 import type { HostDatabase } from '../storage/db'
@@ -43,6 +43,10 @@ export interface CoreSessionManagerOptions {
   /** รายงาน anomaly เชิงการแอบอ้าง cursor / ข้อสอบ (เข้า audit ใน Phase 3b) */
   onAnomaly?: ExamAnomalySender
   gracePeriodMs?: number
+  /** Phase 3a-plus: โดเมนที่ครูอนุมัติแล้วของห้อง (ฝังเป็น allowedDomains ใน policy) */
+  getAllowedDomains?: () => string[]
+  /** Phase 3a-plus: พฤติกรรมเมื่อนักเรียนใช้โดเมนนอกเหนือรายการ (warn/block) */
+  getDomainEnforcement?: () => DomainEnforcement
 }
 
 export type ExamState = 'idle' | 'running' | 'collecting' | 'finished'
@@ -140,6 +144,13 @@ export class CoreSessionManager {
     // นโยบายตรวจจับของห้อง (Phase 3a): เวอร์ชันใหม่ทุกรอบการสอบ อิงโหมดห้อง
     const policyBody = buildDefaultPolicy(room.examMode ?? 'closed')
     policyBody.issuedAtMs = startedAtMs
+    // Phase 3a-plus: โดเมนที่ครู record + อนุมัติผ่าน Doc Preview → allowedDomains (default-deny)
+    if (this.opts.getAllowedDomains) {
+      policyBody.allowedDomains = this.opts.getAllowedDomains()
+    }
+    if (this.opts.getDomainEnforcement) {
+      policyBody.domainEnforcement = this.opts.getDomainEnforcement()
+    }
     this.detectionPolicy = policyBody
 
     // Room secret seed ใหม่ต่อการเริ่มสอบแต่ละรอบ (สุ่มข้อ/ตัวเลือก/พารามิเตอร์ทั้งห้องใหม่)
@@ -425,6 +436,30 @@ export class CoreSessionManager {
     tlsServer.sendToStudent(studentId, NetMsgType.policyUpdate, {
       policy: signPolicy(this.detectionPolicy, sessionKey)
     })
+  }
+
+  /**
+   * Phase 3a-plus: อนุมัติโดเมนเพิ่มกลางสอบ → โหลดรายการล่าสุดจาก allowlist
+   * เพิ่มเวอร์ชัน → เซ็นใหม่รายคน → POLICY_UPDATE ไปทุกเครื่องออนไลน์ทันที
+   * คืนจำนวนเครื่องที่ส่งถึง (0 = ไม่มีการส่ง เช่น ยังไม่เริ่มสอบ)
+   */
+  pushPolicyUpdate(): number {
+    if (!this.detectionPolicy) return 0
+    const room = this.opts.getRoom()
+    const tlsServer = room?.tlsServerInstance
+    if (!tlsServer) return 0
+    if (this.opts.getAllowedDomains) {
+      this.detectionPolicy.allowedDomains = this.opts.getAllowedDomains()
+    }
+    this.detectionPolicy.version += 1
+    this.detectionPolicy.issuedAtMs = Date.now()
+    let pushed = 0
+    for (const student of room?.students ?? []) {
+      if (!student.online) continue
+      this.sendPolicyToStudent(student.studentId)
+      pushed += 1
+    }
+    return pushed
   }
 
   /** เหตุการณ์ตรวจจับจากเครื่องนักเรียน (Phase 3a) — push ให้หน้าจอครู + ลง audit (Phase 3b) */

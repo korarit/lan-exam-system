@@ -78,7 +78,8 @@ function makeRoom(
       roomPin: '123456',
       tcpPort: 0,
       certFingerprint: 'aa'.repeat(32),
-      certFpShort: 'aa'.repeat(8)
+      certFpShort: 'aa'.repeat(8),
+      mode: 'closed'
     } satisfies HostRoomInfo,
     tlsServerInstance: tlsServer,
     students: [...studentsById.values()].map((s) => ({ ...s, online: s.online })),
@@ -317,6 +318,56 @@ describe('CoreSessionManager', () => {
       .prepare(`SELECT COUNT(*) as count FROM submissions WHERE session_id = ?`)
       .get(roomId) as { count: number }
     expect(rows.count).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('CoreSessionManager — domain allowlist policy (Phase 3a-plus)', () => {
+  it('startExam ฝัง allowedDomains + domainEnforcement ใน POLICY_UPDATE และ pushPolicyUpdate ขึ้นเวอร์ชันใหม่', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zt-allow-policy-'))
+    const db = new HostDatabase({ filePath: path.join(dir, 'test.sqlite') })
+    const room = makeRoom([{ studentId: 's-001', online: true }])
+    const roomId = (room as unknown as { room: HostRoomInfo }).room.roomId
+    const server = (room as unknown as { tlsServerInstance: FakeTlsServer }).tlsServerInstance
+    db.db
+      .prepare(
+        `INSERT INTO exam_sessions (id, room_name, mode, enforcement, status, crypto_salt, created_at_ms)
+         VALUES (?, 'ห้อง 401', 'in-app-docs', 'block-and-report', 'lobby', 'seed', ?)`
+      )
+      .run(roomId, Date.now())
+
+    let approvedNow = ['cdn.example.com', 'fonts.gstatic.com']
+    const manager = new CoreSessionManager({
+      db,
+      getRoom: () => room,
+      sendHostEvent: () => {},
+      getAllowedDomains: () => approvedNow,
+      getDomainEnforcement: () => 'block'
+    })
+    manager.loadExam(exam)
+    await manager.startExam()
+
+    const [firstPolicy] = server.messagesTo('s-001', NetMsgType.policyUpdate) as Array<{
+      policy: { body: { version: number; allowedDomains: string[]; domainEnforcement: string } }
+    }>
+    expect(firstPolicy).toBeDefined()
+    expect(firstPolicy!.policy.body.allowedDomains.sort()).toEqual(['cdn.example.com', 'fonts.gstatic.com'])
+    expect(firstPolicy!.policy.body.domainEnforcement).toBe('block')
+    expect(firstPolicy!.policy.body.version).toBe(1)
+
+    // อนุมัติเพิ่มกลางสอบ → version+1 + รายการใหม่ ไปเฉพาะเครื่องออนไลน์
+    approvedNow = ['cdn.example.com', 'fonts.gstatic.com', 'api.docs.example.com']
+    const pushed = manager.pushPolicyUpdate()
+    expect(pushed).toBe(1)
+    const policies = server.messagesTo('s-001', NetMsgType.policyUpdate) as Array<{
+      policy: { body: { version: number; allowedDomains: string[] } }
+    }>
+    expect(policies).toHaveLength(2)
+    expect(policies[1]!.policy.body.version).toBe(2)
+    expect(policies[1]!.policy.body.allowedDomains).toContain('api.docs.example.com')
+
+    // ยังไม่เริ่มสอบ (detectionPolicy ยังไม่มี) → push ไม่ได้
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 })
 
