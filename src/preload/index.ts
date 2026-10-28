@@ -57,6 +57,11 @@ const api: ZtExamApi = {
   markInternalCopy: (req) => call('student:internal-copy', req),
   sendTypingMetrics: (req) => call('student:typing-metrics', req),
 
+  docsToggle: (req) => call('exam:docs-toggle', req),
+  docsNavigate: (req) => call('exam:docs-navigate', req),
+  openVsCode: () => call('exam:open-vscode', undefined),
+  focusExam: () => call('student:focus-exam', undefined),
+
   openDocPreview: (req) => call('host:open-doc-preview', req),
   closeDocPreview: () => call('host:close-doc-preview', undefined),
   listRecordedDomains: () => call('host:list-recorded-domains', undefined),

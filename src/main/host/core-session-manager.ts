@@ -9,7 +9,7 @@ import {
   type FinalDraftFlushPayload,
   type NavigateToPayload
 } from '@shared/exam-schema'
-import { NetMsgType } from '@shared/protocol-schema'
+import { NetMsgType, type DocsUrlLogPayload } from '@shared/protocol-schema'
 import { buildDefaultPolicy, type DetectionEvent, type DetectionPolicyBody, type DomainEnforcement } from '@shared/policy-schema'
 import { generateRandomBytes } from '../crypto/primitives'
 import { signPolicy } from '../guard/policy-signing'
@@ -47,6 +47,10 @@ export interface CoreSessionManagerOptions {
   getAllowedDomains?: () => string[]
   /** Phase 3a-plus: พฤติกรรมเมื่อนักเรียนใช้โดเมนนอกเหนือรายการ (warn/block) */
   getDomainEnforcement?: () => DomainEnforcement
+  /** Phase 5 (Mode 2): URL เอกสารเริ่มต้นจากการเตรียมเอกสาร (ส่งต่อด้วย EXAM_STARTED) */
+  getDocsStartUrl?: () => string | null
+  /** Phase 5: ประวัติโดเมนอนุญาตที่นักเรียนใช้จริง → hash chain (ลง 'normal' ไม่มีผล triage) */
+  onDocsUrlLog?: (studentId: string, payload: DocsUrlLogPayload) => void
   /** Phase 3b: ท่อข้อมูลตรวจจับ → Audit hash chain + Triage engine บนเครื่องแม่ */
   onDetectionBatch?: (studentId: string, events: DetectionEvent[]) => void
   /** Phase 3b: เริ่มการสอบ → เขียน Genesis block + ผูก audit key ของห้อง */
@@ -220,7 +224,9 @@ export class CoreSessionManager {
       tlsServer?.sendToStudent(student.studentId, NetMsgType.examStarted, {
         examTitle: exam.title,
         questionCount: exam.questions.length,
-        remainingSeconds: Math.ceil((this.examEndsAtMs - Date.now()) / 1000)
+        remainingSeconds: Math.ceil((this.examEndsAtMs - Date.now()) / 1000),
+        examMode: room.examMode ?? 'closed',
+        docsUrl: this.opts.getDocsStartUrl?.() ?? null
       })
       this.sendPolicyToStudent(student.studentId)
       const payload = this.dispatcher!.getPayload(student.studentId, 0)
@@ -454,7 +460,9 @@ export class CoreSessionManager {
     if (this.screenBufferKey) {
       this.sendScreenSessionToStudent(studentId)
     }
-    tlsServer.sendToStudent(studentId, NetMsgType.stateRecovery, recoveryPayload)
+    // Phase 5: แนบโหมดห้อง — renderer กู้เลย์เอาต์ (split เอกสาร / floating hud)
+    const modePayload = room.examMode ? { examMode: room.examMode } : {}
+    tlsServer.sendToStudent(studentId, NetMsgType.stateRecovery, { ...recoveryPayload, ...modePayload })
   }
 
   /** Phase 3c: ส่ง SCREEN_SESSION (คีย์ ring buffer + พอร์ต UDP ถ้ามี) + จับคู่กุญแจฝั่งเครื่องแม่ */
@@ -560,6 +568,10 @@ export class CoreSessionManager {
         return
       case NetMsgType.guardEvent:
         this.handleGuardEvents(studentId, (payload as { events: DetectionEvent[] }).events)
+        return
+      case NetMsgType.docsUrlLog:
+        // Phase 5: ประวัติโดเมนอนุญาต → hash chain ระดับ 'normal' (ไม่มีผล triage)
+        this.opts.onDocsUrlLog?.(studentId, payload as DocsUrlLogPayload)
         return
       default:
         // ข้อความที่ไม่รู้จัก = anomaly ฝั่งเครื่องแม่

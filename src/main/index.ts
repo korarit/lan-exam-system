@@ -15,12 +15,16 @@ import { registerDomainHandlers } from './ipc/domain-handlers'
 import { registerAuditHandlers } from './ipc/audit-handlers'
 import { registerScreenHandlers } from './ipc/screen-handlers'
 import { registerAttestationHandlers } from './ipc/attestation-handlers'
+import { registerModeHandlers } from './ipc/mode-handlers'
+import { DocsViewController, type DocsPanelState } from './browser/docs-view'
+import { LocalConnectProxy } from './proxy/connect-proxy'
+import { VsCodeController } from './guard/vscode-controller'
 import { DomainAllowlistService } from './host/domain-allowlist'
 import { DocPreviewController } from './host/doc-preview'
 import { TriageService } from './host/triage-service'
 import { ProctorViewService } from './screen/proctor-view-service'
 import { ScreenStreamController } from './screen/stream-controller'
-import { createMainWindow, enforceKioskInputBlocking } from './window'
+import { createMainWindow, createFloatingHudWindow, enforceKioskInputBlocking } from './window'
 import { HostDatabase, getDefaultDatabasePath } from './storage/db'
 import { HostRoomManager } from './network/host-room'
 import { RoomDiscoveryListener } from './network/discovery'
@@ -87,8 +91,12 @@ let docPreview: DocPreviewController | null = null
 let triageService: TriageService | null = null
 let proctorViewService: ProctorViewService | null = null
 let screenStreamController: ScreenStreamController | null = null
-const discovery = new RoomDiscoveryListener()
+let discovery = new RoomDiscoveryListener()
 let studentClient: ExamTlsClient | null = null
+let docsViewController: DocsViewController | null = null
+let vsCodeController: VsCodeController | null = null
+let connectProxy: LocalConnectProxy | null = null
+let floatingHudWindow: BrowserWindow | null = null
 let guardEngine: GuardEngine | null = null
 let nativeKeyboardGuard: NativeKeyboardGuard | null = null
 let attestationResponder: AttestationResponder | null = null
@@ -133,6 +141,29 @@ function ensureSessionManager(): CoreSessionManager {
       return roomId ? ensureDomainAllowlist().listApproved(roomId) : []
     },
     getDomainEnforcement: () => ensureDomainAllowlist().resolveDomainEnforcement(roomManager?.room?.roomId ?? null),
+    // Phase 5 (Mode 2): docsUrl จากการเตรียมเอกสาร → EXAM_STARTED
+    getDocsStartUrl: () => ensureDocPreview().getLastUrl(roomManager?.room?.roomId ?? null),
+    // Phase 5: ประวัติโดเมนอนุญาต (docs/proxy) → hash chain 'normal' ไม่มีผล triage
+    onDocsUrlLog: (studentId, payload) => {
+      try {
+        const triage = ensureTriageService()
+        const roomId = triage.roomId
+        if (!roomId) return
+        triage.audit.append(roomId, {
+          studentId,
+          eventCode: 'DOCS_URL_VISITED',
+          category: 'docs',
+          severity: 'normal',
+          scoreDelta: 0,
+          summaryText: `ใช้เว็บที่อนุญาตตามขอบเขตข้อสอบ: ${payload.topDomain}`,
+          evidence: { url: payload.url.slice(0, 300), source: payload.source, topDomain: payload.topDomain },
+          clientTimestampMs: payload.occurredAtMs
+        })
+        triage.pushOverview()
+      } catch {
+        // chain ยังไม่พร้อม (ยังไม่เริ่มสอบ) — ข้าม
+      }
+    },
     // Phase 3b: ท่อข้อมูลตรวจจับ → hash chain + triage
     onDetectionBatch: (studentId, events) => {
       try {
@@ -298,6 +329,8 @@ function ensureStudentClient(): ExamTlsClient {
     onConnectionState: (status) => {
       // Phase 4: ท่อใหม่ = exporter คนละค่า — เครื่องนักเรียนต้องส่ง manifest ใหม่หลัง reconnect
       if (status.state === 'connecting') ensureAttestationResponder(true).resetOnReconnect()
+      // Phase 5: หลุดการเชื่อมต่อ → ซ่อนแผงเอกสาร (fail-closed) / กลับมาเมื่อ reconnect สำเร็จ
+      docsViewController?.setHidden(status.state === 'frozen' || status.state === 'reconnecting')
       forwardConnectionState(sendEventToWindow)(status)
     },
     onBinary: (subType, payload) => {
@@ -305,6 +338,10 @@ function ensureStudentClient(): ExamTlsClient {
     },
     onMessage: createStudentExamEventForwarder(sendEventToWindow, () => mainWindow, {
       onNetMessage: (type, payload) => {
+        // Phase 5: เริ่มการสอบ → เตรียมโครง Mode 2/3 (แผงเอกสาร, proxy, floating HUD)
+        if (type === NetMsgType.examStarted) {
+          void prepareExamModeSurface(payload as { examMode?: string; docsUrl?: string | null })
+        }
         // Phase 4: คำท้า attestation จากเครื่องแม่ (ผูกกับ TLS exporter ของเรา)
         if (type === NetMsgType.attestationChallenge) {
           return ensureAttestationResponder(false).handleChallengeMessage(payload)
@@ -339,6 +376,12 @@ function ensureStudentClient(): ExamTlsClient {
         guardEngine?.stop()
         // Phase 3c: จบสอบ → Zero-Trace Cleanup (ลบ ring buffer + คีย์ทันที)
         screenStreamController?.stopSession('exam-ended')
+        // Phase 5: ทุกพื้นผิวของ Mode 2/3 หยุดพร้อมกัน
+        docsViewController?.destroy()
+        vsCodeController?.stop()
+        connectProxy?.close()
+        connectProxy = null
+        closeFloatingHud()
       }
     })
   })
@@ -354,9 +397,107 @@ function ensureGuardEngine(): GuardEngine {
       return { left: bounds.x, top: bounds.y, right: bounds.x + bounds.width, bottom: bounds.y + bounds.height }
     },
     getHostIp: () => lastJoinedHostIp,
-    getLocalProxyPort: () => 0 // Mode 3 ยังไม่เปิด proxy (Phase 5)
+    // Phase 5: proxy ของโหมดข้อสอบที่พิเศษ (0 = ปิด → NetworkInspector ตัดตัวเองออกชั่วคราว)
+    getLocalProxyPort: () => connectProxy?.getBoundPort() ?? 0
   })
   return guardEngine
+}
+
+/* ============================================================
+ * Phase 5 — Mode 2 / Mode 3 surfaces (ฝั่งเครื่องนักเรียน)
+ * ============================================================ */
+
+/** Mode 2: ตัวควบคุมแผงเอกสาร WebContentsView (ผูกกับ GuardEngine + DOCS_URL_LOG) */
+function ensureDocsView(): DocsViewController {
+  docsViewController ??= new DocsViewController({
+    getWindow: () => mainWindow,
+    getPolicy: () => {
+      const policy = guardEngine?.currentPolicy
+      if (!policy) return null
+      return { allowedDomains: policy.allowedDomains, enforcement: policy.domainEnforcement }
+    },
+    emit: (event) => ensureGuardEngine().pushExternalEvent(event),
+    logUrl: (payload) => {
+      try {
+        ensureStudentClient().sendExamMessage(NetMsgType.docsUrlLog, payload)
+      } catch {
+        // สายหลุด — ประวัติชุดนี้หายเฉพาะท้องถิ่น
+      }
+    },
+    pushState: (state: DocsPanelState) => sendEventToWindow('exam:docs-state', state)
+  })
+  return docsViewController
+}
+
+/** Mode 3: ตัวคุม VS Code (โปรไฟล์ + watchdog) */
+function ensureVsCode(): VsCodeController {
+  vsCodeController ??= new VsCodeController({
+    emit: (event) => ensureGuardEngine().pushExternalEvent(event)
+  })
+  return vsCodeController
+}
+
+/** Mode 3: Local HTTP CONNECT proxy (127.0.0.1:<สุ่ม>) */
+function ensureConnectProxy(): LocalConnectProxy {
+  connectProxy ??= new LocalConnectProxy({
+    getAllowedDomains: () => guardEngine?.currentPolicy?.allowedDomains ?? [],
+    getEnforcement: () => guardEngine?.currentPolicy?.domainEnforcement ?? 'warn',
+    emit: (event) => ensureGuardEngine().pushExternalEvent(event),
+    logAllowed: (payload) => {
+      try {
+        ensureStudentClient().sendExamMessage(NetMsgType.docsUrlLog, payload)
+      } catch {
+        // สายหลุด — ข้าม
+      }
+    },
+    now: Date.now
+  })
+  return connectProxy
+}
+
+/**
+ * เริ่มการสอบ → เตรียมพื้นผิวของโหมดห้อง:
+ * - Mode 2: รับ docsUrl เริ่มต้นจากครู + ผูก session แผงเอกสาร
+ * - Mode 3: เปิด local proxy (พอร์ตสุ่ม) + เตรียมโปรไฟล์ VS Code + floating HUD
+ */
+async function prepareExamModeSurface(payload: { examMode?: string; docsUrl?: string | null }): Promise<void> {
+  const mode = payload.examMode ?? 'closed'
+  const roomId = lastJoinedRoomId
+  if (roomId) ensureDocsView().setSessionId(roomId)
+  ensureDocsView().setPreferredStartUrl(payload.docsUrl ?? null)
+  if (mode !== 'external-tools') {
+    closeFloatingHud()
+    return
+  }
+  try {
+    const port = await ensureConnectProxy().listen()
+    if (port > 0 && roomId) {
+      const prepared = await ensureVsCode().prepareProfile(roomId, port)
+      if (!prepared.ok) console.warn(`[mode3] เตรียมโปรไฟล์ VS Code ไม่สำเร็จ: ${prepared.reason ?? '?'}`)
+    }
+  } catch (err) {
+    console.warn(`[mode3] เปิด local proxy ไม่สำเร็จ: ${err instanceof Error ? err.message : '?'}`)
+    return
+  }
+  showFloatingHud()
+}
+
+function showFloatingHud(): void {
+  if (floatingHudWindow && !floatingHudWindow.isDestroyed()) {
+    floatingHudWindow.showInactive()
+    return
+  }
+  floatingHudWindow = createFloatingHudWindow({ isDev: process.env.NODE_ENV !== 'production' })
+  floatingHudWindow?.once('ready-to-show', () => {
+    floatingHudWindow?.showInactive()
+  })
+}
+
+function closeFloatingHud(): void {
+  if (floatingHudWindow && !floatingHudWindow.isDestroyed()) {
+    floatingHudWindow.close()
+  }
+  floatingHudWindow = null
 }
 
 /** Phase 4: นักเรียน — ผู้ตอบคำถามความถูกต้องของไฟล์แอป (ผูกกับ TLS session) */
@@ -429,12 +570,15 @@ function ensureNativeKeyboardGuard(): NativeKeyboardGuard {
 }
 
 function sendEventToWindow(channel: string, payload: unknown): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  // push event ทุกตัวผ่าน Zod validation ก่อนส่งเสมอ
-  const schema = IpcEventSchemas[channel as IpcEventChannel]
-  const parsed = schema.safeParse(payload)
-  if (!parsed.success) return
-  mainWindow.webContents.send(channel, parsed.data)
+  // Phase 5: ส่งถึงทุกหน้าต่าง (หน้าหลัก + floating HUD ของ Mode 3)
+  for (const target of BrowserWindow.getAllWindows()) {
+    if (target.isDestroyed()) continue
+    // push event ทุกตัวผ่าน Zod validation ก่อนส่งเสมอ
+    const schema = IpcEventSchemas[channel as IpcEventChannel]
+    const parsed = schema.safeParse(payload)
+    if (!parsed.success) continue
+    target.webContents.send(channel, parsed.data)
+  }
 }
 
 function createWindow(): void {
@@ -470,6 +614,8 @@ void app.whenReady().then(() => {
     onStudentJoinedRoom: (hostIp, roomId) => {
       lastJoinedHostIp = hostIp
       lastJoinedRoomId = roomId
+      // Phase 5: ผก session เอกสารของห้องใหม่ (ครั้งแรกจะสร้าง DocsViewController)
+      if (state.role === 'student') ensureDocsView().setSessionId(roomId)
     }
   })
   const kioskHooks = makeKioskHooks(() => mainWindow, runtime.windowedKiosk)
@@ -506,6 +652,24 @@ void app.whenReady().then(() => {
   registerScreenHandlers(router, state, {
     getStreamController: () => (state.role === 'student' ? ensureScreenStreamController() : null),
     getProctorViewService: () => (state.role === 'host' ? ensureProctorViewService() : null)
+  })
+  // Phase 5: Mode 2 (แผงเอกสาร) + Mode 3 (VS Code / focus)
+  registerModeHandlers(router, state, {
+    getDocsView: () => (state.role === 'student' ? ensureDocsView() : null),
+    launchVsCode: async () => {
+      if (state.role !== 'student') return { ok: false, reason: 'STUDENT_ROLE_REQUIRED' }
+      const port = connectProxy?.getBoundPort() ?? 0
+      if (port <= 0) return { ok: false, reason: 'PROXY_NOT_RUNNING' }
+      return ensureVsCode().launch(`http://127.0.0.1:${port}`)
+    },
+    focusExamWindow: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore()
+        mainWindow.focus()
+        return true
+      }
+      return false
+    }
   })
   studentEstablishedHandler = (studentId) => {
     // Phase 4: ท่อ handshake ใหม่ = ยิง challenge attestation ทันที (แล้วสุ่มเวลาตามปกติ)
@@ -555,6 +719,11 @@ app.on('before-quit', () => {
   // Prompt 3c: Zero-Trace — ลบ ring buffer/คีย์ทันทีเมื่อปิดแอป
   screenStreamController?.stopSession('app-quit')
   proctorViewService?.clearAll()
+  // Phase 5: ปิดพื้นผิว Mode 2/3
+  docsViewController?.destroy()
+  vsCodeController?.stop()
+  connectProxy?.close()
+  closeFloatingHud()
   void roomManager?.closeRoom()
   discovery.stop()
 })

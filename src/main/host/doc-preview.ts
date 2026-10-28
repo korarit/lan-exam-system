@@ -24,11 +24,19 @@ export class DocPreviewController {
   private view: WebContentsView | null = null
   private recorder: DomainRecorder | null = null
   private sessionId: string | null = null
+  /** Phase 5: URL เอกสารล่าสุดต่อห้อง (ส่งเป็น docsUrl ใน EXAM_STARTED) */
+  private readonly lastUrlByRoom = new Map<string, string>()
 
   constructor(private readonly opts: DocPreviewControllerOptions) {}
 
   get isOpen(): boolean {
     return this.window !== null && !this.window.isDestroyed()
+  }
+
+  /** Phase 5: URL เอกสารล่าสุดของห้อง (null = ครูยังไม่ได้เปิดเว็บเตรียมเอกสาร) */
+  getLastUrl(roomId: string | null | undefined): string | null {
+    if (!roomId) return null
+    return this.lastUrlByRoom.get(roomId) ?? null
   }
 
   /** เปิด/พาไปยัง URL (เปิดซ้ำได้ — ครูเปิดกี่เว็บก็ได้ โดเมนรวมกันในรายการเดียว) */
@@ -50,12 +58,14 @@ export class DocPreviewController {
 
     // เปิดครั้งแรกในห้องเดียวกัน → พาหน้าต่างเดิมไป URL ใหม่ (record ต่อในรายการเดียว)
     if (this.isOpen && this.view) {
+      if (room.room) this.lastUrlByRoom.set(room.room.roomId, url)
       void this.view.webContents.loadURL(url)
       return { ok: true }
     }
 
     const roomId = room.room.roomId
     this.sessionId = roomId
+    this.lastUrlByRoom.set(roomId, url)
 
     const recorder = new DomainRecorder({
       onFlush: (records) => this.onFlush(records),

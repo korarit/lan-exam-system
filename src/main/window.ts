@@ -89,6 +89,52 @@ export function exitKioskMode(win: BrowserWindow): void {
 }
 
 /**
+ * FloatingHud (Phase 5 — Mode 3): หน้าต่างจิ๋ว always-on-top ปักหมุดบนสุดจอ
+ * แสดงเวลา/สถานะ + ปุ่มเปิด VS Code ขณะนักเรียนทำงานในโปรแกรมภายนอก
+ * เรนเดอร์ด้วยแอปเดียวกัน (hash `#floating-hud`) แยก webContents ของตัวเอง
+ */
+export function createFloatingHudWindow(options: { isDev: boolean }): BrowserWindow | null {
+  const { workArea } = screen.getPrimaryDisplay()
+  const width = 620
+  const height = 76
+  const win = new BrowserWindow({
+    width,
+    height,
+    x: Math.round((workArea.width - width) / 2),
+    y: workArea.y,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    skipTaskbar: true,
+    focusable: true,
+    alwaysOnTop: true,
+    autoHideMenuBar: true,
+    show: false,
+    title: 'ZT-Exam HUD',
+    backgroundColor: '#020617',
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      devTools: false,
+      spellcheck: false
+    }
+  })
+  win.setAlwaysOnTop(true, 'screen-saver')
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.setMenuBarVisibility(false)
+  if (options.isDev && process.env.ELECTRON_RENDERER_URL) {
+    void win.loadURL(`${process.env.ELECTRON_RENDERER_URL}#floating-hud`)
+  } else {
+    void win.loadFile(path.join(__dirname, '../renderer/index.html'), { hash: 'floating-hud' })
+  }
+  return win
+}
+
+/**
  * Kiosk input hardening (checklist 2.5.1):
  * - บล็อกคีย์ลัดของ Chromium ผ่าน before-input-event
  * - บล็อกเมนูคลิกขวา
