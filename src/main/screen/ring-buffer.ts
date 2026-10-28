@@ -5,16 +5,17 @@ import os from 'node:os'
 
 /* ============================================================
  * Phase 3c: Encrypted 5-Minute Ring Buffer
- * - เขียนเซกเมนต์ 10 วินาทีต่อจอ (จาก MediaRecorder rotation
+ * - เขียนเซกเมนต์ 2 วินาทีต่อจอ (จาก MediaRecorder rotation
  *   ใน renderer) เข้ารหัส AES-256-GCM ด้วย screenBufferKey
- * - เก็บสูงสุด 30 เซกเมนต์ต่อจอ (5 นาทีล่าสุด)
+ *   — เซกเมนต์สั้นลงเพื่อให้ DVR-style live stream ผ่าน UDP นุ่มลื่น
+ * - เก็บสูงสุด 60 เซกเมนต์ต่อจอ (5 นาทีล่าสุด)
  * - Pin-on-Critical: เซกเมนต์ที่มี pinnedReason ไม่ถูกลบ
  * - destroy() = zero-trace (ลบโฟลเดอร์ + เขียนทับคีย์)
  * ============================================================ */
 
-export const MAX_SEGMENTS_PER_DISPLAY = 30
+export const MAX_SEGMENTS_PER_DISPLAY = 60
 /** Pin สูงสุดรวมกันทุกจอ (กันดิสก์เต็มเมื่อเกิดเหตุถี่) */
-export const MAX_PINNED_SEGMENTS = 30
+export const MAX_PINNED_SEGMENTS = 60
 
 export interface RingSegmentRecord {
   segmentId: string
@@ -35,6 +36,8 @@ export interface AddSegmentInput {
   startTimeMs: number
   endTimeMs: number
   plaintext: Buffer
+  /** กำหนด segmentId เอง (ต้องไม่ซ้ำ) — ไม่ระบุจะสุ่ม UUID */
+  segmentId?: string
 }
 
 export interface RingBufferOptions {
@@ -96,7 +99,7 @@ export class EncryptedRingBuffer {
     const ciphertext = Buffer.concat([cipher.update(input.plaintext), cipher.final()])
     const authTag = cipher.getAuthTag()
 
-    const segmentId = randomUUID()
+    const segmentId = input.segmentId ?? randomUUID()
     const filePath = path.join(
       this.baseDir,
       `seg-${sanitize(input.displayId)}-${input.seqNo}-${segmentId.slice(0, 8)}.enc`

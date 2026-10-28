@@ -62,9 +62,9 @@ describe('EncryptedRingBuffer (Phase 3c)', () => {
     expect(() => decipher.final()).toThrow()
   })
 
-  it('Rotation: เกิน 30 เซกเมนต์ต่อจอ → ลบเก่าสุดทิ้ง จำนวนไฟล์คงที่', () => {
+  it('Rotation: เกิน 60 เซกเมนต์ต่อจอ → ลบเก่าสุดทิ้ง จำนวนไฟล์คงที่', () => {
     const buffer = makeBuffer()
-    for (let i = 0; i < 45; i += 1) addSegment(buffer, i)
+    for (let i = 0; i < 75; i += 1) addSegment(buffer, i)
 
     const list = buffer.listSegments('display-1')
     expect(list.length).toBe(MAX_SEGMENTS_PER_DISPLAY)
@@ -77,7 +77,7 @@ describe('EncryptedRingBuffer (Phase 3c)', () => {
   it('Pin-on-Critical: เซกเมนต์ที่ Pin ไม่ถูกลบ และถอดรหัสกลับได้ครบ (Ring Buffer Rotation & Pinning Test)', () => {
     const buffer = makeBuffer()
     const segmentIds = new Map<number, string>()
-    for (let i = 0; i < 45; i += 1) {
+    for (let i = 0; i < 75; i += 1) {
       segmentIds.set(i, addSegment(buffer, i))
       // เกิดเหตุวิกฤตช่วงเซกเมนต์ 5-7 → ล็อกทันทีก่อนถูกวนลบ
       if (i === 5 || i === 6 || i === 7) {
@@ -94,7 +94,7 @@ describe('EncryptedRingBuffer (Phase 3c)', () => {
     for (const seq of [0, 1, 8, 9, 10, 11, 12, 13, 14]) {
       expect(list.find((s) => s.seqNo === seq)).toBeUndefined()
     }
-    // โควตาทั้งหมด = 30 (Pin 6 ตัว + ปกติ 24 ตัว)
+    // โควตาทั้งหมด = 60 (Pin 6 ตัว + ปกติ 54 ตัว)
     expect(list.length).toBe(MAX_SEGMENTS_PER_DISPLAY)
     const liveCount = list.filter((s) => s.pinnedReason === undefined).length
     expect(liveCount).toBe(MAX_SEGMENTS_PER_DISPLAY - pinned.length)
@@ -136,7 +136,7 @@ describe('EncryptedRingBuffer (Phase 3c)', () => {
 
   it('หลายจอ (multi-display) วนลบแยกกัน', () => {
     const buffer = makeBuffer()
-    for (let i = 0; i < 32; i += 1) {
+    for (let i = 0; i < 62; i += 1) {
       buffer.addSegment({
         displayId: 'display-2',
         seqNo: i,
@@ -145,7 +145,7 @@ describe('EncryptedRingBuffer (Phase 3c)', () => {
         plaintext: Buffer.from('two')
       })
     }
-    expect(buffer.listSegments('display-2').length).toBe(30)
+    expect(buffer.listSegments('display-2').length).toBe(60)
     expect(buffer.listDisplays()).toEqual(['display-2'])
     buffer.destroy()
   })
