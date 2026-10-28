@@ -3,10 +3,12 @@ import { LayoutDashboard } from 'lucide-react'
 import type { HostStudentSummary } from '@shared/ipc-channels'
 import type { HostStudentStatus } from '@shared/protocol-schema'
 import { matchesTriageFilter, useTriageStore } from '../../store/triage-store'
+import { useHostScreenStore } from '../../store/screen-store'
 import { useAppStore } from '../../store/app-store'
 import TriageSummaryHeader from './TriageSummaryHeader'
 import StudentTriageCard from './StudentTriageCard'
 import EvidenceTimelineDrawer from './EvidenceTimelineDrawer'
+import ProctorScreenModal from './ProctorScreenModal'
 
 interface Props {
   students: HostStudentStatus[]
@@ -27,6 +29,28 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
   const muted = useTriageStore((s) => s.muted)
   const setMuted = useTriageStore((s) => s.setMuted)
   const [exporting, setExporting] = useState(false)
+  // Phase 3c: Screen Inspector modal + ภาพย่อของการ์ดแต่ละใบ
+  const [screenInspectId, setScreenInspectId] = useState<string | null>(null)
+  const thumbnails = useHostScreenStore((s) => s.thumbnails)
+  const clearAllThumbnails = useHostScreenStore((s) => s.clearAll)
+
+  useEffect(() => {
+    const unsub = window.ztExam.onEvent('host:exam-completed', () => clearAllThumbnails())
+    return unsub
+  }, [clearAllThumbnails])
+
+  const thumbnailByStudent = useMemo(() => {
+    const latest = new Map<string, { timestampMs: number; src: string }>()
+    for (const frame of Object.values(thumbnails)) {
+      if (frame.mode !== 'thumbnail') continue
+      const src = `data:${frame.mimeType};base64,${frame.imageBase64}`
+      const existing = latest.get(frame.studentId)
+      if (!existing || frame.timestampMs > existing.timestampMs) {
+        latest.set(frame.studentId, { timestampMs: frame.timestampMs, src })
+      }
+    }
+    return new Map([...latest.entries()].map(([studentId, entry]) => [studentId, entry.src]))
+  }, [thumbnails])
 
   useEffect(() => {
     void window.ztExam.getTriageOverview().then(setOverview)
@@ -112,7 +136,9 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
                 online={props.students.find((s) => s.studentId === view.studentId)?.online ?? false}
                 progress={progressByStudent.get(view.studentId) ?? null}
                 nowMs={nowMs}
+                thumbnailSrc={thumbnailByStudent.get(view.studentId) ?? null}
                 onSelect={() => setSelectedStudentId(view.studentId)}
+                onOpenScreen={() => setScreenInspectId(view.studentId)}
                 onToggleFreeze={() => {
                   void window.ztExam
                     .setStudentFreeze({ studentId: view.studentId, frozen: !view.frozen })
@@ -131,6 +157,15 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
           name={names.get(selected.studentId) ?? selected.studentId}
           nowMs={nowMs}
           onClose={() => setSelectedStudentId(null)}
+        />
+      )}
+
+      {screenInspectId && (
+        <ProctorScreenModal
+          studentId={screenInspectId}
+          name={names.get(screenInspectId) ?? screenInspectId}
+          nowMs={nowMs}
+          onClose={() => setScreenInspectId(null)}
         />
       )}
     </div>

@@ -1,4 +1,4 @@
-import { Eye, Snowflake, WifiOff } from 'lucide-react'
+import { Eye, Monitor, Snowflake, WifiOff } from 'lucide-react'
 import type { StudentTriageView } from '@shared/ipc-channels'
 import { timeAgo } from '../../store/triage-store'
 
@@ -8,7 +8,10 @@ interface Props {
   online: boolean
   progress: { answered: number; total: number } | null
   nowMs: number
+  /** ภาพย่อล่าสุดจาก screen monitoring (Phase 3c — data URL, null = ยังไม่มี) */
+  thumbnailSrc: string | null
   onSelect: () => void
+  onOpenScreen: () => void
   onToggleFreeze: () => void
   freezing: boolean
 }
@@ -85,6 +88,17 @@ export default function StudentTriageCard(props: Props): React.JSX.Element {
         </div>
       )}
 
+      {props.thumbnailSrc ? (
+        <button
+          type="button"
+          onClick={props.onOpenScreen}
+          className="mt-2 block w-full overflow-hidden rounded-lg border border-slate-800 bg-black"
+          title="คลิกเพื่อเปิด Screen Inspector (ภาพสด / ย้อนหลัง 5 นาที)"
+        >
+          <img src={props.thumbnailSrc} alt="thumbnail" className="aspect-video w-full object-cover" />
+        </button>
+      ) : null}
+
       {view.latestSummary && (
         <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1.5 text-xs text-slate-300">
           <span className="mr-1">{view.triageLevel === 'critical' ? '🚨' : '⚠️'}</span>
@@ -105,6 +119,14 @@ export default function StudentTriageCard(props: Props): React.JSX.Element {
           className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:bg-slate-800"
         >
           <Eye size={12} /> ดูหลักฐาน
+        </button>
+        <button
+          type="button"
+          disabled={!props.online}
+          onClick={props.onOpenScreen}
+          className="inline-flex items-center gap-1 rounded-lg border border-sky-700/60 px-2 py-1 text-[11px] text-sky-300 transition hover:bg-sky-950/40 disabled:opacity-40"
+        >
+          <Monitor size={12} /> ดูหน้าจอ
         </button>
         <button
           type="button"
