@@ -115,13 +115,13 @@
 
 ## 3. Checklist งานย่อย (Implementation Checklist)
 
-- [ ] **3b.1.1** สร้าง `AuditLogger` ที่คำนวณ `entryHash` และ `hostHmac` ต่อเนื่องจากรายการก่อนหน้าใน SQLite Transaction
-- [ ] **3b.1.2** สร้างฟังก์ชัน `verifyAuditChain(roomId)` ตรวจสอบความสมบูรณ์ของสายโซ่ตั้งแต่ Genesis จนถึงรายการสุดท้าย
-- [ ] **3b.2.1** สร้าง `EventCorrelator` และ `TriageEngine` สำหรับรวมเหตุการณ์ซ้ำ คำนวณคะแนนความน่าสงสัย และจัดลำดับนักเรียน
-- [ ] **3b.3.1** สร้าง `TriageSummaryHeader.tsx` และ `StudentTriageCard.tsx` ที่ดันการ์ดสีแดงขึ้นบนสุดเสมอโดยไม่มีผังที่นั่ง
-- [ ] **3b.3.2** สร้าง `EvidenceTimelineDrawer.tsx` แสดงรายละเอียดหลักฐานทางเทคนิคและฟอร์มบันทึกผลการเดินตรวจของผู้คุมสอบ
-- [ ] **3b.3.3** สร้างฟีเจอร์ส่งข้อความเตือนขึ้นจอนักเรียน (`PROCTOR_WARNING_MESSAGE`) และปุ่มสั่ง `Freeze / Unfreeze` รายเครื่อง
-- [ ] **3b.4.1** สร้าง `ReportExporter` ส่งออกรายงานสรุปเหตุการณ์และผลการตรวจสอบ Hash Chain หลังจบการสอบ
+- [x] **3b.1.1** สร้าง `AuditLogger` ที่คำนวณ `entryHash` และ `hostHmac` ต่อเนื่องจากรายการก่อนหน้าใน SQLite Transaction
+- [x] **3b.1.2** สร้างฟังก์ชัน `verifyAuditChain(roomId)` ตรวจสอบความสมบูรณ์ของสายโซ่ตั้งแต่ Genesis จนถึงรายการสุดท้าย
+- [x] **3b.2.1** สร้าง `EventCorrelator` และ `TriageEngine` สำหรับรวมเหตุการณ์ซ้ำ คำนวณคะแนนความน่าสงสัย และจัดลำดับนักเรียน
+- [x] **3b.3.1** สร้าง `TriageSummaryHeader.tsx` และ `StudentTriageCard.tsx` ที่ดันการ์ดสีแดงขึ้นบนสุดเสมอโดยไม่มีผังที่นั่ง
+- [x] **3b.3.2** สร้าง `EvidenceTimelineDrawer.tsx` แสดงรายละเอียดหลักฐานทางเทคนิคและฟอร์มบันทึกผลการเดินตรวจของผู้คุมสอบ
+- [x] **3b.3.3** สร้างฟีเจอร์ส่งข้อความเตือนขึ้นจอนักเรียน (`PROCTOR_WARNING_MESSAGE`) และปุ่มสั่ง `Freeze / Unfreeze` รายเครื่อง
+- [x] **3b.4.1** สร้าง `ReportExporter` ส่งออกรายงานสรุปเหตุการณ์และผลการตรวจสอบ Hash Chain หลังจบการสอบ
 
 ---
 
