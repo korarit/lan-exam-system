@@ -2,6 +2,7 @@ import os from 'node:os'
 import type { DetectionEvent, DetectionPolicyBody } from '@shared/policy-schema'
 import { runPowerShell } from './system-probes'
 import { makeDetectionEvent } from './process-inspector'
+import { isDomainAllowed } from '../host/domain-recorder'
 
 /* ============================================================
  * NetworkInspector — จับทางเดินทางออกนอก (Phase 3a.4)
@@ -70,23 +71,34 @@ export function matchForbiddenDomain(
 
 /**
  * DNS cache diff (pure): โดเมนใหม่ที่ไม่อยู่ใน baseline ระหว่างสอบ
- * ต้องส่ง FORBIDDEN_DNS_QUERY_DETECTED ทันทีถ้าตรงกับรายการต้องห้าม
+ * - อยู่ใน allowedDomains (รวม subdomain ลูก) → ไม่ฟ้อง
+ * - ตรง forbiddenDomains → FORBIDDEN_DNS_QUERY_DETECTED
+ * - อื่น ๆ ที่ไม่อนุมัติ (default-deny) → UNAUTHORIZED_DOMAIN_DETECTED (Phase 3a-plus)
  */
 export function diffDnsCache(
   baseline: Set<string>,
   current: string[],
-  policy: Pick<DetectionPolicyBody, 'forbiddenDomains' | 'allowedDomains'>
+  policy: Pick<DetectionPolicyBody, 'forbiddenDomains' | 'allowedDomains' | 'domainEnforcement'>
 ): DetectionEvent[] {
   const events: DetectionEvent[] = []
   for (const entry of current) {
     const host = entry.toLowerCase().trim()
     if (!host || baseline.has(host)) continue
+    if (isDomainAllowed(host, policy.allowedDomains)) continue
     const matched = matchForbiddenDomain(host, policy.forbiddenDomains, policy.allowedDomains)
     if (matched) {
       events.push(
         makeDetectionEvent('FORBIDDEN_DNS_QUERY_DETECTED', 'network-inspector', {
           domain: host,
           matchedRule: matched
+        })
+      )
+    } else {
+      // DNS layer เป็นการเตือนคู่ขนาน — บล็อกจริงทำได้เฉพาะ webRequest layer ของ WebContentsView
+      events.push(
+        makeDetectionEvent('UNAUTHORIZED_DOMAIN_DETECTED', 'network-inspector', {
+          domain: host,
+          enforcement: policy.domainEnforcement
         })
       )
     }

@@ -18,15 +18,33 @@ describe('diffDnsCache — OS DNS Resolver Cache Diffing', () => {
     const events = diffDnsCache(baseline, [
       'example.com',
       'api.openai.com',
-      'claude.ai',
-      'cdn.example.net'
+      'claude.ai'
     ], policy)
     const codes = events.map((e) => e.code)
     expect(codes).toContain('FORBIDDEN_DNS_QUERY_DETECTED')
     const domains = events.map((e) => e.detail.domain)
     expect(domains).toContain('api.openai.com')
     expect(domains).toContain('claude.ai')
-    expect(domains).not.toContain('cdn.example.net')
+  })
+
+  it('โดเมนใหม่ที่ไม่อนุมัติ (default-deny) → UNAUTHORIZED_DOMAIN_DETECTED', () => {
+    const events = diffDnsCache(baseline, ['cdn.example.net'], policy)
+    expect(events).toHaveLength(1)
+    expect(events[0]!.code).toBe('UNAUTHORIZED_DOMAIN_DETECTED')
+    expect(events[0]!.detail.domain).toBe('cdn.example.net')
+    expect(events[0]!.detail.enforcement).toBe('warn')
+  })
+
+  it('อยู่ใน allowedDomains (รวม subdomain ลูก) → ไม่ฟ้อง', () => {
+    const events = diffDnsCache(baseline, ['docs.exam.local', 'cdn.docs.exam.local', 'ab.chatgpt.com'], {
+      ...policy,
+      allowedDomains: ['docs.exam.local']
+    })
+    const domains = events.map((e) => e.detail.domain)
+    expect(domains).not.toContain('docs.exam.local')
+    expect(domains).not.toContain('cdn.docs.exam.local')
+    // โดเมนต้องห้ามยังฟ้องด้วยรหัสเดิม (ชนะ default-deny)
+    expect(domains).toContain('ab.chatgpt.com')
   })
 
   it('subdomain ของโดเมนต้องห้ามก็ติด (chat.openai.com)', () => {
