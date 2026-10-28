@@ -16,6 +16,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "cross-env ELECTRON_RUN_AS_NODE=1 electron node_modules/vitest/vitest.mjs run",
     "test:watch": "cross-env ELECTRON_RUN_AS_NODE=1 electron node_modules/vitest/vitest.mjs",
+    "keys:generate": "node scripts/keygen.ts",
+    "build:native": "node-gyp rebuild --directory=native",
+    "manifest:sign": "node scripts/sign-manifest.ts --root resources-unpacked",
+    "manifest:verify": "node scripts/sign-manifest.ts --root resources-unpacked --verify",
+    "fuses:apply": "node scripts/apply-fuses.ts",
     "package:win": "electron-vite build && electron-builder --win",
     "package:mac": "electron-vite build && electron-builder --mac",
     "package:linux": "electron-vite build && electron-builder --linux"
@@ -23,6 +28,7 @@
   "dependencies": {
     "better-sqlite3": "^13.0.3",
     "lucide-react": "^1.62.0",
+    "node-addon-api": "^8.9.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "selfsigned": "^5.5.0",
