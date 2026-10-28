@@ -10,3 +10,5 @@ Thumbs.db
 *.sqlite-shm
 .env
 .env.*
+
+*.tsbuildinfo
