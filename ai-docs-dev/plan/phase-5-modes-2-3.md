@@ -105,13 +105,13 @@
 
 ## 3. Checklist งานย่อย (Implementation Checklist)
 
-- [ ] **5.1.1** สร้าง `DocsViewController` จัดการ `WebContentsView` แบ่งครึ่งจอด้านขวาใน Mode 2
-- [ ] **5.1.2** สร้าง `UrlWhitelistFilter` ดักจับ `will-navigate`, `setWindowOpenHandler`, และ `onBeforeRequest` พร้อมส่ง Event รายงานเครื่องแม่
-- [ ] **5.2.1** สร้าง `LocalConnectProxy` รองรับ HTTP/HTTPS `CONNECT`, บล็อกการต่อด้วย IP ตรงๆ, และตรวจสอบกับ `allowedDomains`
-- [ ] **5.2.2** เชื่อมต่อ `LocalConnectProxy` เข้ากับระบบรายงาน Event (`PROXY_DOMAIN_ALLOWED` / `PROXY_DOMAIN_VIOLATION`) และโหมด `report-only` / `block-and-report`
-- [ ] **5.3.1** สร้าง `VsCodeController` สำหรับเตรียม `--user-data-dir` และ `--extensions-dir` ที่ล็อกค่า Proxy และปิดฟีเจอร์ AI
-- [ ] **5.3.2** สร้าง `VsCodeIntegrityWatchdog` ตรวจจับการแก้ไข `settings.json`, การแอบลง Extension เพิ่ม, หรือการรัน VS Code นอกโปรไฟล์ควบคุม
-- [ ] **5.4.1** สร้าง UI สำหรับ Mode 2 (แถบ URL + ปุ่ม Back/Forward/Home ของเอกสารที่อนุญาต) และ Floating HUD สำหรับ Mode 3
+- [x] **5.1.1** สร้าง `DocsViewController` จัดการ `WebContentsView` แบ่งครึ่งจอด้านขวาใน Mode 2 (`src/main/browser/docs-view.ts` — partition `nopersist:exam-docs-<session>`, bounds ครึ่งขวาใต้ HUD, ซ่อนเมื่อ frozen fail-closed)
+- [x] **5.1.2** สร้าง `UrlWhitelistFilter` ดักจับ `will-navigate`, `setWindowOpenHandler`, และ `onBeforeRequest` พร้อมส่ง Event รายงานเครื่องแม่ (`src/main/browser/url-filter.ts` รองรับ domain/`*.subdomain`/path-prefix + DETECT การต่อด้วย IP ตรง)
+- [x] **5.2.1** สร้าง `LocalConnectProxy` รองรับ HTTP/HTTPS `CONNECT`, บล็อกการต่อด้วย IP ตรงๆ, และตรวจสอบกับ `allowedDomains` (`src/main/proxy/connect-proxy.ts` — bind `127.0.0.1:<สุ่ม>`, resolve DNS เอง, รองรับ plain HTTP)
+- [x] **5.2.2** เชื่อมต่อ `LocalConnectProxy` เข้ากับระบบรายงาน Event (`PROXY_DOMAIN_VIOLATION` / `DIRECT_IP_PROXY_ATTEMPT` เข้า GuardEngine → GUARD_EVENT → triage) และโหมด `report-only` (warn = ปล่อยผ่าน) / `block-and-report` (block = 403)
+- [x] **5.3.1** สร้าง `VsCodeController` สำหรับเตรียม `--user-data-dir` และ `--extensions-dir` ที่ล็อกค่า Proxy และปิดฟีเจอร์ AI (`src/main/guard/vscode-controller.ts` — settings.json ตามแผน + env `ZTEXAM_VSCODE_EXTENSIONS_SRC`, `ZTEXAM_VSCODE_PATH`)
+- [x] **5.3.2** สร้าง `VsCodeIntegrityWatchdog` ตรวจจับการแก้ไข `settings.json`, การแอบลง Extension เพิ่ม, หรือการรัน VS Code นอกโปรไฟล์ควบคุม (+ Cursor/Windsurf) โดยสุ่ม poll 3–6 วินาที
+- [x] **5.4.1** สร้าง UI สำหรับ Mode 2 (แถบ URL + Home/Reload ของเอกสาร − `DocsPanel.tsx`, toggle ใน HudBar) และ Floating HUD สำหรับ Mode 3 (`FloatingHud.tsx` ในหน้าต่างจิ๋ว always-on-top, hash `#floating-hud`)
 
 ---
 
