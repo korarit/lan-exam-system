@@ -97,5 +97,25 @@ export const MIGRATIONS: Migration[] = [
         PRIMARY KEY (session_id, student_id, question_id)
       );
     `
+  },
+  {
+    /** Phase 3a-plus: โดเมนที่หน้า Doc Preview เรียกจริง (ครูอนุมัติแล้วฝังเป็น allowedDomains) */
+    version: 3,
+    sql: `
+      CREATE TABLE IF NOT EXISTS recorded_domains (
+        session_id     TEXT NOT NULL REFERENCES exam_sessions(id),
+        domain         TEXT NOT NULL,   -- hostname ที่ถูกเรียก (lowercase, ไม่รวม port)
+        top_domain     TEXT NOT NULL,   -- hostname ของหน้าเว็บชั้นบนสุดที่เรียกมัน
+        source         TEXT NOT NULL DEFAULT 'preview' CHECK (source IN ('preview', 'top-url')),
+        hits           INTEGER NOT NULL DEFAULT 1,
+        first_seen_ms  INTEGER NOT NULL,
+        last_seen_ms   INTEGER NOT NULL,
+        approved       INTEGER NOT NULL DEFAULT 0,
+        approved_at_ms INTEGER,
+        PRIMARY KEY (session_id, domain, top_domain)
+      );
+      CREATE INDEX IF NOT EXISTS idx_recorded_domains_session
+        ON recorded_domains(session_id, approved);
+    `
   }
 ]
