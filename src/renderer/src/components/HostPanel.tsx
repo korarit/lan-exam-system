@@ -18,10 +18,11 @@ import {
   ExternalLink,
   CheckCircle2,
   CircleDashed,
-  ShieldCheck
+  ShieldCheck,
+  ShieldQuestion
 } from 'lucide-react'
 import type { ExamMode, EnforcementMode } from '@shared/types/exam'
-import type { RecordedDomainItem } from '@shared/ipc-channels'
+import type { RecordedDomainItem, AttestationConfigResponse } from '@shared/ipc-channels'
 import { DEFAULT_FORBIDDEN_DOMAINS } from '@shared/policy-schema'
 import { useHostNetworkStore } from '../store/network-store'
 import { useAppStore } from '../store/app-store'
@@ -70,6 +71,23 @@ export default function HostPanel(): React.JSX.Element {
   const isLobby = examState === 'idle'
   const pendingDomains = recordedDomains.filter((r) => !r.approved)
 
+  /* ---------- Attestation (Phase 4) — ป้าย DEV MODE + สวิตช์บังคับตรวจลายเซ็น ---------- */
+  const [attestation, setAttestation] = useState<AttestationConfigResponse | null>(null)
+  const refreshAttestation = (): void => {
+    void window.ztExam.getAttestationConfig().then(setAttestation)
+  }
+
+  async function setAttestationEnforcement(enforced: boolean): Promise<void> {
+    await window.ztExam.setAttestationEnforce({ enforced })
+    refreshAttestation()
+    notify({
+      severity: enforced ? 'warning' : 'info',
+      message: enforced
+        ? 'บังคับตรวจลายเซ็น Manifest จริง — client ที่ไม่ได้เซ็นจะถูกปฏิเสธ'
+        : 'กลับสู่โหมด dev — อนุญาต client ที่ไม่ได้เซ็นลายเซ็น'
+    })
+  }
+
   useEffect(() => {
     // กู้สถานะห้องเมื่อกลับมาที่หน้านี้ (เช่น reload)
     void window.ztExam.getRoom().then((res) => setRoom(res.room))
@@ -109,6 +127,8 @@ export default function HostPanel(): React.JSX.Element {
     if (isDocsMode) {
       void window.ztExam.listRecordedDomains().then((res) => setRecordedDomains(res.records))
     }
+    // Attestation state (Phase 4)
+    void window.ztExam.getAttestationConfig().then(setAttestation)
     return () => {
       unsub()
       unsubState()
@@ -566,6 +586,41 @@ export default function HostPanel(): React.JSX.Element {
 
       {/* ---------- Triage Dashboard (Phase 3b): hash chain + คัดกรองคนแดง ---------- */}
       <TriageDashboard students={students} summaries={summaries} canExport={examState === 'finished'} />
+
+      {/* ---------- Attestations (Phase 4): DEV MODE banner + สวิตช์บังคับตรวจลายเซ็น ---------- */}
+      {attestation?.devMode && (
+        <div
+          className={`rounded-2xl border p-4 ${
+            attestation.signatureEnforced
+              ? 'border-amber-800/60 bg-amber-950/30'
+              : 'border-amber-700/70 bg-amber-950/40'
+          }`}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <ShieldQuestion size={18} className="text-amber-300" />
+            <span className="font-semibold text-amber-200">
+              ⚠️ DEV MODE: อนุญาต Client ที่ไม่ได้เซ็นลายเซ็น
+            </span>
+            <button
+              type="button"
+              onClick={() => void setAttestationEnforcement(!attestation.signatureEnforced)}
+              className={`ml-auto rounded-lg border px-3 py-1.5 text-xs transition ${
+                attestation.signatureEnforced
+                  ? 'border-emerald-800/60 text-emerald-300 hover:bg-emerald-950/60'
+                  : 'border-amber-800/60 text-amber-200 hover:bg-amber-900/50'
+              }`}
+            >
+              {attestation.signatureEnforced ? 'ตรวจลายเซ็นจริง: เปิด' : 'บังคับตรวจลายเซ็นจริง'}
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-amber-300/80">
+            Manifest {attestation.signatureEnforced ? 'ต้องผ่านลายเซ็น Ed25519' : 'ยอมรับแม้ไม่มีลายเซ็น (พัฒนาเท่านั้น)'}
+            {' · '}platform: {attestation.platform}
+            {attestation.trackedStudents.length > 0 &&
+              ` · ตรวจแล้ว ${attestation.trackedStudents.filter((t) => t.signed).length}/${attestation.trackedStudents.length} คน`}
+          </p>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
         <div className="mb-4 flex items-center gap-2">

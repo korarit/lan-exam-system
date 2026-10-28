@@ -201,6 +201,11 @@ export class GuardEngine {
     this.inputClipboardGuard.markInternalCopy(text)
   }
 
+  /** จุดแทรก event นอกตัว detector (native keyboard guard — Phase 4) */
+  pushExternalEvent(event: DetectionEvent): void {
+    this.enqueueEvent(event)
+  }
+
   /** renderer → guard: สถิติจังหวะการพิมพ์ (IKI ms) */
   ingestTypingSamples(intervalsMs: number[]): void {
     this.inputClipboardGuard.ingestTypingSamples(intervalsMs)

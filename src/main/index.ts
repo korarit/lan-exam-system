@@ -14,6 +14,7 @@ import {
 import { registerDomainHandlers } from './ipc/domain-handlers'
 import { registerAuditHandlers } from './ipc/audit-handlers'
 import { registerScreenHandlers } from './ipc/screen-handlers'
+import { registerAttestationHandlers } from './ipc/attestation-handlers'
 import { DomainAllowlistService } from './host/domain-allowlist'
 import { DocPreviewController } from './host/doc-preview'
 import { TriageService } from './host/triage-service'
@@ -26,6 +27,40 @@ import { RoomDiscoveryListener } from './network/discovery'
 import { ExamTlsClient } from './network/tls-client'
 import { CoreSessionManager } from './host/core-session-manager'
 import { GuardEngine } from './guard/guard-engine'
+import { NativeKeyboardGuard } from './guard/native-bridge'
+import { AttestationResponder } from './attestation/client-responder'
+import { AttestationHostService, type AttestationFailure } from './attestation/host-verifier'
+import { ensureLocalManifestSnapshot } from './attestation/manifest'
+import { inspectLaunch, describeFindings, isAllowedInDev, type LaunchFinding } from './guard/launch-guard'
+
+/* ============================================================
+ * Phase 4 — Launch Guard: วิ่งเป็นบรรทัดแรกสุด (ก่อนสิ่งใด ๆ ของแอป)
+ * Production: พบ flag/env อันตราย → ปฏิเสธการรันทันที (fail-closed)
+ * ============================================================ */
+const IS_DEV_BUILD = process.env.NODE_ENV !== 'production'
+const rawLaunchFindings = inspectLaunch({
+  argv: process.argv.slice(1),
+  execArgv: process.execArgv,
+  env: process.env,
+  hasChromiumSwitch: (name) => {
+    try {
+      return app.commandLine.hasSwitch(name)
+    } catch {
+      return false
+    }
+  }
+})
+const launchFindings: LaunchFinding[] = rawLaunchFindings.filter((finding) => !(IS_DEV_BUILD && isAllowedInDev(finding)))
+if (launchFindings.length > 0) {
+  console.error(`[launch-guard] พบสภาพแวดล้อมอันตราย: ${describeFindings(launchFindings)}`)
+  if (!IS_DEV_BUILD) {
+    // ห้ามเปิดหน้าโหมดนักเรียน/เครื่องแม่ที่ถูกแก้ CLI (เช่น --remote-debugging-port, ELECTRON_RUN_AS_NODE)
+    app.exit(1)
+  }
+}
+
+/** โหมดบังคับตรวจลายเซ็นจริงแม้ใน dev (env หรือสวิตช์จากหน้าตั้งค่าห้องสอบ) */
+const attestationStrictToggle = { enforced: process.env.ZTEXAM_STRICT_ATTESTATION === '1' }
 
 /* ---------- จัดการ isolation ของ multi-instance ก่อนพร้อมใช้งาน ---------- */
 const runtime = parseRuntimeArgs(process.argv)
@@ -55,6 +90,9 @@ let screenStreamController: ScreenStreamController | null = null
 const discovery = new RoomDiscoveryListener()
 let studentClient: ExamTlsClient | null = null
 let guardEngine: GuardEngine | null = null
+let nativeKeyboardGuard: NativeKeyboardGuard | null = null
+let attestationResponder: AttestationResponder | null = null
+let attestationHost: AttestationHostService | null = null
 /** IP เครื่องแม่จากการ join ล่าสุด (NetworkInspector ยกเว้นให้เสมอ) */
 let lastJoinedHostIp: string | null = null
 /** Room ID ที่เข้าล่าสุด (ring buffer ใช้ตั้งชื่อโฟลเดอร์ชั่วคราว — Phase 3c) */
@@ -113,9 +151,16 @@ function ensureSessionManager(): CoreSessionManager {
     },
     onExamStarted: (roomId, policy) => {
       ensureTriageService().startRoom(roomId, policy)
+      // Phase 4: เริ่มสุ่มตรวจ attestation ตลอดการสอบ (45–120 วินาที/รอบ)
+      ensureAttestationHostService().startExam(
+        ensureRoomManager().students.map((student) => student.studentId)
+      )
     },
     onExamEnded: (roomId, reason) => {
       ensureTriageService().endRoom(roomId, reason)
+      // Phase 4: จบการสอบ → หยุดตรวจ attestation (เคลียร์ timer ทั้งหมด)
+      attestationHost?.stop()
+      attestationHost = null
     },
     // Phase 3c: รายการเซกเมนต์ย้อนหลังจากนักเรียน → ProctorViewService
     onStudentNetMessage: (studentId, type, payload) => {
@@ -126,6 +171,11 @@ function ensureSessionManager(): CoreSessionManager {
       // Phase 3c (UDP): นักเรียนประกาศตำแหน่งช่องทาง UDP สตรีมหน้าจอ
       if (type === NetMsgType.screenUdpRegister) {
         ensureProctorViewService().handleUdpRegister(studentId, payload)
+        return true
+      }
+      // Phase 4: คำตอบ attestation ของเครื่องนักเรียน (HMAC ผูกกับ TLS exporter)
+      if (type === NetMsgType.attestationResponse) {
+        ensureAttestationHostService().handleResponse(studentId, payload)
         return true
       }
       return false
@@ -212,6 +262,8 @@ function ensureRoomManager(): HostRoomManager {
       // Phase 3b: สถานะหลุด/กลับมาเชื่อมต่อ → triage (ลำดับความสำคัญของ DISCONNECTED)
       for (const student of students) {
         triageService?.setStudentConnection(student.studentId, student.online)
+        // Phase 4: หลุดการรับ → ยก pending challenge (จะถูกท้าถามใหม่ตอน reconnect)
+        if (!student.online) attestationHost?.forget(student.studentId)
       }
     },
     onRoomClosed: () => {
@@ -221,6 +273,9 @@ function ensureRoomManager(): HostRoomManager {
       ensureDomainAllowlist().setEnforcementOverride(null)
       // Phase 3c: ล้าง thumbnail store ของห้องเก่า
       proctorViewService?.clearAll()
+      // Phase 4: หยุด attestation scheduler ของห้องเก่า
+      attestationHost?.stop()
+      attestationHost = null
       // Phase 3b: เริ่ม chain/state ใหม่เมื่อเปิดห้องถัดไป
       triageService = null
     },
@@ -240,12 +295,20 @@ function ensureRoomManager(): HostRoomManager {
 
 function ensureStudentClient(): ExamTlsClient {
   studentClient ??= new ExamTlsClient({
-    onConnectionState: forwardConnectionState(sendEventToWindow),
+    onConnectionState: (status) => {
+      // Phase 4: ท่อใหม่ = exporter คนละค่า — เครื่องนักเรียนต้องส่ง manifest ใหม่หลัง reconnect
+      if (status.state === 'connecting') ensureAttestationResponder(true).resetOnReconnect()
+      forwardConnectionState(sendEventToWindow)(status)
+    },
     onBinary: (subType, payload) => {
       ensureScreenStreamController().handleBinaryFrame(subType, payload)
     },
     onMessage: createStudentExamEventForwarder(sendEventToWindow, () => mainWindow, {
       onNetMessage: (type, payload) => {
+        // Phase 4: คำท้า attestation จากเครื่องแม่ (ผูกกับ TLS exporter ของเรา)
+        if (type === NetMsgType.attestationChallenge) {
+          return ensureAttestationResponder(false).handleChallengeMessage(payload)
+        }
         // Phase 3c: เปิดเซสชันบันทึกหน้าจอ (คีย์จากเครื่องแม่ผ่านหน่วยความจำ)
         if (type === NetMsgType.screenSession) {
           const session = payload as { screenBufferKey: string; thumbnailIntervalMs: number }
@@ -296,6 +359,75 @@ function ensureGuardEngine(): GuardEngine {
   return guardEngine
 }
 
+/** Phase 4: นักเรียน — ผู้ตอบคำถามความถูกต้องของไฟล์แอป (ผูกกับ TLS session) */
+function ensureAttestationResponder(resetOnly: boolean): AttestationResponder {
+  attestationResponder ??= new AttestationResponder({
+    sendToHost: (type, payload) => ensureStudentClient().sendExamMessage(type, payload),
+    getTlsExporter: () => studentClient?.exporter ?? null,
+    getSnapshot: () => ensureLocalManifestSnapshot(IS_DEV_BUILD)
+  })
+  void resetOnly
+  return attestationResponder
+}
+
+/** Phase 4: เครื่องแม่ — ตัวตรวจ attestation (สุ่ม challenge ตลอดการสอบ) */
+function ensureAttestationHostService(): AttestationHostService {
+  attestationHost ??= new AttestationHostService({
+    getRoom: () => ensureRoomManager(),
+    isDev: () => IS_DEV_BUILD,
+    isSignatureEnforced: () => attestationStrictToggle.enforced,
+    onVerified: (ok, isNew) => {
+      if (isNew && ok.signedOnDevice) {
+        console.warn(`[attestation] ยืนยันไฟล์แอปผ่าน (ลายเซ็นตรง): ${ok.studentId}`)
+      }
+    },
+    onFailed: (failure: AttestationFailure) => {
+      handleAttestationFailure(failure)
+    }
+  })
+  return attestationHost
+}
+
+/** Phase 4: attestation ล้มเหลว → คนแดงใน triage + hash chain + freeze จอข้อสอบทันที */
+function handleAttestationFailure(failure: AttestationFailure): void {
+  console.error(`[attestation] ตรวจไม่ผ่าน: ${failure.studentId} (${failure.reason})`)
+  const event = {
+    eventId: `attest-${failure.challengeId}`,
+    code: 'ATTESTATION_VERIFICATION_FAILED',
+    severity: 'critical',
+    score: 80,
+    detectorId: 'attestation-verifier',
+    detail: {
+      reason: failure.reason,
+      challengeId: failure.challengeId.slice(0, 60)
+    },
+    occurredAtMs: Date.now()
+  } as const
+  try {
+    ensureTriageService().recordStudentEvents(failure.studentId, [event])
+  } catch {
+    // chain ยังไม่พร้อม (ยังไม่เริ่มสอบ) — แค่แจ้งหน้าจอครูตามด้านล่าง
+  }
+  sendEventToWindow('host:guard-events', { studentId: failure.studentId, events: [event] })
+  // fail-closed: แช่หน้าจอข้อสอบของเครื่องนักเรียนทันที (ครูปลดได้หลังตรวจ)
+  roomManager?.tlsServerInstance?.sendToStudent(failure.studentId, NetMsgType.freezeExam, {
+    frozen: true,
+    reason: 'ยืนยันความถูกต้องของไฟล์แอปไม่ผ่าน (Attestation Failed)'
+  })
+}
+
+/** Phase 4: native addon บล็อกปุ่มลัดระดับระบบ (Windows) / fallback ตามแพลตฟอร์ม */
+function ensureNativeKeyboardGuard(): NativeKeyboardGuard {
+  nativeKeyboardGuard ??= new NativeKeyboardGuard({
+    getMainWindow: () => mainWindow,
+    emitEvent: (event) => {
+      // ปุ่มถูกบล็อก → วิ่งเข้าท่อตรวจจับเดิม (GUARD_EVENT → hash chain → triage → pin-on-critical)
+      ensureGuardEngine().pushExternalEvent(event)
+    }
+  })
+  return nativeKeyboardGuard
+}
+
 function sendEventToWindow(channel: string, payload: unknown): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
   // push event ทุกตัวผ่าน Zod validation ก่อนส่งเสมอ
@@ -340,11 +472,26 @@ void app.whenReady().then(() => {
       lastJoinedRoomId = roomId
     }
   })
+  const kioskHooks = makeKioskHooks(() => mainWindow, runtime.windowedKiosk)
   registerExamHandlers(router, state, {
     getSessionManager: ensureSessionManager,
     getStudentClient: ensureStudentClient,
     getGuardEngine: () => (state.role === 'student' ? ensureGuardEngine() : null),
-    ...makeKioskHooks(() => mainWindow, runtime.windowedKiosk)
+    ...kioskHooks,
+    // Phase 4: เริ่ม/หยุด native keyboard guard พร้อมเข้า-ออกโหมด Kiosk
+    enterKiosk: () => {
+      kioskHooks.enterKiosk()
+      if (state.role === 'student' && !runtime.windowedKiosk) ensureNativeKeyboardGuard().start()
+    },
+    exitKiosk: () => {
+      nativeKeyboardGuard?.stop()
+      kioskHooks.exitKiosk()
+    }
+  })
+  registerAttestationHandlers(router, state, {
+    getAttestationHost: () => (state.role === 'host' ? attestationHost : null),
+    isDev: () => IS_DEV_BUILD,
+    strictToggle: attestationStrictToggle
   })
   registerDomainHandlers(router, state, {
     getSessionManager: ensureSessionManager,
@@ -361,6 +508,8 @@ void app.whenReady().then(() => {
     getProctorViewService: () => (state.role === 'host' ? ensureProctorViewService() : null)
   })
   studentEstablishedHandler = (studentId) => {
+    // Phase 4: ท่อ handshake ใหม่ = ยิง challenge attestation ทันที (แล้วสุ่มเวลาตามปกติ)
+    ensureAttestationHostService().noteStudentEstablished(studentId)
     try {
       ensureSessionManager().handleStudentEstablished(studentId)
     } catch {
@@ -399,7 +548,11 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   studentClient?.abort()
-  // Phase 3c: Zero-Trace — ลบ ring buffer/คีย์ทันทีเมื่อปิดแอป
+  // Phase 4: ปลด native hook + หยุด attestation เสมอ (กันปล่อย keyboard hook ค้างระบบ)
+  nativeKeyboardGuard?.stop()
+  attestationHost?.stop()
+  attestationHost = null
+  // Prompt 3c: Zero-Trace — ลบ ring buffer/คีย์ทันทีเมื่อปิดแอป
   screenStreamController?.stopSession('app-quit')
   proctorViewService?.clearAll()
   void roomManager?.closeRoom()
