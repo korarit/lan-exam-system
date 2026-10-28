@@ -40,6 +40,8 @@ export interface ExamTlsServerOptions {
   onStudentJoined?: (studentId: string, studentName: string) => void
   /** เรียกเมื่อ handshake/RESUME สำเร็จ — CoreSessionManager ใช้ส่ง STATE_RECOVERY */
   onStudentEstablished?: (studentId: string) => void
+  /** Phase 3c: binary frame จากนักเรียน (thumbnail / ring segment data) */
+  onStudentBinary?: (studentId: string, subType: number, payload: Buffer) => void
   onAnomaly?: (source: string | null, reason: string) => void
 }
 
@@ -361,6 +363,10 @@ export class ExamTlsServer {
         remainingExamSeconds: this.remainingSeconds()
       })
       this.notifyStudentsChanged()
+    })
+    connection.on('binary', ({ subType, payload }: { subType: number; payload: Buffer }) => {
+      record.lastSeenAtMs = Date.now()
+      this.opts.onStudentBinary?.(record.studentId, subType, payload)
     })
     connection.on('closed', () => {
       const list = this.liveConnections.get(record.studentId) ?? []

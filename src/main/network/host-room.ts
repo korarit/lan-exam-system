@@ -42,6 +42,8 @@ export interface HostRoomManagerOptions {
   onAnomaly?: (source: string | null, reason: string) => void
   /** เรียกเมื่อ handshake/RESUME ของนักเรียนสำเร็จ (CoreSessionManager ใช้กู้คืนสถานะ) */
   onStudentEstablished?: (studentId: string) => void
+  /** Phase 3c: binary frame จากนักเรียน (thumbnail / segment data) */
+  onStudentBinary?: (studentId: string, subType: number, payload: Buffer) => void
 }
 
 /**
@@ -117,7 +119,8 @@ export class HostRoomManager extends EventEmitter {
           .run(studentId, roomId, studentName, randomUUID(), 'joined', 0, Date.now())
       },
       onAnomaly: (source, reason) => this.opts.onAnomaly?.(source, reason),
-      onStudentEstablished: (studentId) => this.opts.onStudentEstablished?.(studentId)
+      onStudentEstablished: (studentId) => this.opts.onStudentEstablished?.(studentId),
+      onStudentBinary: (studentId, subType, payload) => this.opts.onStudentBinary?.(studentId, subType, payload)
     })
     const tcpPort = await tlsServer.listen()
 

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import type { TLSSocket } from 'node:tls'
-import { FrameDecoder, writeJsonFrame, FrameType } from './framing'
+import { FrameDecoder, writeJsonFrame, encodeFrame, FrameType } from './framing'
 import {
   NetEnvelopeSchema,
   NetMessagePayloadSchemas,
@@ -12,6 +12,8 @@ import { computeHmac, verifyHmacTimingSafe } from '../crypto/primitives'
 
 export interface SecureConnectionEvents {
   message: (message: { type: string; payload: unknown; seq: number }) => void
+  /** Phase 3c: binary frame (thumbnail / ring segment) — ความปลอดภัยอาศัย TLS อยู่แล้ว */
+  binary: (frame: { subType: number; payload: Buffer }) => void
   anomaly: (reason: string) => void
   closed: () => void
 }
@@ -36,6 +38,14 @@ export class SecureConnection extends EventEmitter {
     const decoder = new FrameDecoder()
     socket.pipe(decoder)
     decoder.on('data', (frame: { type: number; payload: Buffer }) => {
+      if (frame.type === FrameType.binary) {
+        if (frame.payload.length < 1) {
+          this.anomaly('EMPTY_BINARY_FRAME')
+          return
+        }
+        this.emit('binary', { subType: frame.payload[0] ?? 0, payload: frame.payload.subarray(1) })
+        return
+      }
       if (frame.type !== FrameType.json) {
         this.anomaly('UNSUPPORTED_FRAME_TYPE')
         return
@@ -100,6 +110,14 @@ export class SecureConnection extends EventEmitter {
       envelope.hmac = this.computeEnvelopeHmac(envelope).toString('base64')
     }
     writeJsonFrame(this.socket, envelope)
+  }
+
+  /** ส่ง binary frame (Phase 3c: thumbnail / segment) — ใช้ความปลอดภัยจาก TLS โดยตรง */
+  sendBinary(subType: number, payload: Buffer): void {
+    if (this.destroyed) return
+    this.socket.write(
+      encodeFrame(Buffer.concat([Buffer.from([subType & 0xff]), payload]), FrameType.binary)
+    )
   }
 
   destroy(): void {

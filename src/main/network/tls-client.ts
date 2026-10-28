@@ -55,6 +55,8 @@ export class HandshakeProofError extends Error {
 export interface ExamTlsClientOptions {
   onConnectionState: (status: StudentConnectionStatus) => void
   onMessage?: (type: string, payload: unknown) => void
+  /** Phase 3c: binary frame จากเครื่องแม่ (segment ที่ขอ) */
+  onBinary?: (subType: number, payload: Buffer) => void
 }
 
 /**
@@ -112,6 +114,12 @@ export class ExamTlsClient {
     if (this.stopped) return
     const connection = this.connection
     if (connection && !connection.isDestroyed) connection.send(type, payload)
+  }
+
+  /** Phase 3c: ส่ง binary frame ไปเครื่องแม่ (thumbnail / ฯลฯ) */
+  sendBinary(subType: number, payload: Buffer): void {
+    const connection = this.connection
+    if (connection && !connection.isDestroyed) connection.sendBinary(subType, payload)
   }
 
   async connect(options: ConnectOptions): Promise<JoinResult> {
@@ -315,6 +323,10 @@ export class ExamTlsClient {
   }
 
   private wireEstablishedHandlers(connection: SecureConnection): void {
+    connection.on('binary', ({ subType, payload }: { subType: number; payload: Buffer }) => {
+      this.monitor?.recordActivity()
+      this.opts.onBinary?.(subType, payload)
+    })
     connection.on('message', ({ type, payload }) => {
       this.monitor?.recordActivity()
       if (type === NetMsgType.heartbeatPong) {
