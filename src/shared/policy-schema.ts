@@ -49,6 +49,27 @@ export const PolicySchedulerConfigSchema = z
   .strict()
 export type PolicySchedulerConfig = z.infer<typeof PolicySchedulerConfigSchema>
 
+/** โดเมนต้องห้ามเริ่มต้น (ฝั่งเครื่องแม่ — UI แสดง badge เตือนเมื่อรายการที่ record ชนกัน) */
+export const DEFAULT_FORBIDDEN_DOMAINS = [
+  'api.openai.com',
+  'chatgpt.com',
+  'claude.ai',
+  'api.anthropic.com',
+  'api.deepseek.com',
+  'generativelanguage.googleapis.com',
+  'gemini.google.com',
+  'copilot.microsoft.com',
+  'www.bing.com',
+  'duckduckgo.com',
+  'perplexity.ai',
+  'grok.com',
+  'ollama.com'
+]
+
+/** พฤติกรรมเมื่อเว็บของนักเรียนพยายามเข้าโดเมนที่ไม่อนุมัติ (Phase 3a-plus) */
+export const DomainEnforcementSchema = z.enum(['warn', 'block'])
+export type DomainEnforcement = z.infer<typeof DomainEnforcementSchema>
+
 /** โครงนโยบายตรวจจับทั้งหมด (เครื่องแม่ส่งให้นักเรียนตอน join / ระหว่างสอบได้) */
 export const DetectionPolicyBodySchema = z
   .object({
@@ -64,7 +85,9 @@ export const DetectionPolicyBodySchema = z
     /** โดเมนต้องห้าม (ตรวจกับ OS DNS cache) เช่น api.openai.com */
     forbiddenDomains: z.array(z.string().min(3).max(200)).max(512),
     /** โดเมนยอมรับได้ (ไม่ฟ้อง) เช่น แพ็กเกจเอกสารของห้องสอบ */
-    allowedDomains: z.array(z.string().min(3).max(200)).max(512)
+    allowedDomains: z.array(z.string().min(3).max(200)).max(512),
+    /** พฤติกรรมเมื่อเว็บของนักเรียนพยายามเข้าโดเมนที่ไม่อนุมัติ (default: warn) */
+    domainEnforcement: DomainEnforcementSchema.default('warn')
   })
   .strict()
 export type DetectionPolicyBody = z.infer<typeof DetectionPolicyBodySchema>
@@ -102,6 +125,7 @@ export const DetectionEventCatalog = {
   EXTERNAL_CLIPBOARD_INJECTION: { category: 'automation-macro', severity: 'critical', score: 40 },
   TOPMOST_OVERLAY_WINDOW_DETECTED: { category: 'stealth-overlay', severity: 'critical', score: 40 },
   KIOSK_ESCAPE_ATTEMPT: { category: 'stealth-overlay', severity: 'critical', score: 25 },
+  UNAUTHORIZED_DOMAIN_DETECTED: { category: 'network-tunnel', severity: 'critical', score: 25 },
   WINDOW_BLUR_PROLONGED: { category: 'stealth-overlay', severity: 'warning', score: 20 },
   ABNORMAL_TYPING_PATTERN: { category: 'automation-macro', severity: 'warning', score: 15 },
   DISPLAY_CONFIG_CHANGED: { category: 'stealth-overlay', severity: 'warning', score: 15 },
@@ -155,21 +179,7 @@ function rule(
 }
 
 export function buildDefaultPolicy(examMode: 'closed' | 'in-app-docs' | 'external-tools'): DetectionPolicyBody {
-  const forbiddenDomains = [
-    'api.openai.com',
-    'chatgpt.com',
-    'claude.ai',
-    'api.anthropic.com',
-    'api.deepseek.com',
-    'generativelanguage.googleapis.com',
-    'gemini.google.com',
-    'copilot.microsoft.com',
-    'www.bing.com',
-    'duckduckgo.com',
-    'perplexity.ai',
-    'grok.com',
-    'ollama.com'
-  ]
+  const forbiddenDomains = DEFAULT_FORBIDDEN_DOMAINS
   const rules: ProcessSignatureRule[] = [
     rule('local-ai-runtime', 'ai-assistant', 'critical', 45, {
       exeNames: [
