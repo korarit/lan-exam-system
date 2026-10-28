@@ -3,12 +3,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { HostDatabase, getDefaultDatabasePath } from './db'
+import { AuditLogger, deriveAuditKey } from '../host/audit-log'
 import {
   encryptAes256Gcm,
   generateAesKey,
   decryptAes256Gcm,
-  computeHmac,
-  sha256Hex
+  computeHmac
 } from '../crypto/primitives'
 
 const tempDirs: string[] = []
@@ -112,46 +112,42 @@ describe('HostDatabase', () => {
     db.close()
   })
 
-  it('appends audit log entries as a valid hash chain', () => {
+  it('appends audit log entries as a valid hash chain (via AuditLogger)', () => {
     const db = new HostDatabase({ filePath: makeTempDb().filePath })
     const sessionId = insertSession(db)
+    db.db
+      .prepare(`UPDATE exam_sessions SET crypto_salt = ? WHERE id = ?`)
+      .run('a'.repeat(64), sessionId)
+    const logger = new AuditLogger(db, (roomId) => deriveAuditKey('a'.repeat(64), roomId))
 
-    const insert = db.db.prepare(
-      `INSERT INTO audit_logs (session_id, student_id, timestamp_ms, event_type, severity, payload_json, prev_hash, entry_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-
-    let prevHash = sha256Hex('genesis')
-    const now = Date.now()
-    const events: Array<{ type: string; payload: string }> = [
-      { type: 'app-launched', payload: '{"ok":true}' },
-      { type: 'kiosk-focus-lost', payload: '{"window":"other"}' },
-      { type: 'process-blacklisted', payload: '{"exe":"remote.exe"}' }
+    logger.appendGenesis(sessionId, { policyVersion: 1 }, Date.now())
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [
+      { type: 'kiosk-focus-lost', payload: { window: 'other' } },
+      { type: 'process-blacklisted', payload: { exe: 'remote.exe' } },
+      { type: 'network-unauthorized', payload: { domain: 'api.openai.com' } }
     ]
-    events.forEach((ev, i) => {
-      const entryHash = sha256Hex(prevHash + ev.type + ev.payload)
-      insert.run(sessionId, 'std-01', now + i, ev.type, 'warning', ev.payload, prevHash, entryHash)
-      prevHash = entryHash
+    events.forEach((event, index) => {
+      const entry = logger.append(sessionId, {
+        studentId: 'std-01',
+        eventCode: event.type,
+        category: 'test',
+        severity: 'warning',
+        scoreDelta: 5,
+        summaryText: event.type,
+        evidence: event.payload
+      })
+      expect(entry.seqNo).toBe(index + 1)
     })
 
     const rows = db.db
-      .prepare(`SELECT * FROM audit_logs WHERE session_id = ? ORDER BY id`)
-      .all(sessionId) as Array<{
-      event_type: string
-      payload_json: string
-      prev_hash: string
-      entry_hash: string
-    }>
-    expect(rows).toHaveLength(3)
-
+      .prepare(`SELECT * FROM audit_logs WHERE session_id = ? ORDER BY seq_no`)
+      .all(sessionId) as Array<{ seq_no: number; event_type: string; prev_hash: string; entry_hash: string }>
+    expect(rows).toHaveLength(4)
     // ตรวจ chain ย้อนหลัง: แก้แถวใดแถวหนึ่งจะตรวจพบทันที
-    let hash = sha256Hex('genesis')
-    for (const row of rows) {
-      const expected = sha256Hex(hash + row.event_type + row.payload_json)
-      expect(row.prev_hash).toBe(hash)
-      expect(row.entry_hash).toBe(expected)
-      hash = row.entry_hash
-    }
+    const verification = logger.verifyAuditChain(sessionId)
+    expect(verification.valid).toBe(true)
+    expect(rows[0]!.prev_hash).toBe('0'.repeat(64))
+    expect(rows[1]!.prev_hash).toBe(rows[0]!.entry_hash)
     db.close()
   })
 
