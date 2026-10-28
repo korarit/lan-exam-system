@@ -21,11 +21,12 @@ import {
   ShieldCheck
 } from 'lucide-react'
 import type { ExamMode, EnforcementMode } from '@shared/types/exam'
-import type { DetectionEvent, HostGuardEventsEvent, RecordedDomainItem } from '@shared/ipc-channels'
+import type { RecordedDomainItem } from '@shared/ipc-channels'
 import { DEFAULT_FORBIDDEN_DOMAINS } from '@shared/policy-schema'
 import { useHostNetworkStore } from '../store/network-store'
 import { useAppStore } from '../store/app-store'
 import type { HostExamSummariesEvent } from '@shared/ipc-channels'
+import TriageDashboard from '../core-host/dashboard/TriageDashboard'
 
 const MODE_LABELS: Record<ExamMode, string> = {
   closed: 'Closed — ปิดเครือข่าย',
@@ -57,8 +58,7 @@ export default function HostPanel(): React.JSX.Element {
   const [starting, setStarting] = useState(false)
   const [picking, setPicking] = useState(false)
 
-  /* ---------- Guard events (Phase 3a) ---------- */
-  const [guardEvents, setGuardEvents] = useState<Array<HostGuardEventsEvent>>([])
+  /* ---------- Guard events (Phase 3a) — notify เหตุการณ์วิกฤต / triage จัดการแสดงผลเอง ---------- */
   const studentNames = new Map(students.map((s) => [s.studentId, s.studentName]))
 
   /* ---------- Doc Preview & Domain Allowlist (Phase 3a-plus) ---------- */
@@ -93,7 +93,6 @@ export default function HostPanel(): React.JSX.Element {
       })
     })
     const unsubGuard = window.ztExam.onEvent('host:guard-events', (event) => {
-      setGuardEvents((prev) => [...prev.slice(-40), event])
       const critical = event.events.filter((e) => e.severity === 'critical')
       if (critical.length > 0) {
         const names = studentNames.get(event.studentId) ?? event.studentId
@@ -565,49 +564,8 @@ export default function HostPanel(): React.JSX.Element {
         </div>
       )}
 
-      {/* ---------- Guard events (Phase 3a): ฟีดเหตุการณ์ตรวจจับแบบ real-time ---------- */}
-      {guardEvents.length > 0 && (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-          <div className="mb-4 flex items-center gap-2">
-            <ShieldAlert size={18} className="text-amber-400" />
-            <h3 className="font-semibold">เหตุการณ์ตรวจจับ ({guardEvents.length})</h3>
-            <span className="ml-auto text-xs text-slate-500">คัดกรองเต็มรูปแบบใน Phase 3b</span>
-          </div>
-          <ul className="max-h-64 space-y-2 overflow-y-auto">
-            {guardEvents
-              .slice()
-              .reverse()
-              .map((entry, entryIndex) => (
-                <li key={`${entry.studentId}-${entryIndex}`} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-sm">
-                  <div className="font-medium text-slate-200">
-                    {studentNames.get(entry.studentId) ?? entry.studentId}
-                  </div>
-                  <ul className="mt-1 space-y-1">
-                    {entry.events.map((event: DetectionEvent) => (
-                      <li key={event.eventId} className="flex items-start gap-2 text-xs">
-                        <span
-                          className={`mt-0.5 rounded px-1.5 py-0.5 font-mono ${
-                            event.severity === 'critical'
-                              ? 'bg-red-950/60 text-red-300'
-                              : 'bg-amber-950/50 text-amber-300'
-                          }`}
-                        >
-                          {event.code}
-                        </span>
-                        <span className="text-slate-500">
-                          {Object.entries(event.detail)
-                            .filter(([, v]) => v !== '')
-                            .map(([k, v]) => `${k}=${v}`)
-                            .join(' · ')}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </li>
-              ))}
-          </ul>
-        </div>
-      )}
+      {/* ---------- Triage Dashboard (Phase 3b): hash chain + คัดกรองคนแดง ---------- */}
+      <TriageDashboard students={students} summaries={summaries} canExport={examState === 'finished'} />
 
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
         <div className="mb-4 flex items-center gap-2">

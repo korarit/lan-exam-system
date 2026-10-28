@@ -14,6 +14,7 @@ import { useStudentNetworkStore } from '../store/network-store'
 import { useAppStore } from '../store/app-store'
 import { useStudentExamStore } from '../store/exam-store'
 import ExamView from '../core-student/ExamView'
+import ProctorOverlay from '../core-student/ProctorOverlay'
 
 function timeSince(ms: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000))
@@ -116,6 +117,8 @@ export default function StudentPanel(): React.JSX.Element {
     <div className="relative h-full">
       {/* หน้าทำข้อสอบ (Kiosk) ครอบทั้งหน้าเมื่อ phase ≥ waiting */}
       <StudentExamLayers />
+      {/* ผลของปุ่มผู้คุมสอบ: ข้อความเตือนขึ้นจอ + Freeze เครื่อง (Phase 3b) */}
+      <ProctorOverlay />
 
       {/* Fail-closed overlay บังทุกอย่างเมื่อหลุดการเชื่อมต่อ */}
       {frozenFull && (
