@@ -98,6 +98,10 @@ export function buildEventSummary(event: DetectionEvent): string {
       return 'สัญญาณว่ารันอยู่ในเครื่องเสมือน (VM)'
     case 'REMOTE_SESSION_SUSPECTED':
       return `สัญญาณว่าถูกควบคุมจากระยะไกล${process ? ` (${process})` : ''}`
+    case 'ATTESTATION_VERIFICATION_FAILED':
+      return `ยืนยันความถูกต้องของไฟล์แอปไม่ผ่าน: ${d.reason ?? 'ไม่ทราบสาเหตุ'}`
+    case 'BLOCKED_SYSTEM_SHORTCUT':
+      return `พยายามกดปุ่มลัดระดับระบบที่ถูกบล็อก: ${d.shortcut ?? 'ไม่ทราบปุ่ม'}`
     default:
       return [event.code, ...Object.entries(d).filter(([, v]) => v !== '').map(([k, v]) => `${k}=${v}`)].join(' · ')
   }

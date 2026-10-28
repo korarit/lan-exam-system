@@ -258,6 +258,20 @@ export interface StudentFreezeStateEvent {
   reason?: string | undefined
 }
 
+/* ---------- Attestation payloads (Phase 4) ---------- */
+
+export interface AttestationTrackedStudent {
+  studentId: string
+  manifestHash: string | null
+  signed: boolean
+}
+export interface AttestationConfigResponse {
+  devMode: boolean
+  signatureEnforced: boolean
+  platform: string
+  trackedStudents: AttestationTrackedStudent[]
+}
+
 /* ---------- Screen Monitoring payloads (Phase 3c) ---------- */
 
 export interface ScreenSourceInfo {
@@ -474,6 +488,9 @@ export interface IpcInvokeMap {
   'host:set-student-freeze': { req: SetStudentFreezeRequest; res: OkResponse }
   'host:export-incident-report': { req: void; res: ExportFileResponse }
   'host:export-audit-bundle': { req: void; res: ExportFileResponse }
+  /* ---------- Attestation (Phase 4) ---------- */
+  'host:get-attestation-config': { req: void; res: AttestationConfigResponse }
+  'host:set-attestation-enforce': { req: { enforced: boolean }; res: OkResponse }
   /* ---------- Screen Monitoring (Phase 3c) ---------- */
   'student:screen-get-sources': { req: void; res: StudentScreenSourcesResponse }
   'student:screen-segment': { req: StudentScreenSegmentRequest; res: OkResponse }
@@ -744,6 +761,29 @@ export const IpcInvokeSchemas: {
         reason: z.string().max(200).optional()
       })
       .strict()
+  },
+  'host:get-attestation-config': {
+    request: z.void(),
+    response: z
+      .object({
+        devMode: z.boolean(),
+        signatureEnforced: z.boolean(),
+        platform: z.string().max(20),
+        trackedStudents: z.array(
+          z
+            .object({
+              studentId: z.string().min(1).max(40),
+              manifestHash: z.string().length(64).nullable(),
+              signed: z.boolean()
+            })
+            .strict()
+        )
+      })
+      .strict()
+  },
+  'host:set-attestation-enforce': {
+    request: z.object({ enforced: z.boolean() }).strict(),
+    response: z.object({ ok: z.boolean() }).strict()
   },
   'student:screen-get-sources': {
     request: z.void(),

@@ -71,6 +71,9 @@ const api: ZtExamApi = {
   exportIncidentReport: () => call('host:export-incident-report', undefined),
   exportAuditBundle: () => call('host:export-audit-bundle', undefined),
 
+  getAttestationConfig: () => call('host:get-attestation-config', undefined),
+  setAttestationEnforce: (req) => call('host:set-attestation-enforce', req),
+
   getScreenSources: () => call('student:screen-get-sources', undefined),
   sendScreenSegment: (req) => call('student:screen-segment', req),
   sendScreenThumbnail: (req) => call('student:screen-thumbnail', req),

@@ -15,7 +15,9 @@ export const DetectionCategorySchema = z.enum([
   'memory-debugger', // Cheat Engine, x64dbg, WinDbg, IDA, Ghidra, Frida
   'network-tunnel', // ngrok, cloudflared, tailscale, wireguard, openvpn, clash
   'automation-macro', // AutoHotkey, AutoIt, TinyTask, Power Automate
-  'unauthorized-browser' // Chrome, Edge, Firefox, ... (เมื่อห้ามเปิดเบราว์เซอร์นอก)
+  'unauthorized-browser', // Chrome, Edge, Firefox, ... (เมื่อห้ามเปิดเบราว์เซอร์นอก)
+  'app-tamper', // ไฟล์แอปถูกแก้ / manifest ผิด / โปรแกรมที่ลายเซ็นไม่ผ่าน (Phase 4)
+  'kiosk-escape' // กดปุ่มลัดระดับระบบ (Alt+Tab, Win key, Alt+F4) — ดักโดย native hook (Phase 4)
 ])
 export type DetectionCategory = z.infer<typeof DetectionCategorySchema>
 
@@ -135,7 +137,10 @@ export const DetectionEventCatalog = {
   SUSPICIOUS_COMPUTE_SPIKE: { category: 'ai-assistant', severity: 'warning', score: 10 },
   PID_BURST_ANOMALY: { category: 'automation-macro', severity: 'warning', score: 10 },
   VM_ENVIRONMENT_DETECTED: { category: 'memory-debugger', severity: 'warning', score: 0 },
-  REMOTE_SESSION_SUSPECTED: { category: 'remote-control', severity: 'warning', score: 15 }
+  REMOTE_SESSION_SUSPECTED: { category: 'remote-control', severity: 'warning', score: 15 },
+  /* ---------- Phase 4: Attestation & Native Guard ---------- */
+  ATTESTATION_VERIFICATION_FAILED: { category: 'app-tamper', severity: 'critical', score: 80 },
+  BLOCKED_SYSTEM_SHORTCUT: { category: 'kiosk-escape', severity: 'warning', score: 15 }
 } as const satisfies Record<string, { category: DetectionCategory; severity: DetectionSeverity; score: number }>
 
 export type DetectionEventCode = keyof typeof DetectionEventCatalog

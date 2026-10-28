@@ -27,6 +27,10 @@ import {
   ScreenUdpRegisterPayloadSchema,
   ScreenUdpReadyPayloadSchema
 } from './screen-protocol'
+import {
+  AttestationChallengeSchema,
+  AttestationResponseSchema
+} from './attestation-schema'
 export type {
   RingSegmentMeta,
   ScreenInspectMode,
@@ -76,7 +80,10 @@ export const NetMsgType = {
   pinRingSegments: 'PIN_RING_SEGMENTS',
   /* ---------- Screen Monitoring (Phase 3c — UDP transport) ---------- */
   screenUdpRegister: 'SCREEN_UDP_REGISTER',
-  screenUdpReady: 'SCREEN_UDP_READY'
+  screenUdpReady: 'SCREEN_UDP_READY',
+  /* ---------- Attestation (Phase 4) ---------- */
+  attestationChallenge: 'ATTESTATION_CHALLENGE',
+  attestationResponse: 'ATTESTATION_RESPONSE'
 } as const
 
 export type NetMsgTypeValue = (typeof NetMsgType)[keyof typeof NetMsgType]
@@ -253,7 +260,9 @@ export const NetMessagePayloadSchemas: Record<string, z.ZodType> = {
   [NetMsgType.fetchRingSegment]: FetchRingSegmentPayloadSchema,
   [NetMsgType.pinRingSegments]: PinRingSegmentsPayloadSchema,
   [NetMsgType.screenUdpRegister]: ScreenUdpRegisterPayloadSchema,
-  [NetMsgType.screenUdpReady]: ScreenUdpReadyPayloadSchema
+  [NetMsgType.screenUdpReady]: ScreenUdpReadyPayloadSchema,
+  [NetMsgType.attestationChallenge]: AttestationChallengeSchema,
+  [NetMsgType.attestationResponse]: AttestationResponseSchema
 }
 
 /* ============================================================

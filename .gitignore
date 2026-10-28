@@ -12,3 +12,9 @@ Thumbs.db
 .env.*
 
 *.tsbuildinfo
+
+# Phase 4: Ed25519 signing keys — ห้าม commit เด็ดขาด
+artifacts/
+
+# Phase 4: native addon build output
+native/build/

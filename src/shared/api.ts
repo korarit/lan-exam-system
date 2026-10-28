@@ -66,6 +66,9 @@ export interface ZtExamApi {
   setStudentFreeze(req: IpcInvokeMap['host:set-student-freeze']['req']): Promise<IpcInvokeMap['host:set-student-freeze']['res']>
   exportIncidentReport(): Promise<IpcInvokeMap['host:export-incident-report']['res']>
   exportAuditBundle(): Promise<IpcInvokeMap['host:export-audit-bundle']['res']>
+  /* ---------- Attestation (Phase 4) ---------- */
+  getAttestationConfig(): Promise<IpcInvokeMap['host:get-attestation-config']['res']>
+  setAttestationEnforce(req: IpcInvokeMap['host:set-attestation-enforce']['req']): Promise<IpcInvokeMap['host:set-attestation-enforce']['res']>
   /* ---------- Screen Monitoring (Phase 3c) ---------- */
   getScreenSources(): Promise<IpcInvokeMap['student:screen-get-sources']['res']>
   sendScreenSegment(req: IpcInvokeMap['student:screen-segment']['req']): Promise<IpcInvokeMap['student:screen-segment']['res']>
