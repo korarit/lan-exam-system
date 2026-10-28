@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Answer, ClientQuestionPayload } from '@shared/exam-schema'
+import type { ExamMode } from '@shared/types/exam'
 
 export type StudentExamPhase = 'idle' | 'waiting' | 'active' | 'timeup' | 'completed'
 
@@ -16,10 +17,12 @@ export interface StudentExamState {
   finishReason: string | null
   /** ตัวอักษรขยาย กรณี(Normal = 1) */
   fontScale: number
+  /** Phase 5: โหมดของห้องนี้ (split เอกสาร / floating HUD) */
+  examMode: ExamMode | null
   identity: { studentId: string; studentName: string } | null
 
   setIdentity: (identity: { studentId: string; studentName: string }) => void
-  onExamStarted: (payload: { examTitle: string; questionCount: number; remainingSeconds: number }) => void
+  onExamStarted: (payload: { examTitle: string; questionCount: number; remainingSeconds: number; examMode?: ExamMode | undefined }) => void
   onQuestion: (payload: ClientQuestionPayload) => void
   onRecovery: (payload: {
     examTitle: string
@@ -28,6 +31,7 @@ export interface StudentExamState {
     cursorIndex: number
     question: ClientQuestionPayload | null
     draft: Answer | null
+    examMode?: ExamMode | undefined
   }) => void
   onTick: (payload: { remainingSeconds: number }) => void
   onLocalDraftSaved: () => void
@@ -49,6 +53,7 @@ const initial = {
   submitRejectedReason: null,
   finishReason: null,
   fontScale: 1,
+  examMode: null,
   identity: null
 }
 
@@ -60,6 +65,7 @@ export const useStudentExamStore = create<StudentExamState>((set) => ({
       phase: 'active',
       examTitle: payload.examTitle,
       remainingSeconds: payload.remainingSeconds,
+      examMode: payload.examMode ?? null,
       question: null,
       draft: null,
       answeredCount: 0,
@@ -81,6 +87,7 @@ export const useStudentExamStore = create<StudentExamState>((set) => ({
       question: payload.question,
       draft: payload.draft,
       remainingSeconds: payload.remainingSeconds,
+      examMode: payload.examMode ?? null,
       answeredCount: payload.cursorIndex
     }),
   onTick: (payload) => set({ remainingSeconds: payload.remainingSeconds }),

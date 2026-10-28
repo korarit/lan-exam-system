@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { AlarmClock, BookOpenText, Signal, Save } from 'lucide-react'
+import { AlarmClock, BookOpenText, Signal, Save, BookMarked } from 'lucide-react'
 import { useStudentExamStore } from '../store/exam-store'
+import { useDocsStore } from '../store/docs-store'
 
 export interface HudBarProps {
   connectionOk: boolean
@@ -30,6 +31,8 @@ export default function HudBar(props: HudBarProps): React.JSX.Element {
   const question = useStudentExamStore((s) => s.question)
   const remaining = useStudentExamStore((s) => s.remainingSeconds)
   const lastDraftSavedAtMs = useStudentExamStore((s) => s.lastDraftSavedAtMs)
+  const examMode = useStudentExamStore((s) => s.examMode)
+  const docsOpen = useDocsStore((s) => s.docs?.open ?? false)
   const [, setTick] = useState(0)
 
   // local countdown display (วินาทีลดจากค่าที่เครื่องแม่ส่งมา = หน่วยเวลา authoritative)
@@ -68,6 +71,22 @@ export default function HudBar(props: HudBarProps): React.JSX.Element {
           {' / '}
           <span className="font-mono">{question.questionCount}</span>
         </div>
+      )}
+
+      {/* Phase 5 (Mode 2): ปุ่มเปิด/ปิดแผงเอกสารครึ่งขวา */}
+      {examMode === 'in-app-docs' && (
+        <button
+          type="button"
+          onClick={() => void window.ztExam.docsToggle({ open: !docsOpen })}
+          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
+            docsOpen
+              ? 'border-sky-700/60 bg-sky-950/50 text-sky-200'
+              : 'border-slate-700 bg-slate-900/70 text-slate-300 hover:border-slate-500'
+          }`}
+        >
+          <BookMarked size={13} />
+          {docsOpen ? 'ปิดเอกสาร' : 'เปิดเอกสาร'}
+        </button>
       )}
 
       <div className="ml-auto flex items-center gap-1.5 text-slate-400">

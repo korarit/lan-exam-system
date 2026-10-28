@@ -3,8 +3,10 @@ import { CircleCheck, CloudOff } from 'lucide-react'
 import WatermarkOverlay from './WatermarkOverlay'
 import HudBar from './HudBar'
 import QuestionRenderer from './QuestionRenderer'
+import DocsPanel from './DocsPanel'
 import { useStudentExamStore } from '../store/exam-store'
 import { useStudentNetworkStore } from '../store/network-store'
+import { useDocsStore } from '../store/docs-store'
 
 let subscribed = false
 
@@ -29,8 +31,14 @@ function useExamEventSubscription(): void {
           useStudentExamStore.getState().onSubmitRejected(payload)
         ),
         window.ztExam.onEvent('exam:time-up', () => useStudentExamStore.getState().onTimeUp()),
-        window.ztExam.onEvent('exam:completed', (payload) =>
+        window.ztExam.onEvent('exam:completed', (payload) => {
           useStudentExamStore.getState().onCompleted(payload)
+          useDocsStore.getState().reset()
+        }),
+        window.ztExam.onEvent('exam:time-up', () => useDocsStore.getState().reset()),
+        // Phase 5: สถานะแผงเอกสาร (Mode 2) จาก main process
+        window.ztExam.onEvent('exam:docs-state', (payload) =>
+          useDocsStore.getState().setDocs(payload)
         )
       ]
       return () => unsubs.forEach((u) => u())
@@ -44,6 +52,7 @@ function useExamEventSubscription(): void {
 export default function ExamView(): React.JSX.Element | null {
   const phase = useStudentExamStore((s) => s.phase)
   const identity = useStudentExamStore((s) => s.identity)
+  const examMode = useStudentExamStore((s) => s.examMode)
   const connection = useStudentNetworkStore((s) => s.connection)
   const remaining = useStudentExamStore((s) => s.remainingSeconds)
   const finishReason = useStudentExamStore((s) => s.finishReason)
@@ -55,6 +64,14 @@ export default function ExamView(): React.JSX.Element | null {
       void window.ztExam.enterKiosk()
     }
   }, [phase])
+
+  // Mode 2: เปิดแผงเอกสารอัตโนมัติเมื่อเริ่มการสอบ (Modal 2 auto-open)
+  useEffect(() => {
+    if (phase !== 'active' || examMode !== 'in-app-docs') return
+    if (useDocsStore.getState().docs === null) {
+      void window.ztExam.docsToggle({ open: true })
+    }
+  }, [phase, examMode])
 
   // หมดเวลา → ยื่น final draft ที่กำลังพิมพ์ค้างไว้ภายใน grace period
   useEffect(() => {
@@ -120,8 +137,21 @@ export default function ExamView(): React.JSX.Element | null {
           <p className="mt-2 text-sm text-slate-400">กำลังบันทึกคำตอบล่าสุดของข้อนี้…</p>
         </div>
       ) : (
-        <div className="flex-1 overflow-hidden">
-          <QuestionRenderer />
+        <div className="flex-1 flex overflow-hidden">
+          {examMode === 'in-app-docs' ? (
+            <>
+              <div className="w-1/2 h-full overflow-hidden">
+                <QuestionRenderer />
+              </div>
+              <div className="w-1/2 h-full overflow-hidden border-l border-slate-800">
+                <DocsPanel />
+              </div>
+            </>
+          ) : (
+            <div className="w-full h-full overflow-hidden">
+              <QuestionRenderer />
+            </div>
+          )}
         </div>
       )}
 
