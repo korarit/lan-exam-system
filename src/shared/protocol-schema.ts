@@ -18,6 +18,18 @@ import {
   type SignedDetectionPolicy,
   type DetectionEvent
 } from './policy-schema'
+import {
+  ScreenSessionPayloadSchema,
+  ScreenInspectRequestPayloadSchema,
+  FetchRingSegmentPayloadSchema,
+  PinRingSegmentsPayloadSchema,
+  RingSegmentListPayloadSchema
+} from './screen-protocol'
+export type {
+  RingSegmentMeta,
+  ScreenInspectMode,
+  ScreenFrameMode
+} from './screen-protocol'
 
 /* ============================================================
  * ข้อความเครือข่าย (over TLS 1.3, Length-prefixed framing)
@@ -53,7 +65,13 @@ export const NetMsgType = {
   /* ---------- Proctor actions (Phase 3b) ---------- */
   proctorWarning: 'PROCTOR_WARNING',
   freezeExam: 'FREEZE_EXAM',
-  unfreezeExam: 'UNFREEZE_EXAM'
+  unfreezeExam: 'UNFREEZE_EXAM',
+  /* ---------- Screen Monitoring (Phase 3c) ---------- */
+  screenSession: 'SCREEN_SESSION',
+  screenInspectRequest: 'SCREEN_INSPECT_REQUEST',
+  ringSegmentList: 'RING_SEGMENT_LIST',
+  fetchRingSegment: 'FETCH_RING_SEGMENT',
+  pinRingSegments: 'PIN_RING_SEGMENTS'
 } as const
 
 export type NetMsgTypeValue = (typeof NetMsgType)[keyof typeof NetMsgType]
@@ -223,7 +241,12 @@ export const NetMessagePayloadSchemas: Record<string, z.ZodType> = {
   [NetMsgType.policyUpdate]: PolicyUpdatePayloadSchema,
   [NetMsgType.proctorWarning]: ProctorWarningPayloadSchema,
   [NetMsgType.freezeExam]: FreezeStatePayloadSchema,
-  [NetMsgType.unfreezeExam]: FreezeStatePayloadSchema
+  [NetMsgType.unfreezeExam]: FreezeStatePayloadSchema,
+  [NetMsgType.screenSession]: ScreenSessionPayloadSchema,
+  [NetMsgType.screenInspectRequest]: ScreenInspectRequestPayloadSchema,
+  [NetMsgType.ringSegmentList]: RingSegmentListPayloadSchema,
+  [NetMsgType.fetchRingSegment]: FetchRingSegmentPayloadSchema,
+  [NetMsgType.pinRingSegments]: PinRingSegmentsPayloadSchema
 }
 
 /* ============================================================

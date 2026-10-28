@@ -66,6 +66,13 @@ export interface ZtExamApi {
   setStudentFreeze(req: IpcInvokeMap['host:set-student-freeze']['req']): Promise<IpcInvokeMap['host:set-student-freeze']['res']>
   exportIncidentReport(): Promise<IpcInvokeMap['host:export-incident-report']['res']>
   exportAuditBundle(): Promise<IpcInvokeMap['host:export-audit-bundle']['res']>
+  /* ---------- Screen Monitoring (Phase 3c) ---------- */
+  getScreenSources(): Promise<IpcInvokeMap['student:screen-get-sources']['res']>
+  sendScreenSegment(req: IpcInvokeMap['student:screen-segment']['req']): Promise<IpcInvokeMap['student:screen-segment']['res']>
+  sendScreenThumbnail(req: IpcInvokeMap['student:screen-thumbnail']['req']): Promise<IpcInvokeMap['student:screen-thumbnail']['res']>
+  screenInspect(req: IpcInvokeMap['host:screen-inspect']['req']): Promise<IpcInvokeMap['host:screen-inspect']['res']>
+  fetchRingSegment(req: IpcInvokeMap['host:fetch-ring-segment']['req']): Promise<IpcInvokeMap['host:fetch-ring-segment']['res']>
+  pinScreenBuffer(req: IpcInvokeMap['host:pin-screen-buffer']['req']): Promise<IpcInvokeMap['host:pin-screen-buffer']['res']>
   /* ---------- Event subscribe (คืน unsubscribe() กัน memory leak ใน React) ---------- */
   onRoleChanged(listener: (event: RoleChangedEvent) => void): Unsubscribe
   onEvent<C extends IpcEventChannel>(

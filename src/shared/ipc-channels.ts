@@ -32,6 +32,11 @@ import {
   FreezeStatePayloadSchema
 } from './protocol-schema'
 import {
+  RingSegmentMetaSchema,
+  type RingSegmentMeta
+} from './screen-protocol'
+export type { RingSegmentMeta } from './screen-protocol'
+import {
   TriageOverviewEventSchema,
   StudentEvidenceResponseSchema,
   type TriageOverviewEvent,
@@ -222,6 +227,7 @@ export interface SetDomainEnforcementRequest {
 }
 export interface OkResponse {
   ok: boolean
+  reason?: string | undefined
 }
 
 /* ---------- Audit & Triage payloads (Phase 3b) ---------- */
@@ -250,6 +256,92 @@ export interface ExportFileResponse {
 export interface StudentFreezeStateEvent {
   frozen: boolean
   reason?: string | undefined
+}
+
+/* ---------- Screen Monitoring payloads (Phase 3c) ---------- */
+
+export interface ScreenSourceInfo {
+  sourceId: string
+  displayId: string
+  displayIndex: number
+  displayCount: number
+  label: string
+  width: number
+  height: number
+}
+export interface ScreenEnvironmentStatus {
+  ok: boolean
+  platform: string
+  permission: 'granted' | 'denied' | 'unknown-session'
+  reason?: string | undefined
+}
+export interface StudentScreenSourcesResponse {
+  environment: ScreenEnvironmentStatus
+  sources: ScreenSourceInfo[]
+}
+/** renderer นักเรียนส่งเซกเมนต์ .webm (ยังไม่เข้ารหัส) ให้ main เข้ารหัส + เก็บ ring buffer */
+export interface StudentScreenSegmentRequest {
+  displayId: string
+  seqNo: number
+  startTimeMs: number
+  endTimeMs: number
+  data: Uint8Array
+}
+/** renderer นักเรียนส่งภาพย่อ/ภาพสด 1 เฟรมให้ main ส่งต่อเป็น binary frame */
+export interface StudentScreenThumbnailRequest {
+  displayIndex: number
+  displayCount: number
+  mode: 'thumbnail' | 'live'
+  mimeType: string
+  timestampMs: number
+  displayId: string
+  data: Uint8Array
+}
+export interface HostScreenInspectRequest {
+  studentId: string
+  mode: 'live' | 'playback' | 'stop'
+  displayId?: string | undefined
+}
+export interface HostFetchSegmentRequest {
+  studentId: string
+  segmentId: string
+}
+export interface HostPinScreenRequest {
+  studentId: string
+  reason?: string | undefined
+}
+export interface HostScreenThumbnailEvent {
+  studentId: string
+  displayIndex: number
+  displayCount: number
+  mode: 'thumbnail' | 'live'
+  mimeType: string
+  imageBase64: string
+  timestampMs: number
+  displayId: string
+}
+export interface HostScreenSegmentsEvent {
+  studentId: string
+  displayId: string
+  segments: RingSegmentMeta[]
+}
+export interface HostScreenSegmentDataEvent {
+  studentId: string
+  segmentId: string
+  displayId: string
+  mimeType: string
+  dataBase64: string
+}
+/** ฝั่ง renderer นักเรียน: บอกให้เริ่ม/หยุด screen worker และโหมด live */
+export interface StudentScreenSessionEvent {
+  active: boolean
+  thumbnailIntervalMs?: number | undefined
+  reason?: string | undefined
+}
+export interface StudentScreenInspectEvent {
+  requestId: string
+  mode: 'live' | 'playback' | 'stop'
+  displayId?: string | undefined
 }
 
 /* ---------- Channel maps (single source of truth for IPC surface) ---------- */
@@ -281,6 +373,31 @@ const RecordedDomainItemSchema = z
 
 const RecordedDomainsUpdatedEventSchema = z
   .object({ records: z.array(RecordedDomainItemSchema).max(2_048) })
+  .strict()
+
+/* ---------- Screen Monitoring schemas (Phase 3c) ---------- */
+
+const Uint8ArraySchema = z.instanceof(Uint8Array)
+
+const ScreenSourceInfoSchema = z
+  .object({
+    sourceId: z.string().min(1).max(200),
+    displayId: z.string().min(1).max(40),
+    displayIndex: z.number().int().nonnegative(),
+    displayCount: z.number().int().nonnegative(),
+    label: z.string().max(120),
+    width: z.number().int().nonnegative(),
+    height: z.number().int().nonnegative()
+  })
+  .strict()
+
+const ScreenEnvironmentStatusSchema = z
+  .object({
+    ok: z.boolean(),
+    platform: z.string(),
+    permission: z.enum(['granted', 'denied', 'unknown-session']),
+    reason: z.string().max(200).optional()
+  })
   .strict()
 
 const DiscoveredRoomIpcSchema = UdpBeaconSchema.extend({
@@ -344,6 +461,13 @@ export interface IpcInvokeMap {
   'host:set-student-freeze': { req: SetStudentFreezeRequest; res: OkResponse }
   'host:export-incident-report': { req: void; res: ExportFileResponse }
   'host:export-audit-bundle': { req: void; res: ExportFileResponse }
+  /* ---------- Screen Monitoring (Phase 3c) ---------- */
+  'student:screen-get-sources': { req: void; res: StudentScreenSourcesResponse }
+  'student:screen-segment': { req: StudentScreenSegmentRequest; res: OkResponse }
+  'student:screen-thumbnail': { req: StudentScreenThumbnailRequest; res: OkResponse }
+  'host:screen-inspect': { req: HostScreenInspectRequest; res: OkResponse }
+  'host:fetch-ring-segment': { req: HostFetchSegmentRequest; res: OkResponse }
+  'host:pin-screen-buffer': { req: HostPinScreenRequest; res: OkResponse }
 }
 
 /** Main -> Renderer (webContents.send) push event channels */
@@ -367,6 +491,12 @@ export interface IpcEventMap {
   'host:triage-updated': TriageOverviewEvent
   'exam:proctor-warning': { message: string; sentAtMs: number }
   'exam:freeze-state': StudentFreezeStateEvent
+  /* ---------- Screen Monitoring (Phase 3c) ---------- */
+  'screen:session': StudentScreenSessionEvent
+  'screen:inspect': StudentScreenInspectEvent
+  'host:screen-thumbnail': HostScreenThumbnailEvent
+  'host:screen-segments': HostScreenSegmentsEvent
+  'host:screen-segment-data': HostScreenSegmentDataEvent
 }
 
 export type IpcInvokeChannel = keyof IpcInvokeMap
@@ -600,6 +730,69 @@ export const IpcInvokeSchemas: {
         reason: z.string().max(200).optional()
       })
       .strict()
+  },
+  'student:screen-get-sources': {
+    request: z.void(),
+    response: z
+      .object({
+        environment: ScreenEnvironmentStatusSchema,
+        sources: z.array(ScreenSourceInfoSchema).max(8)
+      })
+      .strict()
+  },
+  'student:screen-segment': {
+    request: z
+      .object({
+        displayId: z.string().min(1).max(40),
+        seqNo: z.number().int().nonnegative(),
+        startTimeMs: z.number().int().nonnegative(),
+        endTimeMs: z.number().int().nonnegative(),
+        data: Uint8ArraySchema.refine((v) => v.byteLength <= 4 * 1024 * 1024, 'SEGMENT_TOO_LARGE')
+      })
+      .strict(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'student:screen-thumbnail': {
+    request: z
+      .object({
+        displayIndex: z.number().int().nonnegative(),
+        displayCount: z.number().int().nonnegative(),
+        mode: z.enum(['thumbnail', 'live']),
+        mimeType: z.string().max(60),
+        timestampMs: z.number().int().nonnegative(),
+        displayId: z.string().min(1).max(40),
+        data: Uint8ArraySchema.refine((v) => v.byteLength <= 512 * 1024, 'FRAME_TOO_LARGE')
+      })
+      .strict(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'host:screen-inspect': {
+    request: z
+      .object({
+        studentId: z.string().min(1).max(40),
+        mode: z.enum(['live', 'playback', 'stop']),
+        displayId: z.string().min(1).max(40).optional()
+      })
+      .strict(),
+    response: z
+      .object({ ok: z.boolean(), reason: z.string().max(200).optional() })
+      .strict()
+  },
+  'host:fetch-ring-segment': {
+    request: z
+      .object({ studentId: z.string().min(1).max(40), segmentId: z.string().min(1).max(80) })
+      .strict(),
+    response: z
+      .object({ ok: z.boolean(), reason: z.string().max(200).optional() })
+      .strict()
+  },
+  'host:pin-screen-buffer': {
+    request: z
+      .object({ studentId: z.string().min(1).max(40), reason: z.string().max(200).optional() })
+      .strict(),
+    response: z
+      .object({ ok: z.boolean(), reason: z.string().max(200).optional() })
+      .strict()
   }
 }
 
@@ -664,5 +857,47 @@ export const IpcEventSchemas: {
   'host:recorded-domains-updated': RecordedDomainsUpdatedEventSchema,
   'host:triage-updated': TriageOverviewEventSchema,
   'exam:proctor-warning': ProctorWarningPayloadSchema,
-  'exam:freeze-state': FreezeStatePayloadSchema
+  'exam:freeze-state': FreezeStatePayloadSchema,
+  'screen:session': z
+    .object({
+      active: z.boolean(),
+      thumbnailIntervalMs: z.number().int().min(250).max(10_000).optional(),
+      reason: z.string().max(200).optional()
+    })
+    .strict(),
+  'screen:inspect': z
+    .object({
+      requestId: z.string().min(1).max(64),
+      mode: z.enum(['live', 'playback', 'stop']),
+      displayId: z.string().min(1).max(40).optional()
+    })
+    .strict(),
+  'host:screen-thumbnail': z
+    .object({
+      studentId: z.string().min(1).max(40),
+      displayIndex: z.number().int().nonnegative(),
+      displayCount: z.number().int().nonnegative(),
+      mode: z.enum(['thumbnail', 'live']),
+      mimeType: z.string().max(60),
+      imageBase64: z.string().max(700_000),
+      timestampMs: z.number().int().nonnegative(),
+      displayId: z.string().min(1).max(40)
+    })
+    .strict(),
+  'host:screen-segments': z
+    .object({
+      studentId: z.string().min(1).max(40),
+      displayId: z.string().min(1).max(40),
+      segments: z.array(RingSegmentMetaSchema).max(600)
+    })
+    .strict(),
+  'host:screen-segment-data': z
+    .object({
+      studentId: z.string().min(1).max(40),
+      segmentId: z.string().min(1).max(80),
+      displayId: z.string().min(1).max(40),
+      mimeType: z.string().max(60),
+      dataBase64: z.string().max(4_200_000)
+    })
+    .strict()
 }
