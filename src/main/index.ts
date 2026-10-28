@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import path from 'node:path'
 import { IpcEventSchemas, type IpcEventChannel } from '@shared/ipc-channels'
+import { NetMsgType } from '@shared/protocol-schema'
 import { parseRuntimeArgs } from './runtime-args'
 import { IpcRouter, createElectronIpcRegistrar } from './ipc/router'
 import { registerAppHandlers, type AppRuntimeState } from './ipc/app-handlers'
@@ -12,9 +13,12 @@ import {
 } from './ipc/exam-handlers'
 import { registerDomainHandlers } from './ipc/domain-handlers'
 import { registerAuditHandlers } from './ipc/audit-handlers'
+import { registerScreenHandlers } from './ipc/screen-handlers'
 import { DomainAllowlistService } from './host/domain-allowlist'
 import { DocPreviewController } from './host/doc-preview'
 import { TriageService } from './host/triage-service'
+import { ProctorViewService } from './screen/proctor-view-service'
+import { ScreenStreamController } from './screen/stream-controller'
 import { createMainWindow, enforceKioskInputBlocking } from './window'
 import { HostDatabase, getDefaultDatabasePath } from './storage/db'
 import { HostRoomManager } from './network/host-room'
@@ -46,11 +50,15 @@ let sessionManager: CoreSessionManager | null = null
 let domainAllowlist: DomainAllowlistService | null = null
 let docPreview: DocPreviewController | null = null
 let triageService: TriageService | null = null
+let proctorViewService: ProctorViewService | null = null
+let screenStreamController: ScreenStreamController | null = null
 const discovery = new RoomDiscoveryListener()
 let studentClient: ExamTlsClient | null = null
 let guardEngine: GuardEngine | null = null
 /** IP เครื่องแม่จากการ join ล่าสุด (NetworkInspector ยกเว้นให้เสมอ) */
 let lastJoinedHostIp: string | null = null
+/** Room ID ที่เข้าล่าสุด (ring buffer ใช้ตั้งชื่อโฟลเดอร์ชั่วคราว — Phase 3c) */
+let lastJoinedRoomId: string | null = null
 
 /** late-bound hook: เรียกเมื่อนักเรียน reconnect/handshake สำเร็จ */
 let studentEstablishedHandler: ((studentId: string) => void) | null = null
@@ -94,12 +102,26 @@ function ensureSessionManager(): CoreSessionManager {
       } catch {
         // chain ยังไม่พร้อม (ยังไม่เริ่มสอบ) — ยังส่ง event ให้ renderer อยู่แล้ว
       }
+      // Phase 3c: Pin-on-Critical — เหตุการณ์วิกฤต → ล็อกเซกเมนต์รอบเหตุทันที
+      for (const event of events) {
+        if (event.severity !== 'critical') continue
+        roomManager?.tlsServerInstance?.sendToStudent(studentId, NetMsgType.pinRingSegments, {
+          eventId: event.eventId,
+          timestampMs: event.occurredAtMs
+        })
+      }
     },
     onExamStarted: (roomId, policy) => {
       ensureTriageService().startRoom(roomId, policy)
     },
     onExamEnded: (roomId, reason) => {
       ensureTriageService().endRoom(roomId, reason)
+    },
+    // Phase 3c: รายการเซกเมนต์ย้อนหลังจากนักเรียน → ProctorViewService
+    onStudentNetMessage: (studentId, type, payload) => {
+      if (type !== NetMsgType.ringSegmentList) return false
+      ensureProctorViewService().ingestSegmentList(studentId, payload)
+      return true
     }
   })
   return sessionManager
@@ -118,6 +140,45 @@ function ensureTriageService(): TriageService {
     sendHostEvent: sendEventToWindow
   })
   return triageService
+}
+
+/** Phase 3c: บริการดูหน้าจอนักเรียน (Pull on Demand + Thumbnail store) ฝั่งเครื่องแม่ */
+function ensureProctorViewService(): ProctorViewService {
+  proctorViewService ??= new ProctorViewService({
+    getRoom: () => roomManager,
+    sendHostEvent: sendEventToWindow,
+    recordScreenAudit: (studentId, eventCode, summaryText, evidence) => {
+      try {
+        const triage = ensureTriageService()
+        const roomId = triage.roomId
+        if (!roomId) return
+        triage.audit.append(roomId, {
+          studentId,
+          eventCode,
+          category: 'proctor',
+          severity: 'normal',
+          scoreDelta: 0,
+          summaryText,
+          evidence
+        })
+        triage.pushOverview()
+      } catch {
+        // chain ยังไม่พร้อม — ข้าม
+      }
+    }
+  })
+  return proctorViewService
+}
+
+/** Phase 3c: ตัวควบคุมบันทึก/ส่งหน้าจอฝั่งนักเรียน */
+function ensureScreenStreamController(): ScreenStreamController {
+  screenStreamController ??= new ScreenStreamController({
+    getClient: () => (state.role === 'student' ? studentClient : null),
+    getSessionId: () => lastJoinedRoomId,
+    sendRendererEvent: sendEventToWindow,
+    onStatus: (message) => console.warn(`[screen] ${message}`)
+  })
+  return screenStreamController
 }
 
 function ensureDocPreview(): DocPreviewController {
@@ -145,12 +206,20 @@ function ensureRoomManager(): HostRoomManager {
       // Phase 3a-plus: เก็บกวาดของค้างของห้องเก่า (preview + ค่าทับ enforcement)
       docPreview?.close()
       ensureDomainAllowlist().setEnforcementOverride(null)
+      // Phase 3c: ล้าง thumbnail store ของห้องเก่า
+      proctorViewService?.clearAll()
       // Phase 3b: เริ่ม chain/state ใหม่เมื่อเปิดห้องถัดไป
       triageService = null
     },
     onStudentEstablished: (studentId) => {
       // deferred: session manager ยังไม่ถูกสร้าง ณ เวลา create room ก็ยังได้ (late-binding)
       studentEstablishedHandler?.(studentId)
+    },
+    // Phase 3c: binary frame (ภาพย่อ / เซกเมนต์) จากนักเรียน → ProctorViewService
+    onStudentBinary: (studentId, subType, payload) => {
+      const service = ensureProctorViewService()
+      if (subType === 0x01) service.ingestScreenFrame(studentId, payload)
+      else if (subType === 0x02) service.ingestSegmentData(studentId, payload)
     }
   })
   return roomManager
@@ -159,7 +228,22 @@ function ensureRoomManager(): HostRoomManager {
 function ensureStudentClient(): ExamTlsClient {
   studentClient ??= new ExamTlsClient({
     onConnectionState: forwardConnectionState(sendEventToWindow),
+    onBinary: (subType, payload) => {
+      ensureScreenStreamController().handleBinaryFrame(subType, payload)
+    },
     onMessage: createStudentExamEventForwarder(sendEventToWindow, () => mainWindow, {
+      onNetMessage: (type, payload) => {
+        // Phase 3c: เปิดเซสชันบันทึกหน้าจอ (คีย์จากเครื่องแม่ผ่านหน่วยความจำ)
+        if (type === NetMsgType.screenSession) {
+          const session = payload as { screenBufferKey: string; thumbnailIntervalMs: number }
+          if (lastJoinedRoomId) {
+            ensureScreenStreamController().startSession(lastJoinedRoomId, session)
+          }
+          return true
+        }
+        // Phase 3c: คำสั่งหน้าจอจากเครื่องแม่ (inspect / fetch / pin)
+        return ensureScreenStreamController().handleNetMessage(type, payload)
+      },
       onPolicyUpdate: (policy) => {
         const sessionKey = ensureStudentClient().getSessionKey()
         if (!sessionKey) return
@@ -171,6 +255,8 @@ function ensureStudentClient(): ExamTlsClient {
       },
       onExamEnded: () => {
         guardEngine?.stop()
+        // Phase 3c: จบสอบ → Zero-Trace Cleanup (ลบ ring buffer + คีย์ทันที)
+        screenStreamController?.stopSession('exam-ended')
       }
     })
   })
@@ -226,8 +312,9 @@ void app.whenReady().then(() => {
     getRoomManager: ensureRoomManager,
     getDiscovery: () => discovery,
     getStudentClient: ensureStudentClient,
-    onStudentJoinedRoom: (hostIp) => {
+    onStudentJoinedRoom: (hostIp, roomId) => {
       lastJoinedHostIp = hostIp
+      lastJoinedRoomId = roomId
     }
   })
   registerExamHandlers(router, state, {
@@ -245,6 +332,10 @@ void app.whenReady().then(() => {
   registerAuditHandlers(router, state, {
     getSessionManager: ensureSessionManager,
     getTriageService: ensureTriageService
+  })
+  registerScreenHandlers(router, state, {
+    getStreamController: () => (state.role === 'student' ? ensureScreenStreamController() : null),
+    getProctorViewService: () => (state.role === 'host' ? ensureProctorViewService() : null)
   })
   studentEstablishedHandler = (studentId) => {
     try {
@@ -285,6 +376,9 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   studentClient?.abort()
+  // Phase 3c: Zero-Trace — ลบ ring buffer/คีย์ทันทีเมื่อปิดแอป
+  screenStreamController?.stopSession('app-quit')
+  proctorViewService?.clearAll()
   void roomManager?.closeRoom()
   discovery.stop()
 })

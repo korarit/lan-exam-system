@@ -100,7 +100,11 @@ export const PROCTOR_EVENT_CODES = {
   confirmed: 'PROCTOR_CONFIRMED_VIOLATION',
   warning: 'PROCTOR_WARNING_MESSAGE',
   froze: 'PROCTOR_FROZE_STUDENT',
-  unfroze: 'PROCTOR_UNFROZE_STUDENT'
+  unfroze: 'PROCTOR_UNFROZE_STUDENT',
+  /** Phase 3c: บันทึกทุกครั้งที่ผู้คุมเปิดดูหน้าจอนักเรียน */
+  viewedScreen: 'PROCTOR_VIEWED_SCREEN',
+  /** Phase 3c: ล็อกวิดีโอย้อนหลังไม่ให้ถูกเขียนทับ */
+  pinnedBuffer: 'PROCTOR_PINNED_RING_BUFFER'
 } as const
 
 export const ROOM_CREATED_EVENT = 'ROOM_CREATED'

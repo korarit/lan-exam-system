@@ -53,6 +53,8 @@ export interface CoreSessionManagerOptions {
   onExamStarted?: (roomId: string, policy: DetectionPolicyBody) => void
   /** Phase 3b: จบการสอบ → ปิด chain ด้วย EXAM_ENDED */
   onExamEnded?: (roomId: string, reason: string) => void
+  /** Phase 3c: ข้อความจากนักเรียนที่บริการอื่นจัดการ (เช่น RING_SEGMENT_LIST) — คืน true เมื่อจัดการแล้ว */
+  onStudentNetMessage?: (studentId: string, type: string, payload: unknown) => boolean
 }
 
 export type ExamState = 'idle' | 'running' | 'collecting' | 'finished'
@@ -86,6 +88,8 @@ export class CoreSessionManager {
   private readonly finishReasons = new Map<string, string>()
   /** นโยบายตรวจจับของห้องนี้ (สร้างตอนเริ่มสอบ — เซ็นต่อนักเรียนด้วย session key ของแต่ละคน) */
   private detectionPolicy: DetectionPolicyBody | null = null
+  /** Phase 3c: คีย์เข้ารหัส ring buffer หน้าจอต่อรอบการสอบ (อยู่ในหน่วยความจำเครื่องแม่เท่านั้น) */
+  private screenBufferKey: Buffer | null = null
 
   constructor(private readonly opts: CoreSessionManagerOptions) {
     this.gracePeriodMs = opts.gracePeriodMs ?? 3000
@@ -196,6 +200,16 @@ export class CoreSessionManager {
     room.setExamStatus('in-progress')
     this.opts.onExamStarted?.(roomId, policyBody)
 
+    // Phase 3c: คีย์ ring buffer ใหม่ต่อรอบสอบ (คิวภาพย่อ 2000ms เมื่อห้องเกิน 50 คน)
+    this.screenBufferKey = generateRandomBytes(32)
+    const thumbnailIntervalMs = room.students.length > 50 ? 2000 : 1000
+    for (const student of room.students) {
+      tlsServer?.sendToStudent(student.studentId, NetMsgType.screenSession, {
+        screenBufferKey: this.screenBufferKey.toString('base64'),
+        thumbnailIntervalMs
+      })
+    }
+
     // ประกาศเริ่ม + ส่งข้อแรกให้ทุกคนที่ออนไลน์อยู่แล้ว
     for (const student of room.students) {
       try {
@@ -281,6 +295,11 @@ export class CoreSessionManager {
         .prepare(`UPDATE exam_sessions SET status = 'ended', ended_at_ms = ? WHERE id = ?`)
         .run(Date.now(), room.room.roomId)
       room.setExamStatus('ended')
+    }
+    // Phase 3c: zeroize คีย์ ring buffer เมื่อจบการสอบ
+    if (this.screenBufferKey) {
+      this.screenBufferKey.fill(0)
+      this.screenBufferKey = null
     }
     this.opts.sendHostEvent('host:exam-completed', { reason })
     this.pushSummaries()
@@ -431,6 +450,13 @@ export class CoreSessionManager {
       return
     }
     this.sendPolicyToStudent(studentId)
+    // Phase 3c: นักเรียนที่ reconnect กลางการสอบต้องได้คีย์ ring buffer กลับทันที
+    if (this.screenBufferKey) {
+      tlsServer.sendToStudent(studentId, NetMsgType.screenSession, {
+        screenBufferKey: this.screenBufferKey.toString('base64'),
+        thumbnailIntervalMs: (room.students.length ?? 0) > 50 ? 2000 : 1000
+      })
+    }
     tlsServer.sendToStudent(studentId, NetMsgType.stateRecovery, recoveryPayload)
   }
 
@@ -504,6 +530,8 @@ export class CoreSessionManager {
     const room = this.opts.getRoom()
     const tlsServer = room?.tlsServerInstance
     if (!tlsServer) return
+    // Phase 3c: ข้อความหน้าจอ (RING_SEGMENT_LIST) ให้บริการเฉพาะจัดการ
+    if (this.opts.onStudentNetMessage?.(studentId, type, payload)) return
     switch (type) {
       case NetMsgType.submitAnswer:
         this.handleSubmitAnswer(studentId, payload as SubmitAnswerPayload)

@@ -134,6 +134,8 @@ export interface StudentForwarderHooks {
   onPolicyUpdate?: (policy: SignedDetectionPolicy) => void
   /** การสอบจบ (หมดเวลา/จบเอง/ห้องปิด) — หยุด guard ทั้งหมด */
   onExamEnded?: () => void
+  /** Phase 3c: ข้อความจากเครื่องแม่ที่ ScreenStreamController จัดการ — คืน true เมื่อจัดการแล้ว */
+  onNetMessage?: (type: string, payload: unknown) => boolean
 }
 
 /**
@@ -145,6 +147,7 @@ export function createStudentExamEventForwarder(
   hooks: StudentForwarderHooks = {}
 ): (type: string, payload: unknown) => void {
   return (type, payload) => {
+    if (hooks.onNetMessage?.(type, payload)) return
     switch (type) {
       case NetMsgType.examStarted:
         eventSender('exam:started', payload)

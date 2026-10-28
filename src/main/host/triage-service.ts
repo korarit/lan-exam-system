@@ -289,7 +289,7 @@ export class TriageService {
     return deriveAuditKey(row.crypto_salt, roomId)
   }
 
-  private pushOverview(): void {
+  pushOverview(): void {
     this.opts.sendHostEvent('host:triage-updated', this.getOverview())
   }
 }
