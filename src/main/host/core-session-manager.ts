@@ -47,6 +47,12 @@ export interface CoreSessionManagerOptions {
   getAllowedDomains?: () => string[]
   /** Phase 3a-plus: พฤติกรรมเมื่อนักเรียนใช้โดเมนนอกเหนือรายการ (warn/block) */
   getDomainEnforcement?: () => DomainEnforcement
+  /** Phase 3b: ท่อข้อมูลตรวจจับ → Audit hash chain + Triage engine บนเครื่องแม่ */
+  onDetectionBatch?: (studentId: string, events: DetectionEvent[]) => void
+  /** Phase 3b: เริ่มการสอบ → เขียน Genesis block + ผูก audit key ของห้อง */
+  onExamStarted?: (roomId: string, policy: DetectionPolicyBody) => void
+  /** Phase 3b: จบการสอบ → ปิด chain ด้วย EXAM_ENDED */
+  onExamEnded?: (roomId: string, reason: string) => void
 }
 
 export type ExamState = 'idle' | 'running' | 'collecting' | 'finished'
@@ -188,6 +194,7 @@ export class CoreSessionManager {
       this.handleExamMessage(studentId, connection, type, payload)
     )
     room.setExamStatus('in-progress')
+    this.opts.onExamStarted?.(roomId, policyBody)
 
     // ประกาศเริ่ม + ส่งข้อแรกให้ทุกคนที่ออนไลน์อยู่แล้ว
     for (const student of room.students) {
@@ -246,6 +253,7 @@ export class CoreSessionManager {
     this.state = 'collecting'
     const room = this.opts.getRoom()
     const tlsServer = room?.tlsServerInstance
+    this.opts.onExamEnded?.(room?.room?.roomId ?? '', reason)
     for (const student of room?.students ?? []) {
       tlsServer?.sendToStudent(student.studentId, NetMsgType.timeUp, {})
     }
@@ -465,6 +473,8 @@ export class CoreSessionManager {
   /** เหตุการณ์ตรวจจับจากเครื่องนักเรียน (Phase 3a) — push ให้หน้าจอครู + ลง audit (Phase 3b) */
   private handleGuardEvents(studentId: string, events: DetectionEvent[]): void {
     this.opts.sendHostEvent('host:guard-events', { studentId, events })
+    // Phase 3b: ลง hash chain + triage engine บนเครื่องแม่
+    this.opts.onDetectionBatch?.(studentId, events)
     const critical = events.filter((e) => e.severity === 'critical')
     if (critical.length > 0) {
       this.opts.onAnomaly?.(

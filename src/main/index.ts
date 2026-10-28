@@ -11,8 +11,10 @@ import {
   makeKioskHooks
 } from './ipc/exam-handlers'
 import { registerDomainHandlers } from './ipc/domain-handlers'
+import { registerAuditHandlers } from './ipc/audit-handlers'
 import { DomainAllowlistService } from './host/domain-allowlist'
 import { DocPreviewController } from './host/doc-preview'
+import { TriageService } from './host/triage-service'
 import { createMainWindow, enforceKioskInputBlocking } from './window'
 import { HostDatabase, getDefaultDatabasePath } from './storage/db'
 import { HostRoomManager } from './network/host-room'
@@ -43,6 +45,7 @@ let roomManager: HostRoomManager | null = null
 let sessionManager: CoreSessionManager | null = null
 let domainAllowlist: DomainAllowlistService | null = null
 let docPreview: DocPreviewController | null = null
+let triageService: TriageService | null = null
 const discovery = new RoomDiscoveryListener()
 let studentClient: ExamTlsClient | null = null
 let guardEngine: GuardEngine | null = null
@@ -63,16 +66,41 @@ function ensureSessionManager(): CoreSessionManager {
     getRoom: () => roomManager,
     sendHostEvent: sendEventToWindow,
     onAnomaly: (source, reason) => {
-      // พฤติกรรมน่าสงสัยของ exam (จุด cursor ผิด / พยายามดูข้อล่วงหน้า)
-      // Phase 3b จะเก็บลง audit hash chain — ตอนนี้แสดง log ของเครื่องแม่ก่อน
+      // Phase 3b: anomaly ของ exam (cursor ผิด / ข้อความแปลกปลอม) ลง audit hash chain ด้วย
       console.warn(`[exam-anomaly] ${source ?? '?'}: ${reason}`)
+      try {
+        ensureTriageService().recordHostEvent(
+          source,
+          'HOST_ANOMALY_DETECTED',
+          'warning',
+          `พฤติกรรมน่าสงสัยจากระบบข้อสอบ: ${reason}`,
+          { reason, source: source ?? 'HOST' },
+          10
+        )
+      } catch {
+        // ยังไม่มีห้อง/chain — แสดง log อย่างเดียวพอ
+      }
     },
     // Phase 3a-plus: โดเมนที่ครูอนุมัติ + พฤติกรรมเตือน/บล็อก จากการ์ดเตรียมเอกสาร
     getAllowedDomains: () => {
       const roomId = roomManager?.room?.roomId
       return roomId ? ensureDomainAllowlist().listApproved(roomId) : []
     },
-    getDomainEnforcement: () => ensureDomainAllowlist().resolveDomainEnforcement(roomManager?.room?.roomId ?? null)
+    getDomainEnforcement: () => ensureDomainAllowlist().resolveDomainEnforcement(roomManager?.room?.roomId ?? null),
+    // Phase 3b: ท่อข้อมูลตรวจจับ → hash chain + triage
+    onDetectionBatch: (studentId, events) => {
+      try {
+        ensureTriageService().recordStudentEvents(studentId, events)
+      } catch {
+        // chain ยังไม่พร้อม (ยังไม่เริ่มสอบ) — ยังส่ง event ให้ renderer อยู่แล้ว
+      }
+    },
+    onExamStarted: (roomId, policy) => {
+      ensureTriageService().startRoom(roomId, policy)
+    },
+    onExamEnded: (roomId, reason) => {
+      ensureTriageService().endRoom(roomId, reason)
+    }
   })
   return sessionManager
 }
@@ -80,6 +108,16 @@ function ensureSessionManager(): CoreSessionManager {
 function ensureDomainAllowlist(): DomainAllowlistService {
   domainAllowlist ??= new DomainAllowlistService(ensureHostDatabase())
   return domainAllowlist
+}
+
+/** Phase 3b: Audit hash chain + Triage engine ของเครื่องแม่ */
+function ensureTriageService(): TriageService {
+  triageService ??= new TriageService({
+    db: ensureHostDatabase(),
+    getRoom: () => roomManager,
+    sendHostEvent: sendEventToWindow
+  })
+  return triageService
 }
 
 function ensureDocPreview(): DocPreviewController {
@@ -95,12 +133,20 @@ function ensureRoomManager(): HostRoomManager {
   roomManager ??= new HostRoomManager({
     db: ensureHostDatabase(),
     maxStudents: 60,
-    onStudentsChanged: (students) => sendEventToWindow('host:students-updated', { students }),
+    onStudentsChanged: (students) => {
+      sendEventToWindow('host:students-updated', { students })
+      // Phase 3b: สถานะหลุด/กลับมาเชื่อมต่อ → triage (ลำดับความสำคัญของ DISCONNECTED)
+      for (const student of students) {
+        triageService?.setStudentConnection(student.studentId, student.online)
+      }
+    },
     onRoomClosed: () => {
       sendEventToWindow('host:students-updated', { students: [] })
       // Phase 3a-plus: เก็บกวาดของค้างของห้องเก่า (preview + ค่าทับ enforcement)
       docPreview?.close()
       ensureDomainAllowlist().setEnforcementOverride(null)
+      // Phase 3b: เริ่ม chain/state ใหม่เมื่อเปิดห้องถัดไป
+      triageService = null
     },
     onStudentEstablished: (studentId) => {
       // deferred: session manager ยังไม่ถูกสร้าง ณ เวลา create room ก็ยังได้ (late-binding)
@@ -195,6 +241,10 @@ void app.whenReady().then(() => {
     getDocPreview: ensureDocPreview,
     getAllowlist: ensureDomainAllowlist,
     getSessionId: () => roomManager?.room?.roomId ?? null
+  })
+  registerAuditHandlers(router, state, {
+    getSessionManager: ensureSessionManager,
+    getTriageService: ensureTriageService
   })
   studentEstablishedHandler = (studentId) => {
     try {

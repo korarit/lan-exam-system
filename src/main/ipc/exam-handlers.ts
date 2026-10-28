@@ -180,6 +180,15 @@ export function createStudentExamEventForwarder(
         }
         break
       }
+      case NetMsgType.proctorWarning:
+        eventSender('exam:proctor-warning', payload)
+        break
+      case NetMsgType.freezeExam:
+        eventSender('exam:freeze-state', { ...(payload as { frozen: boolean; reason?: string }), frozen: true })
+        break
+      case NetMsgType.unfreezeExam:
+        eventSender('exam:freeze-state', { ...(payload as { frozen: boolean; reason?: string }), frozen: false })
+        break
       case NetMsgType.roomClosed:
         {
           hooks.onExamEnded?.()
