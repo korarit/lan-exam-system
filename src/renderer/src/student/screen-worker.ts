@@ -1,0 +1,239 @@
+import type { ScreenSourceInfo } from '@shared/ipc-channels'
+
+/* ============================================================
+ * Phase 3c: ScreenWorker (renderer นักเรียน)
+ * - เปิด getUserMedia ต่อทุกจอ (chromeMediaSource desktop)
+ * - Thumbnail ~1 fps (320px, WebP q0.55) ส่งขึ้น main → TLS binary frame
+ * - Ring Buffer: MediaRecorder หมุนทุก 10 วินาที (สลับตัวเก่า-ใหม่
+ *   ไม่ให้ภาพขาดช่วง) ส่งเซกเมนต์ .webm ขึ้น main เพื่อเข้ารหัสลงดิสก์
+ * - Live mode (ตอนเครื่องแม่ขอดู): 1280px, JPEG q0.7, ~5 fps
+ * ============================================================ */
+
+const RING_SEGMENT_MS = 10_000
+const RING_MIME_CANDIDATES = ['video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm']
+const LIVE_INTERVAL_MS = 200
+const THUMB_WIDTH = 320
+const LIVE_WIDTH = 1280
+
+interface DisplayCapture {
+  source: ScreenSourceInfo
+  stream: MediaStream
+  video: HTMLVideoElement
+  seqNo: number
+  activeRecorder: MediaRecorder | null
+  recorderTimer: ReturnType<typeof setTimeout> | null
+  thumbnailTimer: ReturnType<typeof setInterval> | null
+  liveTimer: ReturnType<typeof setInterval> | null
+  liveDisplayFilter: boolean
+  recorderStartedAtMs: number
+}
+
+export class ScreenWorker {
+  private captures: DisplayCapture[] = []
+  private active = false
+  private thumbnailIntervalMs = 1000
+  private liveRequestId: string | null = null
+
+  get isActive(): boolean {
+    return this.active
+  }
+
+  /** เริ่มจับทุกจอ (เรียกเมื่อได้รับ screen:session active=true) */
+  async start(thumbnailIntervalMs: number): Promise<void> {
+    await this.stop()
+    const { environment, sources } = await window.ztExam.getScreenSources()
+    if (!environment.ok) {
+      console.warn(`[screen] เริ่มบันทึกหน้าจอไม่ได้: ${environment.reason ?? environment.permission}`)
+      throw new Error(environment.reason ?? 'SCREEN_CAPTURE_PERMISSION_DENIED')
+    }
+    this.active = true
+    this.thumbnailIntervalMs = thumbnailIntervalMs
+    for (const source of sources) {
+      try {
+        this.captures.push(await this.openDisplay(source))
+      } catch (err) {
+        console.warn(`[screen] เปิดจอ ${source.displayIndex} ไม่สำเร็จ:`, err)
+      }
+    }
+  }
+
+  /** หยุดทุกอย่าง (จบสอบ / เริ่มเซสชันใหม่) */
+  async stop(): Promise<void> {
+    this.active = false
+    this.liveRequestId = null
+    for (const capture of this.captures) {
+      this.teardownCapture(capture)
+    }
+    this.captures = []
+  }
+
+  /** สลับโหมดภาพสด (SCREEN_INSPECT_REQUEST โหมด live/stop) */
+  setLive(active: boolean, requestId: string, displayId?: string): void {
+    this.liveRequestId = active ? requestId : null
+    for (const capture of this.captures) {
+      capture.liveDisplayFilter = displayId === undefined || capture.source.displayId === displayId
+      if (active && capture.liveTimer === null) {
+        capture.liveTimer = setInterval(() => {
+          if (!this.active || this.liveRequestId === null) return
+          if (!capture.liveDisplayFilter) return
+          void this.captureFrame(capture, LIVE_WIDTH, 'image/jpeg', 0.7, 'live')
+        }, LIVE_INTERVAL_MS)
+      } else if (!active && capture.liveTimer !== null) {
+        clearInterval(capture.liveTimer)
+        capture.liveTimer = null
+      }
+    }
+  }
+
+  private async openDisplay(source: ScreenSourceInfo): Promise<DisplayCapture> {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        // Electron: จับ desktop ด้วย source id จาก main process
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: source.sourceId,
+          maxWidth: 1920,
+          maxHeight: 1080,
+          maxFrameRate: 15
+        }
+      } as unknown as MediaTrackConstraints
+    })
+    const video = document.createElement('video')
+    video.srcObject = stream
+    video.muted = true
+    await video.play()
+
+    const capture: DisplayCapture = {
+      source,
+      stream,
+      video,
+      seqNo: 0,
+      activeRecorder: null,
+      recorderTimer: null,
+      thumbnailTimer: null,
+      liveTimer: null,
+      liveDisplayFilter: true,
+      recorderStartedAtMs: Date.now()
+    }
+
+    // 1) Ring buffer recorder: หมุนทุก 10 วินาที (double-buffered ไม่ให้ภาพขาดช่วง)
+    this.rotateRecorder(capture)
+
+    // 2) Thumbnail ~1 fps
+    capture.thumbnailTimer = setInterval(() => {
+      if (!this.active) return
+      void this.captureFrame(capture, THUMB_WIDTH, 'image/webp', 0.55, 'thumbnail')
+    }, this.thumbnailIntervalMs)
+
+    return capture
+  }
+
+  /** สลับ recorder: เริ่มตัวใหม่ก่อน แล้วหยุดตัวเก่า (แต่ละไฟล์เล่นได้ในตัว) */
+  private rotateRecorder(capture: DisplayCapture): void {
+    if (!this.active) return
+    const mimeType = RING_MIME_CANDIDATES.find((candidate) => MediaRecorder.isTypeSupported(candidate))
+    if (!mimeType) {
+      console.warn('[screen] MediaRecorder ไม่รองรับ webm — ring buffer ปิดใช้งาน')
+      return
+    }
+    const startedAtMs = Date.now()
+    const recorder = new MediaRecorder(capture.stream, {
+      mimeType,
+      videoBitsPerSecond: 400_000
+    })
+    const chunks: Blob[] = []
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push(event.data)
+    }
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: 'video/webm' })
+      const endedAtMs = Date.now()
+      void blob.arrayBuffer().then((buffer) => {
+        void window.ztExam
+          .sendScreenSegment({
+            displayId: capture.source.displayId,
+            seqNo: capture.seqNo,
+            startTimeMs: capture.recorderStartedAtMs,
+            endTimeMs: endedAtMs,
+            data: new Uint8Array(buffer)
+          })
+          .catch(() => undefined)
+      })
+      capture.seqNo += 1
+    }
+    recorder.start(1_000)
+    capture.activeRecorder = recorder
+    capture.recorderStartedAtMs = startedAtMs
+
+    capture.recorderTimer = setTimeout(() => {
+      const old = capture.activeRecorder
+      if (old === recorder) {
+        // เริ่มตัวใหม่ทันที แล้วค่อยหยุดตัวเก่า (ภาพไม่ขาดช่วง)
+        this.rotateRecorder(capture)
+        try {
+          old.stop()
+        } catch {
+          // ปิดไปเอง
+        }
+        capture.activeRecorder = null
+      }
+    }, RING_SEGMENT_MS)
+  }
+
+  /** วาดเฟรมปัจจุบันลง canvas → บีบอัด → ส่งขึ้น main */
+  private async captureFrame(
+    capture: DisplayCapture,
+    targetWidth: number,
+    mimeType: string,
+    quality: number,
+    mode: 'thumbnail' | 'live'
+  ): Promise<void> {
+    const video = capture.video
+    if (video.videoWidth === 0 || video.videoHeight === 0) return
+    const scale = targetWidth / video.videoWidth
+    const canvas = document.createElement('canvas')
+    canvas.width = targetWidth
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale))
+    const context = canvas.getContext('2d')
+    if (!context) return
+    context.drawImage(video, 0, 0, canvas.width, canvas.height)
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, mimeType, quality)
+    })
+    if (!blob) return
+    const data = new Uint8Array(await blob.arrayBuffer())
+    void window.ztExam
+      .sendScreenThumbnail({
+        displayIndex: capture.source.displayIndex,
+        displayCount: capture.source.displayCount,
+        mode,
+        mimeType: blob.type || mimeType,
+        timestampMs: Date.now(),
+        displayId: capture.source.displayId,
+        data
+      })
+      .catch(() => undefined)
+  }
+
+  private teardownCapture(capture: DisplayCapture): void {
+    if (capture.recorderTimer) clearTimeout(capture.recorderTimer)
+    if (capture.thumbnailTimer) clearInterval(capture.thumbnailTimer)
+    if (capture.liveTimer) clearInterval(capture.liveTimer)
+    try {
+      capture.activeRecorder?.stop()
+    } catch {
+      // ปิดไปเอง
+    }
+    for (const track of capture.stream.getTracks()) track.stop()
+    capture.video.srcObject = null
+    capture.video.remove()
+  }
+}
+
+/** instance เดียวต่อหน้าต่างนักเรียน */
+let workerInstance: ScreenWorker | null = null
+export function getScreenWorker(): ScreenWorker {
+  workerInstance ??= new ScreenWorker()
+  return workerInstance
+}

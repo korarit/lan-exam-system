@@ -13,6 +13,7 @@ import type { DiscoveredRoom } from '@shared/protocol-schema'
 import { useStudentNetworkStore } from '../store/network-store'
 import { useAppStore } from '../store/app-store'
 import { useStudentExamStore } from '../store/exam-store'
+import { getScreenWorker } from '../student/screen-worker'
 import ExamView from '../core-student/ExamView'
 import ProctorOverlay from '../core-student/ProctorOverlay'
 
@@ -47,9 +48,31 @@ export default function StudentPanel(): React.JSX.Element {
     const unsubConn = window.ztExam.onEvent('network:connection-state', (event) =>
       useStudentNetworkStore.getState().setConnection(event)
     )
+    // Phase 3c: เริ่ม/หยุด screen worker ตามคำสั่งเซสชันจากเครื่องแม่
+    const unsubScreenSession = window.ztExam.onEvent('screen:session', (event) => {
+      const worker = getScreenWorker()
+      if (event.active) {
+        void worker
+          .start(event.thumbnailIntervalMs ?? 1000)
+          .catch((err: unknown) => {
+            notify({
+              severity: 'warning',
+              message: `ระบบเฝ้าระวังหน้าจอเริ่มไม่สำเร็จ: ${err instanceof Error ? err.message : 'unknown'}`
+            })
+          })
+      } else {
+        void worker.stop()
+      }
+    })
+    const unsubScreenInspect = window.ztExam.onEvent('screen:inspect', (event) => {
+      getScreenWorker().setLive(event.mode === 'live', event.requestId, event.displayId)
+    })
     return () => {
       unsubRooms()
       unsubConn()
+      unsubScreenSession()
+      unsubScreenInspect()
+      void getScreenWorker().stop()
       void window.ztExam.stopDiscovery()
     }
   }, [])

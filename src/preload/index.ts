@@ -71,6 +71,13 @@ const api: ZtExamApi = {
   exportIncidentReport: () => call('host:export-incident-report', undefined),
   exportAuditBundle: () => call('host:export-audit-bundle', undefined),
 
+  getScreenSources: () => call('student:screen-get-sources', undefined),
+  sendScreenSegment: (req) => call('student:screen-segment', req),
+  sendScreenThumbnail: (req) => call('student:screen-thumbnail', req),
+  screenInspect: (req) => call('host:screen-inspect', req),
+  fetchRingSegment: (req) => call('host:fetch-ring-segment', req),
+  pinScreenBuffer: (req) => call('host:pin-screen-buffer', req),
+
   onRoleChanged: (listener) => subscribe('app:role-changed', listener),
   onEvent: (channel, listener) => subscribe(channel, listener)
 }
