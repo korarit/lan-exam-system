@@ -144,12 +144,12 @@
 
 ## 3. Checklist งานย่อย (Implementation Checklist)
 
-- [ ] **4.1.1** สร้างสคริปต์ `scripts/keygen.ts` และ `scripts/sign-manifest.ts` สำหรับสร้างและเซ็น `app-manifest.sig.json` ด้วย Ed25519
-- [ ] **4.2.1** สร้าง `AttestationResponder` (Client) และ `AttestationVerifier` (Host) ที่ผูก HMAC เข้ากับ `tlsExporter`
-- [ ] **4.2.2** สร้างระบบสุ่มส่ง `ATTESTATION_CHALLENGE` ซ้ำทุก 45–120 วินาทีตลอดการสอบ
-- [ ] **4.3.1** สร้าง `LaunchGuard` ตรวจจับ CLI flags และ Environment variables อันตรายตั้งแต่เริ่มโปรเซส
-- [ ] **4.4.1** สร้าง `native-bridge.ts` พร้อม Native Keyboard Hook สำหรับ Windows (`WH_KEYBOARD_LL`) และ Fallback สำหรับ macOS/Linux
-- [ ] **4.5.1** สร้างสคริปต์ `scripts/apply-fuses.ts` และผูกเข้ากับ `afterPack` hook ใน `electron-builder.yml`
+- [x] **4.1.1** สร้างสคริปต์ `scripts/keygen.ts` และ `scripts/sign-manifest.ts` สำหรับสร้างและเซ็น `app-manifest.sig.json` ด้วย Ed25519
+- [x] **4.2.1** สร้าง `AttestationResponder` (Client) และ `AttestationVerifier` (Host) ที่ผูก HMAC เข้ากับ `tlsExporter`
+- [x] **4.2.2** สร้างระบบสุ่มส่ง `ATTESTATION_CHALLENGE` ซ้ำทุก 45–120 วินาทีตลอดการสอบ
+- [x] **4.3.1** สร้าง `LaunchGuard` ตรวจจับ CLI flags และ Environment variables อันตรายตั้งแต่เริ่มโปรเซส
+- [x] **4.4.1** สร้าง `native-bridge.ts` พร้อม Native Keyboard Hook สำหรับ Windows (`WH_KEYBOARD_LL`) และ Fallback สำหรับ macOS/Linux
+- [x] **4.5.1** สร้างสคริปต์ `scripts/apply-fuses.ts` และผูกเข้ากับ `afterPack` hook ใน `electron-builder.yml`
 
 ---
 
