@@ -1,4 +1,5 @@
 import { BrowserWindow, screen, shell } from 'electron'
+import type { Event } from 'electron'
 import path from 'node:path'
 import type { AppRole } from '@shared/types/role'
 
@@ -85,4 +86,39 @@ export function exitKioskMode(win: BrowserWindow): void {
   win.setAlwaysOnTop(false)
   win.setFullScreen(false)
   win.setKiosk(false)
+}
+
+/**
+ * Kiosk input hardening (checklist 2.5.1):
+ * - บล็อกคีย์ลัดของ Chromium ผ่าน before-input-event
+ * - บล็อกเมนูคลิกขวา
+ * - (window open/navigate ถูกปิดอยู่แล้วใน createMainWindow)
+ */
+const BLOCKED_SHORTCUTS: Array<{
+  test: (input: { key: string; control: boolean; alt: boolean; shift: boolean; meta: boolean }) => boolean
+}> = [
+  { test: (i) => i.key === 'F5' },
+  { test: (i) => i.key === 'F12' },
+  { test: (i) => i.control && i.shift && (i.key === 'I' || i.key === 'i') },
+  { test: (i) => i.control && (i.key === 'r' || i.key === 'R') },
+  { test: (i) => i.control && (i.key === 'p' || i.key === 'P') },
+  { test: (i) => i.control && (i.key === 's' || i.key === 'S') },
+  { test: (i) => i.control && (i.key === 'f' || i.key === 'F') },
+  { test: (i) => i.alt && (i.key === 'ArrowLeft' || i.key === 'ArrowRight') }
+]
+
+export function enforceKioskInputBlocking(win: BrowserWindow): void {
+  win.webContents.on('context-menu' as never, (event: Event) => {
+    event.preventDefault()
+  })
+  win.webContents.on(
+    'before-input-event' as never,
+    (
+      event: Event,
+      input: { key: string; control: boolean; alt: boolean; shift: boolean; meta: boolean }
+    ) => {
+      const blocked = BLOCKED_SHORTCUTS.some(({ test }) => test(input))
+      if (blocked) event.preventDefault()
+    }
+  )
 }

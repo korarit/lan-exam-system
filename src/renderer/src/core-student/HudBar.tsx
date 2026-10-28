@@ -1,0 +1,93 @@
+import { useEffect, useState } from 'react'
+import { AlarmClock, BookOpenText, Signal, Save } from 'lucide-react'
+import { useStudentExamStore } from '../store/exam-store'
+
+export interface HudBarProps {
+  connectionOk: boolean
+}
+
+function formatClock(total: number): string {
+  const s = Math.max(0, total)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  const mm = m.toString().padStart(m >= 0 ? 2 : 1, '0')
+  const ss = sec.toString().padStart(2, '0')
+  return h > 0 ? `${h}:${mm.padStart(2, '0')}:${ss}` : `${mm}:${ss}`
+}
+
+function timeAgo(ms: number): string {
+  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+  return s < 3 ? 'เมื่อไม่กี่วินาทีที่แล้ว' : `${s} วินาทีที่แล้ว`
+}
+
+/**
+ * Top HUD Bar (checklist 2.5.3):
+ * ชื่อวิชา • ข้าที่กำลังทำ • สถานะการบันทึกอัตโนมัติ • เวลาหน่วยที่เหลือ (สีเปลี่ยนตามเวลา)
+ */
+export default function HudBar(props: HudBarProps): React.JSX.Element {
+  const examTitle = useStudentExamStore((s) => s.examTitle)
+  const question = useStudentExamStore((s) => s.question)
+  const remaining = useStudentExamStore((s) => s.remainingSeconds)
+  const lastDraftSavedAtMs = useStudentExamStore((s) => s.lastDraftSavedAtMs)
+  const [, setTick] = useState(0)
+
+  // local countdown display (วินาทีลดจากค่าที่เครื่องแม่ส่งมา = หน่วยเวลา authoritative)
+  useEffect(() => {
+    const interval = window.setInterval(() => setTick((t) => t + 1), 1000)
+    return () => window.clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    if (remaining > 0) {
+      const interval = window.setInterval(() => {
+        useStudentExamStore.setState({ remainingSeconds: Math.max(0, remaining - 1) })
+      }, 1000)
+      return () => window.clearInterval(interval)
+    }
+    return undefined
+  }, [remaining])
+
+  const timerClass =
+    remaining <= 60
+      ? 'text-red-400 border-red-800/60 bg-red-950/50'
+      : remaining <= 300
+        ? 'text-orange-300 border-orange-800/50 bg-orange-950/40'
+        : 'text-emerald-300 border-emerald-800/50 bg-emerald-950/30'
+
+  return (
+    <div className="flex items-center gap-4 border-b border-slate-800 bg-slate-950/90 px-6 py-3 text-sm">
+      <div className="flex items-center gap-2 font-semibold text-slate-200">
+        <BookOpenText size={16} className="text-sky-400" />
+        <span className="max-w-[16rem] truncate">{examTitle ?? 'ข้อสอบ'}</span>
+      </div>
+
+      {question && (
+        <div className="text-slate-400">
+          ข้อที่ <span className="font-mono text-slate-100">{question.cursorIndex + 1}</span>
+          {' / '}
+          <span className="font-mono">{question.questionCount}</span>
+        </div>
+      )}
+
+      <div className="ml-auto flex items-center gap-1.5 text-slate-400">
+        <Save size={14} />
+        <span>{lastDraftSavedAtMs ? `บันทึกอัตโนมัติ ${timeAgo(lastDraftSavedAtMs)}` : 'ยังไม่มีตัวบันทึก'}</span>
+      </div>
+
+      <div
+        className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
+          props.connectionOk ? 'text-emerald-300 border-emerald-800/60 bg-emerald-950/40' : 'text-red-300 border-red-800/60 bg-red-950/50'
+        }`}
+      >
+        <Signal size={13} />
+        {props.connectionOk ? 'เครื่องแม่' : 'ขาดการติดต่อ'}
+      </div>
+
+      <div className={`flex items-center gap-2 rounded-full border px-3 py-1 font-mono text-base font-bold tabular-nums ${timerClass}`}>
+        <AlarmClock size={16} />
+        {formatClock(remaining)}
+      </div>
+    </div>
+  )
+}

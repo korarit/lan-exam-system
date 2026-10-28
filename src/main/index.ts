@@ -5,11 +5,18 @@ import { parseRuntimeArgs } from './runtime-args'
 import { IpcRouter, createElectronIpcRegistrar } from './ipc/router'
 import { registerAppHandlers, type AppRuntimeState } from './ipc/app-handlers'
 import { registerNetworkHandlers, forwardConnectionState } from './ipc/network-handlers'
-import { createMainWindow } from './window'
+import {
+  registerExamHandlers,
+  createStudentExamEventForwarder,
+  makeKioskHooks
+} from './ipc/exam-handlers'
+import { createMainWindow, enforceKioskInputBlocking } from './window'
 import { HostDatabase, getDefaultDatabasePath } from './storage/db'
 import { HostRoomManager } from './network/host-room'
 import { RoomDiscoveryListener } from './network/discovery'
 import { ExamTlsClient } from './network/tls-client'
+import { CoreSessionManager } from './host/core-session-manager'
+import { GuardEngine } from './guard/guard-engine'
 
 /* ---------- จัดการ isolation ของ multi-instance ก่อนพร้อมใช้งาน ---------- */
 const runtime = parseRuntimeArgs(process.argv)
@@ -30,12 +37,33 @@ const state: AppRuntimeState = {
 let mainWindow: BrowserWindow | null = null
 let hostDb: HostDatabase | null = null
 let roomManager: HostRoomManager | null = null
+let sessionManager: CoreSessionManager | null = null
 const discovery = new RoomDiscoveryListener()
 let studentClient: ExamTlsClient | null = null
+let guardEngine: GuardEngine | null = null
+/** IP เครื่องแม่จากการ join ล่าสุด (NetworkInspector ยกเว้นให้เสมอ) */
+let lastJoinedHostIp: string | null = null
+
+/** late-bound hook: เรียกเมื่อนักเรียน reconnect/handshake สำเร็จ */
+let studentEstablishedHandler: ((studentId: string) => void) | null = null
 
 function ensureHostDatabase(): HostDatabase {
   hostDb ??= new HostDatabase({ filePath: getDefaultDatabasePath(app.getPath('userData')) })
   return hostDb
+}
+
+function ensureSessionManager(): CoreSessionManager {
+  sessionManager ??= new CoreSessionManager({
+    db: ensureHostDatabase(),
+    getRoom: () => roomManager,
+    sendHostEvent: sendEventToWindow,
+    onAnomaly: (source, reason) => {
+      // พฤติกรรมน่าสงสัยของ exam (จุด cursor ผิด / พยายามดูข้อล่วงหน้า)
+      // Phase 3b จะเก็บลง audit hash chain — ตอนนี้แสดง log ของเครื่องแม่ก่อน
+      console.warn(`[exam-anomaly] ${source ?? '?'}: ${reason}`)
+    }
+  })
+  return sessionManager
 }
 
 function ensureRoomManager(): HostRoomManager {
@@ -43,8 +71,10 @@ function ensureRoomManager(): HostRoomManager {
     db: ensureHostDatabase(),
     maxStudents: 60,
     onStudentsChanged: (students) => sendEventToWindow('host:students-updated', { students }),
-    onRoomClosed: () => {
-      sendEventToWindow('host:students-updated', { students: [] })
+    onRoomClosed: () => sendEventToWindow('host:students-updated', { students: [] }),
+    onStudentEstablished: (studentId) => {
+      // deferred: session manager ยังไม่ถูกสร้าง ณ เวลา create room ก็ยังได้ (late-binding)
+      studentEstablishedHandler?.(studentId)
     }
   })
   return roomManager
@@ -52,9 +82,37 @@ function ensureRoomManager(): HostRoomManager {
 
 function ensureStudentClient(): ExamTlsClient {
   studentClient ??= new ExamTlsClient({
-    onConnectionState: forwardConnectionState(sendEventToWindow)
+    onConnectionState: forwardConnectionState(sendEventToWindow),
+    onMessage: createStudentExamEventForwarder(sendEventToWindow, () => mainWindow, {
+      onPolicyUpdate: (policy) => {
+        const sessionKey = ensureStudentClient().getSessionKey()
+        if (!sessionKey) return
+        const accepted = ensureGuardEngine().applyPolicy(policy, sessionKey, true)
+        if (!accepted) {
+          // นโยบายปลอม/หมดอายุ — ฟ้องกลับเครื่องแม่แบบชัดเจน
+          console.warn('[guard] ปฏิเสธนโยบายตรวจจับที่ลายเซ็นไม่ถูกต้อง')
+        }
+      },
+      onExamEnded: () => {
+        guardEngine?.stop()
+      }
+    })
   })
   return studentClient
+}
+
+function ensureGuardEngine(): GuardEngine {
+  guardEngine ??= new GuardEngine({
+    sendToHost: (type, payload) => ensureStudentClient().sendExamMessage(type, payload),
+    getExamBounds: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return null
+      const bounds = mainWindow.getBounds()
+      return { left: bounds.x, top: bounds.y, right: bounds.x + bounds.width, bottom: bounds.y + bounds.height }
+    },
+    getHostIp: () => lastJoinedHostIp,
+    getLocalProxyPort: () => 0 // Mode 3 ยังไม่เปิด proxy (Phase 5)
+  })
+  return guardEngine
 }
 
 function sendEventToWindow(channel: string, payload: unknown): void {
@@ -71,6 +129,7 @@ function createWindow(): void {
     role: state.role,
     isDev: process.env.NODE_ENV !== 'production'
   })
+  enforceKioskInputBlocking(mainWindow)
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -90,8 +149,24 @@ void app.whenReady().then(() => {
   registerNetworkHandlers(router, state, {
     getRoomManager: ensureRoomManager,
     getDiscovery: () => discovery,
-    getStudentClient: ensureStudentClient
+    getStudentClient: ensureStudentClient,
+    onStudentJoinedRoom: (hostIp) => {
+      lastJoinedHostIp = hostIp
+    }
   })
+  registerExamHandlers(router, state, {
+    getSessionManager: ensureSessionManager,
+    getStudentClient: ensureStudentClient,
+    getGuardEngine: () => (state.role === 'student' ? ensureGuardEngine() : null),
+    ...makeKioskHooks(() => mainWindow, runtime.windowedKiosk)
+  })
+  studentEstablishedHandler = (studentId) => {
+    try {
+      ensureSessionManager().handleStudentEstablished(studentId)
+    } catch {
+      // room ยังไม่พร้อม / ยังไม่เริ่มสอบ — ข้ามได้
+    }
+  }
 
   // ห้องที่มองเห็นเปลี่ยน → push ไปหน้า Student ทันที
   discovery.on('rooms-changed', (rooms: unknown) => {

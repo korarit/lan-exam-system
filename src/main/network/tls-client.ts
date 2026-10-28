@@ -74,6 +74,7 @@ export class ExamTlsClient {
   private reconnectAttempt = 0
   private connectOptions: ConnectOptions | null = null
   private sessionToken: string | null = null
+  private dynamicSessionKey: Buffer | null = null
 
   constructor(private readonly opts: ExamTlsClientOptions) {}
 
@@ -83,6 +84,11 @@ export class ExamTlsClient {
 
   get currentSessionToken(): string | null {
     return this.sessionToken
+  }
+
+  /** คีย์ HMAC ต่อ session (GuardEngine ใช้ตรวจลายเซ็นนโยบายจากเครื่องแม่) */
+  getSessionKey(): Buffer | null {
+    return this.dynamicSessionKey
   }
 
   /** เวลาปัจจุบันของเครื่องแม่จาก HEARTBEAT_PONG ล่าสุด (Host-authoritative time) */
@@ -99,6 +105,13 @@ export class ExamTlsClient {
   setExamUiState(focusState: FocusState, currentQuestionIndex: number | null): void {
     this.focusState = focusState
     this.currentQuestionIndex = currentQuestionIndex
+  }
+
+  /** ส่งข้อความ exam ของ renderer (SUBMIT_ANSWER / AUTOSAVE_DRAFT / ฯลฯ) ผ่าน HMAC envelope */
+  sendExamMessage(type: string, payload: unknown): void {
+    if (this.stopped) return
+    const connection = this.connection
+    if (connection && !connection.isDestroyed) connection.send(type, payload)
   }
 
   async connect(options: ConnectOptions): Promise<JoinResult> {
@@ -225,6 +238,7 @@ export class ExamTlsClient {
     }
     const dynamicSessionKey = Buffer.from(accepted.dynamicSessionKey, 'base64')
     connection.setSessionKey(dynamicSessionKey)
+    this.dynamicSessionKey = dynamicSessionKey
 
     const result: JoinResult = {
       sessionToken: accepted.sessionToken,
@@ -307,6 +321,7 @@ export class ExamTlsClient {
         const pong = payload as { serverTimeMs: number; remainingExamSeconds: number }
         this.lastServerTimeMs = pong.serverTimeMs
         this.lastRemainingSeconds = pong.remainingExamSeconds
+        this.opts.onMessage?.(type, payload)
         return
       }
       if (type === NetMsgType.roomClosed) {

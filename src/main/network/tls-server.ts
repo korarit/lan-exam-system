@@ -38,10 +38,19 @@ export interface ExamTlsServerOptions {
   maxConnectionsPerIp?: number
   onStudentsChanged: (students: HostStudentStatus[]) => void
   onStudentJoined?: (studentId: string, studentName: string) => void
+  /** เรียกเมื่อ handshake/RESUME สำเร็จ — CoreSessionManager ใช้ส่ง STATE_RECOVERY */
+  onStudentEstablished?: (studentId: string) => void
   onAnomaly?: (source: string | null, reason: string) => void
 }
 
 export const TLS_EXPORTER_LABEL = 'EXPORTER-ZT-EXAM-V1'
+
+export type ExamMessageHandler = (
+  studentId: string,
+  connection: SecureConnection,
+  type: string,
+  payload: unknown
+) => void
 
 /**
  * TLS 1.3 Server ของเครื่องแม่:
@@ -58,6 +67,8 @@ export class ExamTlsServer {
   private liveConnections = new Map<string, SecureConnection[]>()
   private connectionTimestamps = new Map<string, number[]>()
   private offlineCheckTimer: NodeJS.Timeout | null = null
+  private examMessageHandler: ExamMessageHandler | null = null
+  private currentExamEndsAtMs: number | null = null
 
   constructor(private readonly opts: ExamTlsServerOptions) {}
 
@@ -92,6 +103,33 @@ export class ExamTlsServer {
 
   getStudentExporter(studentId: string): Buffer | null {
     return this.students.get(studentId)?.exporter ?? null
+  }
+
+  /** session key ต่อนักเรียน (GuardEngine ฝั่ง host ใช้เซ็นนโยบายตรวจจับ) */
+  getStudentSessionKey(studentId: string): Buffer | null {
+    return this.students.get(studentId)?.sessionKey ?? null
+  }
+
+  /** CoreSessionManager สั่งตั้งเวลาหมดสอบ (Host-authoritative) */
+  setExamEndsAtMs(endsAtMs: number): void {
+    this.currentExamEndsAtMs = endsAtMs
+    this.opts.examEndsAtMs = endsAtMs
+  }
+
+  getExamEndsAtMs(): number | null {
+    return this.currentExamEndsAtMs ?? this.opts.examEndsAtMs ?? null
+  }
+
+  /** ลงทะบียน handler ของ CoreSessionManager — ข้อความ exam จะถูกส่งเข้า Core '@main/host' อัตโนมัติ */
+  attachExamMessageHandler(handler: ExamMessageHandler): void {
+    this.examMessageHandler = handler
+  }
+
+  /** ส่งข้อความแบบ typed ให้นักเรียน 1 คน (ผ่าน connection ที่ถืออยู่) */
+  sendToStudent(studentId: string, type: string, payload: unknown): void {
+    const connections = this.liveConnections.get(studentId)
+    const target = connections?.find((c) => !c.isDestroyed)
+    if (target) target.send(type, payload)
   }
 
   getStudents(): HostStudentStatus[] {
@@ -304,19 +342,25 @@ export class ExamTlsServer {
 
     connection.on('message', ({ type, payload }) => {
       record.lastSeenAtMs = Date.now()
-      if (type === NetMsgType.heartbeatPing) {
-        const ping = payload as { focusState: FocusState; currentQuestionIndex: number | null }
-        record.focusState = ping.focusState
-        record.currentQuestionIndex = ping.currentQuestionIndex
-        connection.send(NetMsgType.heartbeatPong, {
-          serverTimeMs: Date.now(),
-          remainingExamSeconds: this.remainingSeconds()
-        })
-        this.notifyStudentsChanged()
+      // Phase 1: heartbeat / roomClosed ถูกจัดการตรงนี้
+      // Phase 2: ข้อความ exam (SUBMIT_ANSWER / AUTOSAVE_DRAFT / ฯลฯ) ส่งเข้า CoreSessionManager
+      if (this.examMessageHandler && type !== NetMsgType.heartbeatPing) {
+        this.examMessageHandler(record.studentId, connection, type, payload)
         return
       }
-      // Phase 1 ยังไม่มีข้อความอื่นหลัง established — บันทึกเป็น anomaly
-      this.opts.onAnomaly?.(record.studentId, `POST_ESTABLISH_${type}`)
+      if (type !== NetMsgType.heartbeatPing) {
+        // Phase 1 ยังไม่มีข้อความอื่นหลัง established — บันทึกเป็น anomaly
+        this.opts.onAnomaly?.(record.studentId, `POST_ESTABLISH_${type}`)
+        return
+      }
+      const ping = payload as { focusState: FocusState; currentQuestionIndex: number | null }
+      record.focusState = ping.focusState
+      record.currentQuestionIndex = ping.currentQuestionIndex
+      connection.send(NetMsgType.heartbeatPong, {
+        serverTimeMs: Date.now(),
+        remainingExamSeconds: this.remainingSeconds()
+      })
+      this.notifyStudentsChanged()
     })
     connection.on('closed', () => {
       const list = this.liveConnections.get(record.studentId) ?? []
@@ -329,6 +373,8 @@ export class ExamTlsServer {
         this.liveConnections.set(record.studentId, remaining)
       }
     })
+    // แจ้ง CoreSessionManager ทุกครั้งที่ session นักเรียนพร้อม (finish join / reconnect)
+    this.opts.onStudentEstablished?.(record.studentId)
   }
 
   private checkOfflineStudents(): void {
@@ -353,7 +399,7 @@ export class ExamTlsServer {
   }
 
   private remainingSeconds(): number {
-    const endsAt = this.opts.examEndsAtMs ?? 0
+    const endsAt = this.currentExamEndsAtMs ?? this.opts.examEndsAtMs ?? 0
     if (endsAt <= 0) return 0
     return Math.max(0, Math.floor((endsAt - Date.now()) / 1000))
   }

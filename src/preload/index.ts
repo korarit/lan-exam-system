@@ -41,11 +41,21 @@ const api: ZtExamApi = {
   createRoom: (req) => call('host:create-room', req),
   closeRoom: () => call('host:close-room', undefined),
   getRoom: () => call('host:get-room', undefined),
+  loadExam: (req) => call('host:load-exam', req),
+  selectExamFile: () => call('host:select-exam-file', undefined),
+  startExam: () => call('host:start-exam', undefined),
+  endExam: () => call('host:end-exam', undefined),
 
   startDiscovery: () => call('student:start-discovery', undefined),
   stopDiscovery: () => call('student:stop-discovery', undefined),
   joinRoom: (req) => call('student:join-room', req),
   leaveRoom: () => call('student:leave-room', undefined),
+  submitAnswer: (req) => call('student:submit-answer', req),
+  autosaveDraft: (req) => call('student:autosave-draft', req),
+  navigate: (req) => call('student:navigate', req),
+  enterKiosk: () => call('student:enter-kiosk', undefined),
+  markInternalCopy: (req) => call('student:internal-copy', req),
+  sendTypingMetrics: (req) => call('student:typing-metrics', req),
 
   onRoleChanged: (listener) => subscribe('app:role-changed', listener),
   onEvent: (channel, listener) => subscribe(channel, listener)

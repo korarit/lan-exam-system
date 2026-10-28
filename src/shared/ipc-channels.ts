@@ -10,6 +10,23 @@ import {
   type HostStudentStatus,
   type StudentConnectionStatus
 } from './protocol-schema'
+import {
+  ExamStartedPayloadSchema,
+  ExamCompletedPayloadSchema,
+  ExamTimeUpPayloadSchema,
+  StateRecoveryPayloadSchema,
+  SubmitAnswerPayloadSchema,
+  SubmitRejectedPayloadSchema,
+  AutoSaveDraftPayloadSchema,
+  ClientQuestionPayloadSchema,
+  type ExamStartedPayload,
+  type ExamCompletedPayload,
+  type StateRecoveryPayload,
+  type SubmitRejectedPayload,
+  type ClientQuestionPayload
+} from './exam-schema'
+import { DetectionEventSchema, type DetectionEvent } from './policy-schema'
+export type { DetectionEvent } from './policy-schema'
 
 /* ---------- Payload types ---------- */
 
@@ -69,6 +86,81 @@ export interface StudentsUpdatedEvent {
   students: HostStudentStatus[]
 }
 
+/* ---------- Exam payloads (Phase 2) ---------- */
+
+export interface LoadExamRequest {
+  /** เนื้อหา JSON ของไฟล์ .ztexam.json ที่ฝั่ง renderer อ่านให้ main ผ่าน dialog */
+  examJson: string
+}
+export interface LoadExamResponse {
+  ok: boolean
+  title: string
+  questionCount: number
+  durationSeconds: number
+}
+export interface ExamStartResponse {
+  ok: boolean
+}
+export interface ExamTickEvent {
+  remainingSeconds: number
+}
+export interface ExamFinishedEvent {
+  reason: 'time-up' | 'ended-by-host' | 'completed'
+}
+export interface SelectExamFileResponse {
+  ok: boolean
+  /** ok=false เมื่อครูกดยกเลิก หรือแพ็กเกจไม่ผ่าน validation (มี message) */
+  title: string
+  questionCount: number
+  durationSeconds: number
+  message?: string | undefined
+}
+export interface HostExamStateEvent {
+  state: 'idle' | 'running' | 'collecting' | 'finished'
+  title: string | null
+  questionCount: number
+  examEndsAtMs: number
+  serverNowMs: number
+  room: string | null
+}
+export interface HostStudentSummary {
+  studentId: string
+  studentName: string
+  answeredCount: number
+  maxReachedCursor: number
+  totalQuestions: number
+  awardedPoints: number
+  online: boolean
+  finished: boolean
+  finishReason?: string | undefined
+}
+export interface HostExamSummariesEvent {
+  summaries: HostStudentSummary[]
+}
+export interface StudentSubmitResponse {
+  ok: boolean
+  reason?: string | undefined
+}
+export interface KioskEnterResponse {
+  ok: boolean
+}
+
+/* ---------- Guard payloads (Phase 3a) ---------- */
+
+/** renderer แจ้งว่าผู้สอบคัดลอกภายในแอปเอง (กัน false positive ของ clipboard guard) */
+export interface InternalCopyRequest {
+  text: string
+}
+/** renderer ส่งช่วงห่างระหว่างการกดปุ่ม (IKI ms) มาให้วิเคราะห์จังหวะการพิมพ์ */
+export interface TypingMetricsRequest {
+  intervalsMs: number[]
+}
+/** เครื่องแม่: เหตุการณ์ตรวจจับจากเครื่องนักเรียน */
+export interface HostGuardEventsEvent {
+  studentId: string
+  events: DetectionEvent[]
+}
+
 /* ---------- Channel maps (single source of truth for IPC surface) ---------- */
 
 /* ---------- Zod schemas สำหรับ payload ของ network channels ---------- */
@@ -110,10 +202,29 @@ export interface IpcInvokeMap {
   'host:create-room': { req: CreateRoomRequest; res: HostRoomInfo }
   'host:close-room': { req: void; res: SelectRoleResponse }
   'host:get-room': { req: void; res: GetRoomResponse }
+  'host:load-exam': { req: LoadExamRequest; res: LoadExamResponse }
+  'host:select-exam-file': { req: void; res: SelectExamFileResponse }
+  'host:start-exam': { req: void; res: ExamStartResponse }
+  'host:end-exam': { req: void; res: ExamStartResponse }
   'student:start-discovery': { req: void; res: SelectRoleResponse }
   'student:stop-discovery': { req: void; res: SelectRoleResponse }
   'student:join-room': { req: JoinRoomRequest; res: JoinRoomResponse }
   'student:leave-room': { req: void; res: SelectRoleResponse }
+  'student:submit-answer': {
+    req: z.infer<typeof SubmitAnswerPayloadSchema>
+    res: StudentSubmitResponse
+  }
+  'student:autosave-draft': {
+    req: z.infer<typeof AutoSaveDraftPayloadSchema>
+    res: StudentSubmitResponse
+  }
+  'student:navigate': {
+    req: { cursorIndex: number }
+    res: StudentSubmitResponse
+  }
+  'student:enter-kiosk': { req: void; res: KioskEnterResponse }
+  'student:internal-copy': { req: InternalCopyRequest; res: StudentSubmitResponse }
+  'student:typing-metrics': { req: TypingMetricsRequest; res: StudentSubmitResponse }
 }
 
 /** Main -> Renderer (webContents.send) push event channels */
@@ -122,6 +233,17 @@ export interface IpcEventMap {
   'network:rooms-updated': RoomsUpdatedEvent
   'network:connection-state': StudentConnectionStatus
   'host:students-updated': StudentsUpdatedEvent
+  'host:exam-state-changed': HostExamStateEvent
+  'host:exam-summaries': HostExamSummariesEvent
+  'host:exam-completed': ExamFinishedEvent
+  'exam:started': ExamStartedPayload
+  'exam:question': ClientQuestionPayload
+  'exam:recovery': StateRecoveryPayload
+  'exam:submit-rejected': SubmitRejectedPayload
+  'exam:time-up': Record<string, never>
+  'exam:completed': ExamCompletedPayload
+  'exam:tick': ExamTickEvent
+  'host:guard-events': HostGuardEventsEvent
 }
 
 export type IpcInvokeChannel = keyof IpcInvokeMap
@@ -212,6 +334,69 @@ export const IpcInvokeSchemas: {
   'student:leave-room': {
     request: z.void(),
     response: z.object({ ok: z.boolean(), role: z.union([z.literal('host'), z.literal('student')]) }).strict()
+  },
+  'host:load-exam': {
+    request: z.object({ examJson: z.string().min(2).max(1024 * 512) }).strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        title: z.string().max(120),
+        questionCount: z.number().int().nonnegative(),
+        durationSeconds: z.number().int().nonnegative()
+      })
+      .strict()
+  },
+  'host:select-exam-file': {
+    request: z.void(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        title: z.string().max(120),
+        questionCount: z.number().int().nonnegative(),
+        durationSeconds: z.number().int().nonnegative(),
+        message: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'host:start-exam': {
+    request: z.void(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'host:end-exam': {
+    request: z.void(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'student:submit-answer': {
+    request: SubmitAnswerPayloadSchema,
+    response: z
+      .object({ ok: z.boolean(), reason: z.string().max(60).optional() })
+      .strict()
+  },
+  'student:autosave-draft': {
+    request: AutoSaveDraftPayloadSchema,
+    response: z
+      .object({ ok: z.boolean(), reason: z.string().max(60).optional() })
+      .strict()
+  },
+  'student:navigate': {
+    request: z.object({ cursorIndex: z.number().int().nonnegative() }).strict(),
+    response: z
+      .object({ ok: z.boolean(), reason: z.string().max(60).optional() })
+      .strict()
+  },
+  'student:enter-kiosk': {
+    request: z.void(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'student:internal-copy': {
+    request: z.object({ text: z.string().min(1).max(10_000) }).strict(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'student:typing-metrics': {
+    request: z
+      .object({ intervalsMs: z.array(z.number().int().min(0).max(10_000)).min(1).max(500) })
+      .strict(),
+    response: z.object({ ok: z.boolean() }).strict()
   }
 }
 
@@ -227,5 +412,50 @@ export const IpcEventSchemas: {
       sessionToken: z.string().max(64).optional()
     })
     .strict(),
-  'host:students-updated': z.object({ students: z.array(HostStudentStatusIpcSchema) }).strict()
+  'host:students-updated': z.object({ students: z.array(HostStudentStatusIpcSchema) }).strict(),
+  'host:exam-state-changed': z
+    .object({
+      state: z.enum(['idle', 'running', 'collecting', 'finished']),
+      title: z.string().nullable(),
+      questionCount: z.number().int().nonnegative(),
+      examEndsAtMs: z.number().int(),
+      serverNowMs: z.number().int(),
+      room: z.string().max(80).nullable()
+    })
+    .strict(),
+  'host:exam-completed': z
+    .object({ reason: z.enum(['time-up', 'ended-by-host', 'completed']) })
+    .strict(),
+  'host:exam-summaries': z
+    .object({
+      summaries: z.array(
+        z
+          .object({
+            studentId: z.string().min(1),
+            studentName: z.string().min(1),
+            answeredCount: z.number().int().nonnegative(),
+            maxReachedCursor: z.number().int().nonnegative(),
+            totalQuestions: z.number().int().nonnegative(),
+            awardedPoints: z.number().nonnegative(),
+            online: z.boolean(),
+            finished: z.boolean(),
+            finishReason: z.string().max(20).optional()
+          })
+          .strict()
+      )
+    })
+    .strict(),
+  'exam:started': ExamStartedPayloadSchema,
+  'exam:question': ClientQuestionPayloadSchema,
+  'exam:recovery': StateRecoveryPayloadSchema,
+  'exam:submit-rejected': SubmitRejectedPayloadSchema,
+  'exam:time-up': ExamTimeUpPayloadSchema,
+  'exam:completed': ExamCompletedPayloadSchema,
+  'exam:tick': z.object({ remainingSeconds: z.number().int().nonnegative() }).strict(),
+  'host:guard-events': z
+    .object({
+      studentId: z.string().min(1).max(40),
+      events: z.array(DetectionEventSchema).min(1).max(20)
+    })
+    .strict()
 }

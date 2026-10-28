@@ -12,6 +12,8 @@ import {
 import type { DiscoveredRoom } from '@shared/protocol-schema'
 import { useStudentNetworkStore } from '../store/network-store'
 import { useAppStore } from '../store/app-store'
+import { useStudentExamStore } from '../store/exam-store'
+import ExamView from '../core-student/ExamView'
 
 function timeSince(ms: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000))
@@ -72,7 +74,14 @@ export default function StudentPanel(): React.JSX.Element {
         studentName: studentName.trim()
       })
       if (result.ok) {
-        notify({ severity: 'info', message: 'เข้าห้องสอบสำเร็จ — รอเริ่มข้อสอบ (Phase 2)' })
+        useStudentExamStore.setState({
+          identity: {
+            studentId: studentId.trim(),
+            studentName: studentName.trim()
+          },
+          phase: 'waiting'
+        })
+        notify({ severity: 'info', message: 'เข้าห้องสอบสำเร็จ — รอครูเริ่มข้อสอบ' })
       } else {
         setJoinError(result.reason ?? 'เข้าห้องไม่สำเร็จ')
       }
@@ -105,6 +114,9 @@ export default function StudentPanel(): React.JSX.Element {
 
   return (
     <div className="relative h-full">
+      {/* หน้าทำข้อสอบ (Kiosk) ครอบทั้งหน้าเมื่อ phase ≥ waiting */}
+      <StudentExamLayers />
+
       {/* Fail-closed overlay บังทุกอย่างเมื่อหลุดการเชื่อมต่อ */}
       {frozenFull && (
         <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-slate-950/95">
@@ -268,5 +280,24 @@ export default function StudentPanel(): React.JSX.Element {
         </div>
       </div>
     </div>
+  )
+}
+
+/** ชั้นรวม view การสอบ (waiting banner + Kiosk ExamView ครอบทั้งหน้าเมื่อ phase เกิดขึ้น) */
+function StudentExamLayers(): React.JSX.Element {
+  const phase = useStudentExamStore((s) => s.phase)
+
+  if (phase === 'idle') return <></>
+  return (
+    <>
+      {phase === 'waiting' && (
+        <div className="fixed inset-0 z-30 flex flex-col items-center justify-center bg-slate-950">
+          <Lock size={40} className="mb-3 text-sky-400" />
+          <h2 className="text-lg font-semibold text-slate-200">เชื่อมต่อเครื่องแม่สำเร็จ</h2>
+          <p className="mt-2 text-sm text-slate-400">รอครูกดเริ่มการสอบ…</p>
+        </div>
+      )}
+      <ExamView />
+    </>
   )
 }

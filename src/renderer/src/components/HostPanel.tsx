@@ -8,11 +8,18 @@ import {
   Users,
   Wifi,
   WifiOff,
-  ShieldAlert
+  ShieldAlert,
+  FileUp,
+  Play,
+  StopCircle,
+  ClipboardList,
+  GraduationCap
 } from 'lucide-react'
 import type { ExamMode, EnforcementMode } from '@shared/types/exam'
+import type { DetectionEvent, HostGuardEventsEvent } from '@shared/ipc-channels'
 import { useHostNetworkStore } from '../store/network-store'
 import { useAppStore } from '../store/app-store'
+import type { HostExamSummariesEvent } from '@shared/ipc-channels'
 
 const MODE_LABELS: Record<ExamMode, string> = {
   closed: 'Closed — ปิดเครือข่าย',
@@ -31,14 +38,98 @@ export default function HostPanel(): React.JSX.Element {
   const [creating, setCreating] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
 
+  /* ---------- Exam Core (Phase 2) ---------- */
+  const [loadedExam, setLoadedExam] = useState<{ title: string; questionCount: number; durationSeconds: number } | null>(null)
+  const [examState, setExamState] = useState<'idle' | 'running' | 'collecting' | 'finished'>('idle')
+  const [summaries, setSummaries] = useState<HostExamSummariesEvent['summaries']>([])
+  const [starting, setStarting] = useState(false)
+  const [picking, setPicking] = useState(false)
+
+  /* ---------- Guard events (Phase 3a) ---------- */
+  const [guardEvents, setGuardEvents] = useState<Array<HostGuardEventsEvent>>([])
+  const studentNames = new Map(students.map((s) => [s.studentId, s.studentName]))
+
   useEffect(() => {
     // กู้สถานะห้องเมื่อกลับมาที่หน้านี้ (เช่น reload)
     void window.ztExam.getRoom().then((res) => setRoom(res.room))
     const unsub = window.ztExam.onEvent('host:students-updated', (event) =>
       useHostNetworkStore.getState().setStudents(event.students)
     )
-    return unsub
-  }, [setRoom])
+    const unsubState = window.ztExam.onEvent('host:exam-state-changed', (event) => {
+      setExamState(event.state)
+      if (event.title !== null) {
+        setLoadedExam({ title: event.title, questionCount: event.questionCount, durationSeconds: 0 })
+      }
+    })
+    const unsubSummaries = window.ztExam.onEvent('host:exam-summaries', (event) =>
+      setSummaries(event.summaries)
+    )
+    const unsubCompleted = window.ztExam.onEvent('host:exam-completed', (event) => {
+      setExamState('finished')
+      notify({
+        severity: event.reason === 'time-up' ? 'warning' : 'info',
+        message: event.reason === 'time-up' ? 'หมดเวลาสอบ — เก็บข้อสอบอัตโนมัติแล้ว' : 'จบการสอบแล้ว (คำสั่งครู)'
+      })
+    })
+    const unsubGuard = window.ztExam.onEvent('host:guard-events', (event) => {
+      setGuardEvents((prev) => [...prev.slice(-40), event])
+      const critical = event.events.filter((e) => e.severity === 'critical')
+      if (critical.length > 0) {
+        const names = studentNames.get(event.studentId) ?? event.studentId
+        notify({
+          severity: 'critical',
+          message: `ตรวจพบพฤติกรรมน่าสงสัย: ${names} — ${critical.map((e) => e.code).join(', ')}`
+        })
+      }
+    })
+    return () => {
+      unsub()
+      unsubState()
+      unsubSummaries()
+      unsubCompleted()
+      unsubGuard()
+    }
+  }, [setRoom, notify])
+
+  async function selectExamFile(): Promise<void> {
+    setPicking(true)
+    try {
+      const result = await window.ztExam.selectExamFile()
+      if (result.ok) {
+        setLoadedExam({ title: result.title, questionCount: result.questionCount, durationSeconds: result.durationSeconds })
+        notify({ severity: 'info', message: `โหลด "${result.title}" (${result.questionCount} ข้อ)` })
+      } else if (result.message) {
+        notify({ severity: 'warning', message: result.message })
+      }
+    } finally {
+      setPicking(false)
+    }
+  }
+
+  async function startExam(): Promise<void> {
+    setStarting(true)
+    try {
+      await window.ztExam.startExam()
+      setExamState('running')
+      notify({ severity: 'info', message: 'เริ่มการสอบ — เครื่องนักเรียนทุกเครื่องได้รับข้อแรกแล้ว' })
+    } catch (err) {
+      notify({
+        severity: 'critical',
+        message: err instanceof Error ? err.message : 'เริ่มการสอบไม่สำเร็จ'
+      })
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  async function endExam(): Promise<void> {
+    try {
+      await window.ztExam.endExam()
+      notify({ severity: 'warning', message: 'สั่งจบการสอบ — กำลังเก็บคำตอบทั้งหมด' })
+    } catch {
+      notify({ severity: 'critical', message: 'จบการสอบไม่สำเร็จ' })
+    }
+  }
 
   async function createRoom(): Promise<void> {
     setCreating(true)
@@ -191,6 +282,139 @@ export default function HostPanel(): React.JSX.Element {
           </div>
         </dl>
       </div>
+
+      {/* ---------- Exam Core (Phase 2): โหลดข้อสอบ + เริ่ม/จบ + ความคืบหน้า ---------- */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+        <div className="mb-4 flex items-center gap-2">
+          <ClipboardList size={18} className="text-sky-400" />
+          <h3 className="font-semibold">ข้อสอบและการเริ่มการสอบ</h3>
+          {examState === 'running' && (
+            <span className="ml-auto rounded-full border border-emerald-800/60 bg-emerald-950/40 px-3 py-1 text-xs text-emerald-300">
+              กำลังสอบ
+            </span>
+          )}
+          {examState === 'finished' && (
+            <span className="ml-auto rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-400">
+              จบแล้ว
+            </span>
+          )}
+        </div>
+
+        {examState === 'idle' && (
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={picking}
+              onClick={() => void selectExamFile()}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-200 transition hover:bg-slate-800 disabled:opacity-40"
+            >
+              <FileUp size={16} />
+              {picking ? 'กำลังอ่านไฟล์…' : 'เลือกไฟล์ข้อสอบ (JSON)'}
+            </button>
+            {loadedExam && (
+              <>
+                <div className="text-sm text-slate-300">
+                  <span className="font-semibold">{loadedExam.title}</span> · {loadedExam.questionCount} ข้อ
+                </div>
+                <button
+                  type="button"
+                  disabled={starting || onlineStudents.length === 0}
+                  onClick={() => void startExam()}
+                  className="ml-auto inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 font-semibold text-white transition hover:bg-sky-500 disabled:opacity-40"
+                >
+                  <Play size={16} />
+                  {starting ? 'กำลังเริ่ม…' : 'เริ่มการสอบ'}
+                </button>
+              </>
+            )}
+            {!loadedExam && onlineStudents.length === 0 && (
+              <span className="text-xs text-slate-500">ดูนักเรียนในห้องก่อน แล้วเลือกไฟล์ข้อสอบเพื่อเริ่ม</span>
+            )}
+          </div>
+        )}
+
+        {examState === 'running' && (
+          <button
+            type="button"
+            onClick={() => void endExam()}
+            className="inline-flex items-center gap-2 rounded-xl border border-red-800/60 px-4 py-2.5 text-sm text-red-300 transition hover:bg-red-950/60"
+          >
+            <StopCircle size={16} /> จบการสอบ (เก็บทั้งห้อง)
+          </button>
+        )}
+
+        {summaries.length > 0 && (
+          <div className="mt-5">
+            <div className="mb-2 flex items-center gap-2 text-xs text-slate-500">
+              <GraduationCap size={14} /> ความคืบหน้ารายคน (สามารถดูระบบให้คะแนนโดยอัตโนมัติ — ข้อจัดตั้งให้ข้อมือตรวจหลังสอบ)
+            </div>
+            <ul className="space-y-2">
+              {summaries.map((s) => (
+                <li key={s.studentId} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-slate-200">{s.studentName}</span>
+                    <span className="font-mono text-xs text-slate-400">
+                      {s.maxReachedCursor}/{s.totalQuestions} ข้อ · {s.awardedPoints} คะแนน
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-900">
+                    <div
+                      className="h-full rounded-full bg-emerald-500/80 transition-all"
+                      style={{
+                        width: `${s.totalQuestions > 0 ? (s.maxReachedCursor / s.totalQuestions) * 100 : 0}%`
+                      }}
+                    />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      {/* ---------- Guard events (Phase 3a): ฟีดเหตุการณ์ตรวจจับแบบ real-time ---------- */}
+      {guardEvents.length > 0 && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+          <div className="mb-4 flex items-center gap-2">
+            <ShieldAlert size={18} className="text-amber-400" />
+            <h3 className="font-semibold">เหตุการณ์ตรวจจับ ({guardEvents.length})</h3>
+            <span className="ml-auto text-xs text-slate-500">คัดกรองเต็มรูปแบบใน Phase 3b</span>
+          </div>
+          <ul className="max-h-64 space-y-2 overflow-y-auto">
+            {guardEvents
+              .slice()
+              .reverse()
+              .map((entry, entryIndex) => (
+                <li key={`${entry.studentId}-${entryIndex}`} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-sm">
+                  <div className="font-medium text-slate-200">
+                    {studentNames.get(entry.studentId) ?? entry.studentId}
+                  </div>
+                  <ul className="mt-1 space-y-1">
+                    {entry.events.map((event: DetectionEvent) => (
+                      <li key={event.eventId} className="flex items-start gap-2 text-xs">
+                        <span
+                          className={`mt-0.5 rounded px-1.5 py-0.5 font-mono ${
+                            event.severity === 'critical'
+                              ? 'bg-red-950/60 text-red-300'
+                              : 'bg-amber-950/50 text-amber-300'
+                          }`}
+                        >
+                          {event.code}
+                        </span>
+                        <span className="text-slate-500">
+                          {Object.entries(event.detail)
+                            .filter(([, v]) => v !== '')
+                            .map(([k, v]) => `${k}=${v}`)
+                            .join(' · ')}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
         <div className="mb-4 flex items-center gap-2">

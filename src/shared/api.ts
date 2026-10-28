@@ -10,6 +10,13 @@ import type {
   JoinRoomResponse,
   RoomsUpdatedEvent,
   StudentsUpdatedEvent,
+  LoadExamRequest,
+  LoadExamResponse,
+  SelectExamFileResponse,
+  ExamStartResponse,
+  StudentSubmitResponse,
+  KioskEnterResponse,
+  IpcInvokeMap,
   IpcEventChannel,
   IpcEventMap
 } from './ipc-channels'
@@ -29,11 +36,22 @@ export interface ZtExamApi {
   createRoom(req: CreateRoomRequest): Promise<HostRoomInfo>
   closeRoom(): Promise<SelectRoleResponse>
   getRoom(): Promise<GetRoomResponse>
+  loadExam(req: LoadExamRequest): Promise<LoadExamResponse>
+  selectExamFile(): Promise<SelectExamFileResponse>
+  startExam(): Promise<ExamStartResponse>
+  endExam(): Promise<ExamStartResponse>
   /* ---------- Student ---------- */
   startDiscovery(): Promise<SelectRoleResponse>
   stopDiscovery(): Promise<SelectRoleResponse>
   joinRoom(req: JoinRoomRequest): Promise<JoinRoomResponse>
   leaveRoom(): Promise<SelectRoleResponse>
+  submitAnswer(req: IpcInvokeMap['student:submit-answer']['req']): Promise<StudentSubmitResponse>
+  autosaveDraft(req: IpcInvokeMap['student:autosave-draft']['req']): Promise<StudentSubmitResponse>
+  navigate(req: { cursorIndex: number }): Promise<StudentSubmitResponse>
+  enterKiosk(): Promise<KioskEnterResponse>
+  /* ---------- Guard (Phase 3a) ---------- */
+  markInternalCopy(req: IpcInvokeMap['student:internal-copy']['req']): Promise<StudentSubmitResponse>
+  sendTypingMetrics(req: IpcInvokeMap['student:typing-metrics']['req']): Promise<StudentSubmitResponse>
   /* ---------- Event subscribe (คืน unsubscribe() กัน memory leak ใน React) ---------- */
   onRoleChanged(listener: (event: RoleChangedEvent) => void): Unsubscribe
   onEvent<C extends IpcEventChannel>(

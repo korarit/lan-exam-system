@@ -80,5 +80,22 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_audit_session
         ON audit_logs(session_id, timestamp_ms);
     `
+  },
+  {
+    /** Phase 2: ฉบับร่าง (autosave) — ทับค่าล่าสุดของ (student, question) เสมอ */
+    version: 2,
+    sql: `
+      CREATE TABLE IF NOT EXISTS draft_submissions (
+        session_id     TEXT NOT NULL REFERENCES exam_sessions(id),
+        student_id     TEXT NOT NULL,
+        question_id    TEXT NOT NULL,
+        ciphertext     TEXT NOT NULL,
+        iv             TEXT NOT NULL,
+        tag            TEXT NOT NULL,
+        hmac           TEXT NOT NULL,
+        updated_at_ms  INTEGER NOT NULL,
+        PRIMARY KEY (session_id, student_id, question_id)
+      );
+    `
   }
 ]

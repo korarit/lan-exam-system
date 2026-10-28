@@ -1,0 +1,44 @@
+{
+  "moduleId": "stepping-runner",
+  "title": "ทดสอบคณิตศาสตร์ (โชว์เคส Phase 2)",
+  "durationSeconds": 600,
+  "questions": [
+    {
+      "questionId": "m01",
+      "type": "mcq",
+      "promptTemplate": "{{a}} + {{b}} = ?",
+      "points": 1,
+      "allowBackNavigation": false,
+      "parameters": {
+        "a": { "min": 1, "max": 99, "step": 1 },
+        "b": { "min": 1, "max": 99, "step": 1 }
+      },
+      "choices": [
+        { "choiceId": "c-a", "text": "35" },
+        { "choiceId": "c-b", "text": "47" },
+        { "choiceId": "c-c", "text": "58" },
+        { "choiceId": "c-d", "text": "63" }
+      ],
+      "correctChoiceId": "c-b"
+    },
+    {
+      "questionId": "m02",
+      "type": "short-answer",
+      "promptTemplate": "จงหาค่าของ {{a}} × {{b}} (ตอบเป็นตัวเลข)",
+      "points": 2,
+      "allowBackNavigation": true,
+      "parameters": {
+        "a": { "min": 3, "max": 12, "step": 1 },
+        "b": { "min": 3, "max": 12, "step": 1 }
+      },
+      "correctAnswerExpression": "a * b"
+    },
+    {
+      "questionId": "m03",
+      "type": "essay",
+      "promptTemplate": "อธิบายเหตุผลที่ทำให้ค่าที่คำนวณในข้อสองเป็นเช่นนั้น\n(เขียนคำตอบเป็นภาษาไทยอย่างน้อย 3 ประโยค)",
+      "points": 5,
+      "allowBackNavigation": false
+    }
+  ]
+}

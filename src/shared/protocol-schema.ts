@@ -1,4 +1,23 @@
 import { z } from 'zod'
+import {
+  ExamStartedPayloadSchema,
+  ExamCompletedPayloadSchema,
+  ExamTimeUpPayloadSchema,
+  StateRecoveryPayloadSchema,
+  SubmitAnswerPayloadSchema,
+  SubmitRejectedPayloadSchema,
+  AutoSaveDraftPayloadSchema,
+  FinalDraftFlushPayloadSchema,
+  NavigateToPayloadSchema,
+  ClientQuestionPayloadSchema
+} from './exam-schema'
+import {
+  SignedDetectionPolicySchema,
+  DetectionEventSchema,
+  MAX_EVENTS_PER_REPORT,
+  type SignedDetectionPolicy,
+  type DetectionEvent
+} from './policy-schema'
 
 /* ============================================================
  * ข้อความเครือข่าย (over TLS 1.3, Length-prefixed framing)
@@ -16,7 +35,21 @@ export const NetMsgType = {
   heartbeatPong: 'HEARTBEAT_PONG',
   resumeRequest: 'RESUME_REQUEST',
   roomClosed: 'ROOM_CLOSED',
-  error: 'ERROR'
+  error: 'ERROR',
+  /* ---------- Exam Core (Phase 2) ---------- */
+  examStarted: 'EXAM_STARTED',
+  questionPayload: 'QUESTION_PAYLOAD',
+  submitAnswer: 'SUBMIT_ANSWER',
+  submitRejected: 'SUBMIT_REJECTED',
+  autosaveDraft: 'AUTOSAVE_DRAFT',
+  finalDraftFlush: 'FINAL_DRAFT_FLUSH',
+  navigateTo: 'NAVIGATE_TO',
+  stateRecovery: 'STATE_RECOVERY',
+  timeUp: 'EXAM_TIME_UP',
+  examCompleted: 'EXAM_COMPLETED',
+  /* ---------- Guard (Phase 3a) ---------- */
+  guardEvent: 'GUARD_EVENT',
+  policyUpdate: 'POLICY_UPDATE'
 } as const
 
 export type NetMsgTypeValue = (typeof NetMsgType)[keyof typeof NetMsgType]
@@ -116,6 +149,18 @@ export const ErrorPayloadSchema = z
   .object({ message: z.string().max(200) })
   .strict()
 
+/** เครื่องนักเรียน → เครื่องแม่: ชุดเหตุการณ์ตรวจจับ (batch ลด fragmentation) */
+export const GuardEventPayloadSchema = z
+  .object({ events: z.array(DetectionEventSchema).min(1).max(MAX_EVENTS_PER_REPORT) })
+  .strict()
+export type GuardEventPayload = { events: DetectionEvent[] }
+
+/** เครื่องแม่ → เครื่องนักเรียน: นโยบายตรวจจับเซ็นลายเซ็น (อัปเดตระหว่างสอบได้) */
+export const PolicyUpdatePayloadSchema = z
+  .object({ policy: SignedDetectionPolicySchema })
+  .strict()
+export type PolicyUpdatePayload = { policy: SignedDetectionPolicy }
+
 /** Envelope กลางของทุกข้อความ (Length-prefixed frame บรรจุ JSON ของ envelope นี้) */
 export const NetEnvelopeSchema = z
   .object({
@@ -141,7 +186,19 @@ export const NetMessagePayloadSchemas: Record<string, z.ZodType> = {
   [NetMsgType.heartbeatPong]: HeartbeatPongPayloadSchema,
   [NetMsgType.resumeRequest]: ResumeRequestPayloadSchema,
   [NetMsgType.roomClosed]: RoomClosedPayloadSchema,
-  [NetMsgType.error]: ErrorPayloadSchema
+  [NetMsgType.error]: ErrorPayloadSchema,
+  [NetMsgType.examStarted]: ExamStartedPayloadSchema,
+  [NetMsgType.questionPayload]: ClientQuestionPayloadSchema,
+  [NetMsgType.submitAnswer]: SubmitAnswerPayloadSchema,
+  [NetMsgType.submitRejected]: SubmitRejectedPayloadSchema,
+  [NetMsgType.autosaveDraft]: AutoSaveDraftPayloadSchema,
+  [NetMsgType.finalDraftFlush]: FinalDraftFlushPayloadSchema,
+  [NetMsgType.navigateTo]: NavigateToPayloadSchema,
+  [NetMsgType.stateRecovery]: StateRecoveryPayloadSchema,
+  [NetMsgType.timeUp]: ExamTimeUpPayloadSchema,
+  [NetMsgType.examCompleted]: ExamCompletedPayloadSchema,
+  [NetMsgType.guardEvent]: GuardEventPayloadSchema,
+  [NetMsgType.policyUpdate]: PolicyUpdatePayloadSchema
 }
 
 /* ============================================================

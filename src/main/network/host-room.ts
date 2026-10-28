@@ -39,6 +39,8 @@ export interface HostRoomManagerOptions {
   onStudentsChanged: (students: HostStudentStatus[]) => void
   onRoomClosed?: () => void
   onAnomaly?: (source: string | null, reason: string) => void
+  /** เรียกเมื่อ handshake/RESUME ของนักเรียนสำเร็จ (CoreSessionManager ใช้กู้คืนสถานะ) */
+  onStudentEstablished?: (studentId: string) => void
 }
 
 /**
@@ -60,8 +62,23 @@ export class HostRoomManager extends EventEmitter {
     return this.roomInfo
   }
 
+  /** โหมดการสอบของห้องปัจจุบัน (null = ยังไม่เปิดห้อง) */
+  get examMode(): 'closed' | 'in-app-docs' | 'external-tools' | null {
+    return this.beacon?.examMode ?? null
+  }
+
   get students(): HostStudentStatus[] {
     return this.tlsServer?.getStudents() ?? []
+  }
+
+  /** CoreSessionManager ต้องการคุมคำสั่งส่ง/ตั้งเวลาผ่าน TLS server โดยตรง */
+  get tlsServerInstance(): ExamTlsServer | null {
+    return this.tlsServer
+  }
+
+  /** อัปเดตสถานะใน beacon (lobby / in-progress / ended) */
+  setExamStatus(status: UdpBeacon['examStatus']): void {
+    if (this.beacon) this.beacon.examStatus = status
   }
 
   async createRoom(config: HostRoomConfig): Promise<HostRoomInfo> {
@@ -93,7 +110,8 @@ export class HostRoomManager extends EventEmitter {
           )
           .run(studentId, roomId, studentName, randomUUID(), 'joined', 0, Date.now())
       },
-      onAnomaly: (source, reason) => this.opts.onAnomaly?.(source, reason)
+      onAnomaly: (source, reason) => this.opts.onAnomaly?.(source, reason),
+      onStudentEstablished: (studentId) => this.opts.onStudentEstablished?.(studentId)
     })
     const tcpPort = await tlsServer.listen()
 
