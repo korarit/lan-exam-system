@@ -11,7 +11,8 @@
 | [phase-0-foundation.md](./phase-0-foundation.md) | **Phase 0: Foundation & Scaffolding** | ตั้งโครงสร้างโปรเจกต์ `electron-vite`, TypeScript, React, Tailwind, IPC bridge ที่ปลอดภัย, SQLite, และหน้าเลือกบทบาท (Host / Student) | Done |
 | [phase-1-network-core.md](./phase-1-network-core.md) | **Phase 1: Network Core & Protocol** | UDP Room Discovery, Ephemeral TLS 1.3 Server/Client, ยืนยันตัวตนเครื่องแม่ด้วย Room PIN, Framed Protocol (Zod), Heartbeat & Reconnect | Done |
 | [phase-2-exam-core.md](./phase-2-exam-core.md) | **Phase 2: Exam Core (MVP - Mode 1)** | ระบบข้อสอบ Host-authoritative ส่งทีละข้อ, สลับลำดับข้อ/ตัวเลือกต่อคน, Watermark, Autosave, SQLite Encrypted Store, Kiosk UI พื้นฐาน | Pending |
-| [phase-3a-cheat-detection.md](./phase-3a-cheat-detection.md) | **Phase 3a: Deep Cheat Detection Engine** | Signed Dynamic Policy, ตรวจจับโปรเซสที่เปลี่ยนชื่อไฟล์หนี (PE VersionInfo/Bundle ID), ดักโปรเซสเปิด-ปิดเร็วระดับมิลลิวินาที, ตรวจจับ Stealth Overlay (`WDA_EXCLUDEFROMCAPTURE`), ตรวจ OS DNS Cache, และดัก Synthetic Input (`LLKHF_INJECTED`) | Pending |
+| [phase-3a-cheat-detection.md](./phase-3a-cheat-detection.md) | **Phase 3a: Deep Cheat Detection Engine** | Signed Dynamic Policy, ตรวจจับโปรเซสที่เปลี่ยนชื่อไฟล์หนี (PE VersionInfo/Bundle ID), ดักโปรเซสเปิด-ปิดเร็วระดับมิลลิวินาที, ตรวจจับ Stealth Overlay (`WDA_EXCLUDEFROMCAPTURE`), ตรวจ OS DNS Cache, และดัก Synthetic Input (`LLKHF_INJECTED`) | Done |
+| [phase-3a-plus-domain-recorder.md](./phase-3a-plus-domain-recorder.md) | **Phase 3a-plus: Domain Recorder & Host Allowlist** | ครูเปิดเว็บเองที่เครื่องแม่ตอนเตรียมห้อง (Doc Preview) → ระบบ record โดเมนทั้งหมดที่หน้าเว็บเรียกใช้จริง (CDN/fonts/API) เก็บไว้ใน DB → ครูตรวจและกดอนุญาต (default-deny: นักเรียนเข้าได้เฉพาะที่ allow) → ฝัง `allowedDomains` + setting เตือน/บล็อก ใน Signed Policy | Pending |
 | [phase-3b-audit-and-triage.md](./phase-3b-audit-and-triage.md) | **Phase 3b: Audit Hash Chain & Dashboard Triage** | บันทึก Audit Log แบบ Cryptographic Hash Chain, คำนวณคะแนนความน่าสงสัยรวมกลุ่มเหตุการณ์ซ้ำ, และหน้าจอ Dashboard คัดกรองคนแดง (Triage) พร้อม Timeline หลักฐาน | Pending |
 | [phase-3c-screen-monitoring.md](./phase-3c-screen-monitoring.md) | **Phase 3c: Screen Monitoring** | จับภาพทุกหน้าจอ, ส่ง Thumbnail ~1 fps, Ring Buffer เข้ารหัส 5 นาทีที่เครื่องนักเรียน (เซกเมนต์ละ 10 วินาที), Pin on Critical, Pull on Demand | Pending |
 | [phase-4-attestation-hardening.md](./phase-4-attestation-hardening.md) | **Phase 4: Attestation, Native Guard & Hardening** | เซ็นไฟล์แอปด้วย Ed25519 Manifest, Challenge-Response ผูกกับ TLS Exporter ตลอดการสอบ, Native Addon (Keyboard Hook), Launch Guard & Electron Fuses | Pending |
@@ -33,7 +34,8 @@ flowchart TD
     P0["Phase 0: Foundation & IPC"] --> P1["Phase 1: Network Core (UDP + TLS + PIN)"]
     P1 --> P2["Phase 2: Exam Core MVP (1-by-1 + Kiosk + Store)"]
     P2 --> P3A["Phase 3a: Deep Cheat Detection Engine"]
-    P3A --> P3B["Phase 3b: Audit Hash Chain & Dashboard Triage"]
+    P3A --> P3AP["Phase 3a-plus: Domain Recorder & Host Allowlist"]
+    P3AP --> P3B["Phase 3b: Audit Hash Chain & Dashboard Triage"]
     P3B --> P3C["Phase 3c: Screen Monitoring (Thumbnails + 5m Ring Buffer)"]
     P2 --> P4["Phase 4: Attestation (Ed25519 + TLS Challenge) & Hardening"]
     P3B --> P5["Phase 5: Mode 2 (In-App Docs) & Mode 3 (VS Code + Proxy)"]
