@@ -140,7 +140,13 @@ export const DetectionEventCatalog = {
   REMOTE_SESSION_SUSPECTED: { category: 'remote-control', severity: 'warning', score: 15 },
   /* ---------- Phase 4: Attestation & Native Guard ---------- */
   ATTESTATION_VERIFICATION_FAILED: { category: 'app-tamper', severity: 'critical', score: 80 },
-  BLOCKED_SYSTEM_SHORTCUT: { category: 'kiosk-escape', severity: 'warning', score: 15 }
+  BLOCKED_SYSTEM_SHORTCUT: { category: 'kiosk-escape', severity: 'warning', score: 15 },
+  /* ---------- Phase 5: Mode 2 docs viewer & Mode 3 external tools ---------- */
+  UNAUTHORIZED_DOCS_URL_ATTEMPT: { category: 'network-tunnel', severity: 'critical', score: 40 },
+  PROXY_DOMAIN_VIOLATION: { category: 'network-tunnel', severity: 'critical', score: 40 },
+  DIRECT_IP_PROXY_ATTEMPT: { category: 'network-tunnel', severity: 'critical', score: 40 },
+  VSCODE_PROFILE_TAMPERED: { category: 'app-tamper', severity: 'critical', score: 50 },
+  UNAUTHORIZED_IDE_DETECTED: { category: 'ai-assistant', severity: 'critical', score: 50 }
 } as const satisfies Record<string, { category: DetectionCategory; severity: DetectionSeverity; score: number }>
 
 export type DetectionEventCode = keyof typeof DetectionEventCatalog

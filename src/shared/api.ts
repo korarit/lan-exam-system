@@ -52,6 +52,11 @@ export interface ZtExamApi {
   /* ---------- Guard (Phase 3a) ---------- */
   markInternalCopy(req: IpcInvokeMap['student:internal-copy']['req']): Promise<StudentSubmitResponse>
   sendTypingMetrics(req: IpcInvokeMap['student:typing-metrics']['req']): Promise<StudentSubmitResponse>
+  /* ---------- Mode 2 / Mode 3 (Phase 5) ---------- */
+  docsToggle(req: IpcInvokeMap['exam:docs-toggle']['req']): Promise<IpcInvokeMap['exam:docs-toggle']['res']>
+  docsNavigate(req: IpcInvokeMap['exam:docs-navigate']['req']): Promise<IpcInvokeMap['exam:docs-navigate']['res']>
+  openVsCode(): Promise<IpcInvokeMap['exam:open-vscode']['res']>
+  focusExam(): Promise<IpcInvokeMap['student:focus-exam']['res']>
   /* ---------- Doc Preview & Domain Allowlist (Phase 3a-plus) ---------- */
   openDocPreview(req: IpcInvokeMap['host:open-doc-preview']['req']): Promise<IpcInvokeMap['host:open-doc-preview']['res']>
   closeDocPreview(): Promise<IpcInvokeMap['host:close-doc-preview']['res']>

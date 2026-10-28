@@ -371,6 +371,29 @@ export interface StudentScreenInspectEvent {
   transport?: 'udp-segments' | 'jpeg-fallback' | undefined
 }
 
+/* ---------- Mode 2 / Mode 3 (Phase 5) ---------- */
+
+/** สถานะแผงเอกสารที่ main push ไป renderer (ขณะเปิด/ปิด/บล็อกลิงก์) */
+export interface DocsPanelState {
+  open: boolean
+  url: string | null
+  /** โดเมนอนุญาตจาก Signed Policy (default-deny) */
+  allowedDomains: string[]
+  enforcement: 'warn' | 'block'
+  /** ลิงก์สุดท้ายที่ถูกบล็อก (แสดงป้ายเตือนในแผง) */
+  blockedUrl: string | null
+}
+export interface DocsToggleRequest {
+  open: boolean
+}
+export interface DocsNavigateRequest {
+  url: string
+}
+export interface OpenVsCodeResponse {
+  ok: boolean
+  reason?: string | undefined
+}
+
 /* ---------- Channel maps (single source of truth for IPC surface) ---------- */
 
 /* ---------- Zod schemas สำหรับ payload ของ network channels ---------- */
@@ -476,6 +499,11 @@ export interface IpcInvokeMap {
   'student:enter-kiosk': { req: void; res: KioskEnterResponse }
   'student:internal-copy': { req: InternalCopyRequest; res: StudentSubmitResponse }
   'student:typing-metrics': { req: TypingMetricsRequest; res: StudentSubmitResponse }
+  /* ---------- Mode 2 / Mode 3 (Phase 5) ---------- */
+  'exam:docs-toggle': { req: DocsToggleRequest; res: OkResponse }
+  'exam:docs-navigate': { req: DocsNavigateRequest; res: OkResponse }
+  'exam:open-vscode': { req: void; res: OpenVsCodeResponse }
+  'student:focus-exam': { req: void; res: OkResponse }
   'host:open-doc-preview': { req: { url: string }; res: OpenDocPreviewResponse }
   'host:close-doc-preview': { req: void; res: OkResponse }
   'host:list-recorded-domains': { req: void; res: ListRecordedDomainsResponse }
@@ -519,6 +547,8 @@ export interface IpcEventMap {
   'host:guard-events': HostGuardEventsEvent
   'host:recorded-domains-updated': RecordedDomainsUpdatedEvent
   'host:triage-updated': TriageOverviewEvent
+  /* ---------- Mode 2 / Mode 3 (Phase 5) ---------- */
+  'exam:docs-state': DocsPanelState
   'exam:proctor-warning': { message: string; sentAtMs: number }
   'exam:freeze-state': StudentFreezeStateEvent
   /* ---------- Screen Monitoring (Phase 3c) ---------- */
@@ -680,6 +710,23 @@ export const IpcInvokeSchemas: {
     request: z
       .object({ intervalsMs: z.array(z.number().int().min(0).max(10_000)).min(1).max(500) })
       .strict(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  /* ---------- Mode 2 / Mode 3 (Phase 5) ---------- */
+  'exam:docs-toggle': {
+    request: z.object({ open: z.boolean() }).strict(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'exam:docs-navigate': {
+    request: z.object({ url: z.string().min(1).max(2_048) }).strict(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'exam:open-vscode': {
+    request: z.void(),
+    response: z.object({ ok: z.boolean(), reason: z.string().max(120).optional() }).strict()
+  },
+  'student:focus-exam': {
+    request: z.void(),
     response: z.object({ ok: z.boolean() }).strict()
   },
   'host:open-doc-preview': {
@@ -910,6 +957,16 @@ export const IpcEventSchemas: {
     .strict(),
   'host:recorded-domains-updated': RecordedDomainsUpdatedEventSchema,
   'host:triage-updated': TriageOverviewEventSchema,
+  /* ---------- Mode 2 / Mode 3 (Phase 5) ---------- */
+  'exam:docs-state': z
+    .object({
+      open: z.boolean(),
+      url: z.string().max(2_048).nullable(),
+      allowedDomains: z.array(z.string().min(1).max(200)).max(512),
+      enforcement: z.enum(['warn', 'block']),
+      blockedUrl: z.string().max(2_048).nullable()
+    })
+    .strict(),
   'exam:proctor-warning': ProctorWarningPayloadSchema,
   'exam:freeze-state': FreezeStatePayloadSchema,
   'screen:session': z

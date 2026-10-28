@@ -83,7 +83,9 @@ export const NetMsgType = {
   screenUdpReady: 'SCREEN_UDP_READY',
   /* ---------- Attestation (Phase 4) ---------- */
   attestationChallenge: 'ATTESTATION_CHALLENGE',
-  attestationResponse: 'ATTESTATION_RESPONSE'
+  attestationResponse: 'ATTESTATION_RESPONSE',
+  /* ---------- Mode 2/3 activity log (Phase 5) ---------- */
+  docsUrlLog: 'DOCS_URL_LOG'
 } as const
 
 export type NetMsgTypeValue = (typeof NetMsgType)[keyof typeof NetMsgType]
@@ -213,6 +215,19 @@ export const FreezeStatePayloadSchema = z
   .strict()
 export type FreezeStatePayload = z.infer<typeof FreezeStatePayloadSchema>
 
+/** Student → Host: ปรับปรุงบันทึกโดเมนนักเรียนที่อนุญาตตามในนโยบาย (ไม่มีผลลัพธ์ตรวจจับ — ลงล้อว่าเอาไว้ตรวจประวัติ) */
+export const DocsUrlLogPayloadSchema = z
+  .object({
+    url: z.string().min(1).max(2_048),
+    /** ว่าถูกเรียกจากแผงเอกสาร (Mode 2) หรือทาง local proxy (Mode 3) */
+    source: z.enum(['docs', 'proxy']),
+    /** โดเมนหลักของ URL (เรียงฐานถ้ามหา) เป็นหลักฐานต่อใน audit */
+    topDomain: z.string().min(1).max(200),
+    occurredAtMs: z.number().int().nonnegative()
+  })
+  .strict()
+export type DocsUrlLogPayload = z.infer<typeof DocsUrlLogPayloadSchema>
+
 /** Envelope กลางของทุกข้อความ (Length-prefixed frame บรรจุ JSON ของ envelope นี้) */
 export const NetEnvelopeSchema = z
   .object({
@@ -262,7 +277,8 @@ export const NetMessagePayloadSchemas: Record<string, z.ZodType> = {
   [NetMsgType.screenUdpRegister]: ScreenUdpRegisterPayloadSchema,
   [NetMsgType.screenUdpReady]: ScreenUdpReadyPayloadSchema,
   [NetMsgType.attestationChallenge]: AttestationChallengeSchema,
-  [NetMsgType.attestationResponse]: AttestationResponseSchema
+  [NetMsgType.attestationResponse]: AttestationResponseSchema,
+  [NetMsgType.docsUrlLog]: DocsUrlLogPayloadSchema
 }
 
 /* ============================================================

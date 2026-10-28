@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { ExamModeSchema } from './types/exam'
 
 /* ============================================================
  * Exam Package (ฝั่งเครื่องแม่เท่านั้น — ห้ามส่งฟิลด์เฉลยไป Client)
@@ -167,7 +168,11 @@ export const ExamStartedPayloadSchema = z
   .object({
     examTitle: z.string().min(1).max(120),
     questionCount: z.number().int().positive(),
-    remainingSeconds: z.number().int().nonnegative()
+    remainingSeconds: z.number().int().nonnegative(),
+    /** Phase 5: โหมดการสอบ (ผู้รับใช้ปรับ UI เช่น split-screen เอกสาร) */
+    examMode: ExamModeSchema.optional(),
+    /** Phase 5 (Mode 2): URL ดัชนีเอกสารที่ครูเปิดตอนเตรียมห้อง (null = เปิดแผงว่าง) */
+    docsUrl: z.string().max(2_048).nullable().optional()
   })
   .strict()
 export type ExamStartedPayload = z.infer<typeof ExamStartedPayloadSchema>
@@ -180,7 +185,9 @@ export const StateRecoveryPayloadSchema = z
     remainingSeconds: z.number().int().nonnegative(),
     cursorIndex: z.number().int().nonnegative(),
     question: ClientQuestionPayloadSchema.nullable(),
-    draft: AnswerSchema.nullable()
+    draft: AnswerSchema.nullable(),
+    /** Phase 5: โหมดการสอบสำหรับกู้เลย์เอาต์ split-screen หลัง reconnect */
+    examMode: ExamModeSchema.optional()
   })
   .strict()
 export type StateRecoveryPayload = z.infer<typeof StateRecoveryPayloadSchema>

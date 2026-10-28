@@ -102,6 +102,20 @@ export function buildEventSummary(event: DetectionEvent): string {
       return `ยืนยันความถูกต้องของไฟล์แอปไม่ผ่าน: ${d.reason ?? 'ไม่ทราบสาเหตุ'}`
     case 'BLOCKED_SYSTEM_SHORTCUT':
       return `พยายามกดปุ่มลัดระดับระบบที่ถูกบล็อก: ${d.shortcut ?? 'ไม่ทราบปุ่ม'}`
+    case 'UNAUTHORIZED_DOCS_URL_ATTEMPT':
+      return `พยายามเปิดเว็บนอกขอบเขตเอกสารที่อนุญาต: ${d.url ?? 'ไม่ทราบ URL'}`
+    case 'PROXY_DOMAIN_VIOLATION':
+      return `โปรแกรมภายนอกพยายามต่อโดเมนที่ไม่อนุญาตผ่าน proxy: ${d.hostname ?? 'ไม่ทราบโดเมน'}`
+    case 'DIRECT_IP_PROXY_ATTEMPT':
+      return `พยายามต่อด้วย IP ตรง ๆ เพื่อหลบการตรวจโดเมน: ${d.hostname ?? 'ไม่ทราบปลายทาง'}`
+    case 'VSCODE_PROFILE_TAMPERED':
+      return d.kind === 'settings-modified'
+        ? 'มีการแอบแก้ไขตั้งค่าโปรไฟล์ VS Code ควบคุม (เช่น http.proxy)'
+        : 'มีการแอบติดตั้ง/แก้ไข Extension ในโปรไฟล์ VS Code ควบคุม'
+    case 'UNAUTHORIZED_IDE_DETECTED':
+      return d.kind === 'ai-editor'
+        ? `เปิดโปรแกรม AI IDE ที่ต้องห้าม: ${d.processName ?? 'ไม่ทราบชื่อ'}`
+        : `เปิด VS Code นอกโปรไฟล์ควบคุมของระบบ: ${d.processName ?? 'ไม่ทราบชื่อ'}`
     default:
       return [event.code, ...Object.entries(d).filter(([, v]) => v !== '').map(([k, v]) => `${k}=${v}`)].join(' · ')
   }
