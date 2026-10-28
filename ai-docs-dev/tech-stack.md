@@ -89,7 +89,7 @@ WebContentsView (Mode 2 เท่านั้น) -> WebView เอกสาร�
 - จับทุกจอด้วย `desktopCapturer` (แยกต่อ display)
 - **Ring buffer 5 นาที** ที่เครื่องนักเรียน: `MediaRecorder` ไม่ได้ให้ chunk ที่เล่นได้เองทุกชิ้น จึงควร **หมุน recorder ทุก ~10 วินาที** ให้ได้ไฟล์เซกเมนต์ที่สมบูรณ์ในตัว แล้วเก็บเฉพาะเซกเมนต์ 5 นาทีล่าสุด เข้ารหัสด้วย AES-256-GCM ด้วยคีย์ต่อ session จากเครื่องแม่ และลบเมื่อจบสอบ
 - **Thumbnail ~1 fps** ส่งไปเครื่องแม่ผ่าน TLS ที่มีอยู่
-- **Pull on demand:** เครื่องแม่สั่งดู → client ส่งเซกเมนต์ที่เก็บไว้ตามด้วยภาพสด เริ่มด้วย TLS แล้วค่อยเพิ่ม WebRTC สำหรับ live view
+- **Pull on demand:** เครื่องแม่สั่งดู → client ส่งเซกเมนต์ที่เก็บไว้ตามด้วยภาพสด — ปัจจุบัน Live (720p/30fps) + การดึงเซกเมนต์วิ่งผ่าน **Raw UDP (dgram) + AES-256-GCM** (`udp-screen-protocol.ts` + `udp-crypto.ts`, handshake ผ่านท่อ TLS เดิม) มี fallback TCP/JPEG อัตโนมัติเมื่อ UDP ไม่พร้อม; Thumbnail ยังใช้ TLS
 - **Pin on critical:** ล็อกเซกเมนต์รอบ event วิกฤตไม่ให้ถูกทับ
 - ข้อจำกัดตามแพลตฟอร์ม: macOS ต้องมีสิทธิ์ Screen Recording, Linux Wayland ต้องใช้ X11 (รายละเอียดใน [project-arc.md](./project-arc.md) หัวข้อ 3.7)
 

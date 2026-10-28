@@ -112,6 +112,29 @@
 - [x] **3c.5.2** บันทึกทุกการเปิดดูหน้าจอลงใน `AuditLog` ที่เครื่องแม่
 - [x] **3c.5.3** สร้าง UI `ProctorScreenModal.tsx` บนหน้าจอครู รองรับการสลับดูหลายจอ (Display 1 / Display 2), สลับโหมดดูสดกับย้อนหลัง 5 นาที และมีจุดมาร์กตำแหน่งที่เกิด Alert บนแถบเวลา
 - [x] **3c.5.4** สร้างระบบลบไฟล์ Ring Buffer ทั้งหมดเมื่อจบสอบหรือเมื่อเริ่มเซสชันใหม่
+- [x] **3c.6.1** สร้างโปรโตคอล UDP (`udp-screen-protocol.ts` + `udp-crypto.ts`): AES-256-GCM per datagram, HKDF จาก `screenBufferKey`, atom/chunk wire format + NACK frame
+- [x] **3c.6.2** สร้าง `UdpStreamSender` (node dgram, pacing + NACK retransmit) และ `UdpStreamReceiver` (reassembly + ยืนยัน IP + atom timeout)
+- [x] **3c.6.3** Handshake `SCREEN_UDP_REGISTER` / `SCREEN_UDP_READY` ผ่านท่อ TLS + fallback TCP/JPEG เมื่อ UDP ไม่พร้อม
+- [x] **3c.6.4** Live stream 720p/30fps ผ่าน UDP (MediaRecorder เซกเมนต์ 2s / 1.5Mbps) + DVR UI บน `ProctorScreenModal` (เล่นไป-ย้อนได้แบบ YouTube) และ FETCH_RING_SEGMENT ผ่าน UDP พร้อม TCP fallback
+- [x] **3c.6.5** ปรับ Thumbnail interval เป็น 15 วินาที (schema `thumbnailIntervalMs` ขยายถึง 30,000ms)
+
+---
+
+### 3c.6 Raw UDP Transport (อัปเกรดหลัง 3c — แทนที่ LIVE_STREAM / FETCH จาก TCP TLS)
+ตามข้อ 3.5.3 ที่วาง `ScreenTransportInterface` ไว้ — ใช้ **Raw UDP + AES-256-GCM** แทน WebRTC (ไม่พึ่ง native ภายนอก):
+
+1. **ช่องทางและกุญแจ:**
+   - `UdpStreamReceiver` (เครื่องแม่) bind พอร์ตสุ่มตั้งแต่เลือกบทบาท → ประกาศ `udpScreenPort` ไปกับ `SCREEN_SESSION`
+   - นักเรียน bind พอร์ต UDP ของตัวเอง → ประกาศ `SCREEN_UDP_REGISTER { channelId, udpPort }` ผ่านท่อ TLS เดิม → เครื่องแม่ตอบ `SCREEN_UDP_READY` และจับคู่ channelId ↔ studentId (ยืนยัน IP ให้ตรงกับ TLS conn)
+   - กุญแจ UDP อนุพันธ์จาก `screenBufferKey` ด้วย HKDF แยก 2 ขา (c2s/s2c) — ทุก datagram เข้ารหัส AES-256-GCM (IV สุ่ม, AAD = header)
+2. **Live Stream (720p/30fps, DVR-style เล่นไป-ย้อนได้เหมือน YouTube):**
+   - Recorder ตัดเซกเมนต์ `.webm` สมบูรณ์**(เซกเมนต์ละ 2 วินาทีที่ 1.5 Mbps)**— ลง ring buffer เสมอ
+   - ขณะผู้คุมเปิดดู: เซกเมนต์ใหม่แต่ละชิ้นถูกสตรีมต่อเนื่องผ่าน UDP (atom → chunk 1100B → pacing ~1.4 MB/s)
+   - Thumbnail ยังใช้ TCP ทุก 15 วินาที (ผู้คุมเรียกดูรายการย้อนหลังผ่าน TLS JSON เหมือนเดิม)
+   - Dashboard modal: เล่นเซกเมนต์ต่อกันอัตโนมัติ + follow-live + ลาก Timeline ย้อนกลับได้ทันที (Pull-on-Demand เฉพาะตอนเปิดดู)
+3. **ความน่าเชื่อถือ & Fallback:**
+   - NACK-based retransmit: เครื่องแม่ขอชิ้นที่หายทุก 150ms → sender ส่งซ้ำ (หน้าต่าง 16 atom ล่าสุด); atom ค้าง >3s = พลาด → ฝั่ง fetch ปลอมขอใหม่ผ่าน TCP (`transport:'tcp'`) อัตโนมัติ
+   - ถ้าไม่ได้รับ `SCREEN_UDP_READY` ภายใน 2.5 วินาที (หรือ `SCREEN_SESSION` ไม่มีพอร์ต) → fallback: live เป็น JPEG 5fps ผ่าน TLS, fetch เป็น TCP — ระบบยังทำงานได้เต็มรูปแบบ
 
 ---
 
