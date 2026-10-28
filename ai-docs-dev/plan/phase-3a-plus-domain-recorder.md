@@ -138,12 +138,12 @@ export class DomainRecorder {
 
 ## 3. Checklist งานย่อย (Implementation Checklist)
 
-- [ ] **3a-p.1** Migration v3 ตาราง `recorded_domains` (ผูก session_id, source, approved flag, ดัชนีต่อ session)
-- [ ] **3a-p.2** ฟิลด์ `domainEnforcement: 'warn' | 'block'` ใน `DetectionPolicyBodySchema` (ไม่ต้องเพิ่ม network message)
-- [ ] **3a-p.3** `DomainRecorder` (attach สองโหมด record/enforce, webRequest hook, normalize, dedupe+hits, flush ลง DB ทุก 3s, block ด้วย cancel)
-- [ ] **3a-p.4** `DomainAllowlistService` (recordBatch/list/approve-ทั้งหมด) + Doc Preview controller (lobby เท่านั้น) + ผูก `startExam` โหลด approved เข้า policy + push กลางสอบเมื่ออนุมัติเพิ่ม
-- [ ] **3a-p.5** IPC (`host:open-doc-preview`, `host:close-doc-preview`, `host:list-recorded-domains`, `host:approve-domain`, event `host:recorded-domains-updated`) + การ์ด UI ใน HostPanel (รวม setting เตือน/บล็อก)
-- [ ] **3a-p.6** เพิ่ม event `UNAUTHORIZED_DOMAIN_DETECTED` + ผนวก allowedDomains กับ NetworkInspector DNS diff + ใช้ WebContentsView ตัวเดียวกันกับ Mode 2 (ร่วมแผน Phase 5)
+- [x] **3a-p.1** Migration v3 ตาราง `recorded_domains` (ผูก session_id, source, approved flag, ดัชนีต่อ session)
+- [x] **3a-p.2** ฟิลด์ `domainEnforcement: 'warn' | 'block'` ใน `DetectionPolicyBodySchema` (ไม่ต้องเพิ่ม network message)
+- [x] **3a-p.3** `DomainRecorder` (attach สองโหมด record/enforce, webRequest hook, normalize, dedupe+hits, flush ลง DB ทุก 3s, block ด้วย cancel)
+- [x] **3a-p.4** `DomainAllowlistService` (recordBatch/list/approve-ทั้งหมด) + Doc Preview controller (lobby เท่านั้น) + ผูก `startExam` โหลด approved เข้า policy + push กลางสอบเมื่ออนุมัติเพิ่ม
+- [x] **3a-p.5** IPC (`host:open-doc-preview`, `host:close-doc-preview`, `host:list-recorded-domains`, `host:approve-domain`, event `host:recorded-domains-updated`) + การ์ด UI ใน HostPanel (รวม setting เตือน/บล็อก)
+- [x] **3a-p.6** เพิ่ม event `UNAUTHORIZED_DOMAIN_DETECTED` + ผนวก allowedDomains กับ NetworkInspector DNS diff + ใช้ WebContentsView ตัวเดียวกันกับ Mode 2 (ร่วมแผน Phase 5)
 
 ## 4. การทดสอบและเกณฑ์ผ่าน (Verification & Definition of Done)
 
