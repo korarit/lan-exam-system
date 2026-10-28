@@ -112,6 +112,13 @@ export class ExamTlsServer {
     return this.students.get(studentId)?.sessionKey ?? null
   }
 
+  /** IP ต้นทางจริงของหน้าเชื่อมต่อ TLS ล่าสุดที่ยังอยู่ (ใช้ยืนยันจุดปลายทางของ UDP screen transport) */
+  getStudentAddress(studentId: string): string | null {
+    const connections = this.liveConnections.get(studentId)
+    const target = connections?.find((c) => !c.isDestroyed)
+    return target?.remoteAddress ?? null
+  }
+
   /** CoreSessionManager สั่งตั้งเวลาหมดสอบ (Host-authoritative) */
   setExamEndsAtMs(endsAtMs: number): void {
     this.currentExamEndsAtMs = endsAtMs

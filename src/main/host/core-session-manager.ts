@@ -55,6 +55,10 @@ export interface CoreSessionManagerOptions {
   onExamEnded?: (roomId: string, reason: string) => void
   /** Phase 3c: ข้อความจากนักเรียนที่บริการอื่นจัดการ (เช่น RING_SEGMENT_LIST) — คืน true เมื่อจัดการแล้ว */
   onStudentNetMessage?: (studentId: string, type: string, payload: unknown) => boolean
+  /** Phase 3c (UDP): พอร์ต UDP รับสตรีมหน้าจอของเครื่องแม่ (null = ปิด UDP ใช้ TCP fallback) */
+  getScreenUdpPort?: () => number | null
+  /** Phase 3c (UDP): แจ้งว่า SCREEN_SESSION ถูกส่งไปนักเรียนคนนี้ (จับคู่กุญแจ UDP ฝั่งเครื่องแม่) */
+  onScreenSessionSent?: (studentId: string, screenBufferKey: string, udpScreenPort: number | null) => void
 }
 
 export type ExamState = 'idle' | 'running' | 'collecting' | 'finished'
@@ -202,12 +206,8 @@ export class CoreSessionManager {
 
     // Phase 3c: คีย์ ring buffer ใหม่ต่อรอบสอบ (คิวภาพย่อ 2000ms เมื่อห้องเกิน 50 คน)
     this.screenBufferKey = generateRandomBytes(32)
-    const thumbnailIntervalMs = room.students.length > 50 ? 2000 : 1000
     for (const student of room.students) {
-      tlsServer?.sendToStudent(student.studentId, NetMsgType.screenSession, {
-        screenBufferKey: this.screenBufferKey.toString('base64'),
-        thumbnailIntervalMs
-      })
+      this.sendScreenSessionToStudent(student.studentId)
     }
 
     // ประกาศเริ่ม + ส่งข้อแรกให้ทุกคนที่ออนไลน์อยู่แล้ว
@@ -452,12 +452,25 @@ export class CoreSessionManager {
     this.sendPolicyToStudent(studentId)
     // Phase 3c: นักเรียนที่ reconnect กลางการสอบต้องได้คีย์ ring buffer กลับทันที
     if (this.screenBufferKey) {
-      tlsServer.sendToStudent(studentId, NetMsgType.screenSession, {
-        screenBufferKey: this.screenBufferKey.toString('base64'),
-        thumbnailIntervalMs: (room.students.length ?? 0) > 50 ? 2000 : 1000
-      })
+      this.sendScreenSessionToStudent(studentId)
     }
     tlsServer.sendToStudent(studentId, NetMsgType.stateRecovery, recoveryPayload)
+  }
+
+  /** Phase 3c: ส่ง SCREEN_SESSION (คีย์ ring buffer + พอร์ต UDP ถ้ามี) + จับคู่กุญแจฝั่งเครื่องแม่ */
+  private sendScreenSessionToStudent(studentId: string): void {
+    const room = this.opts.getRoom()
+    const tlsServer = room?.tlsServerInstance
+    if (!tlsServer || !this.screenBufferKey) return
+    const udpScreenPort = this.opts.getScreenUdpPort?.() ?? null
+    const thumbnailIntervalMs = (room.students.length ?? 0) > 50 ? 2000 : 1000
+    const screenBufferKey = this.screenBufferKey.toString('base64')
+    tlsServer.sendToStudent(studentId, NetMsgType.screenSession, {
+      screenBufferKey,
+      thumbnailIntervalMs,
+      ...(udpScreenPort !== null ? { udpScreenPort } : {})
+    })
+    this.opts.onScreenSessionSent?.(studentId, screenBufferKey, udpScreenPort)
   }
 
   /** ส่งนโยบายตรวจจับ (เซ็นด้วย session key รายบุคคล) — เรียกตอนเริ่มสอบ/ reconnect */

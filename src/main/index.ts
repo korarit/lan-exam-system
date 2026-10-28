@@ -119,9 +119,21 @@ function ensureSessionManager(): CoreSessionManager {
     },
     // Phase 3c: รายการเซกเมนต์ย้อนหลังจากนักเรียน → ProctorViewService
     onStudentNetMessage: (studentId, type, payload) => {
-      if (type !== NetMsgType.ringSegmentList) return false
-      ensureProctorViewService().ingestSegmentList(studentId, payload)
-      return true
+      if (type === NetMsgType.ringSegmentList) {
+        ensureProctorViewService().ingestSegmentList(studentId, payload)
+        return true
+      }
+      // Phase 3c (UDP): นักเรียนประกาศตำแหน่งช่องทาง UDP สตรีมหน้าจอ
+      if (type === NetMsgType.screenUdpRegister) {
+        ensureProctorViewService().handleUdpRegister(studentId, payload)
+        return true
+      }
+      return false
+    },
+    // Phase 3c (UDP): พอร์ต UDP ของเครื่องแม่ + จับคู่กุญแจ UDP ต่อ SCREEN_SESSION
+    getScreenUdpPort: () => ensureProctorViewService().getUdpPort(),
+    onScreenSessionSent: (studentId, screenBufferKey) => {
+      ensureProctorViewService().noteScreenSession(studentId, screenBufferKey)
     }
   })
   return sessionManager
@@ -175,6 +187,7 @@ function ensureScreenStreamController(): ScreenStreamController {
   screenStreamController ??= new ScreenStreamController({
     getClient: () => (state.role === 'student' ? studentClient : null),
     getSessionId: () => lastJoinedRoomId,
+    getHostIp: () => lastJoinedHostIp,
     sendRendererEvent: sendEventToWindow,
     onStatus: (message) => console.warn(`[screen] ${message}`)
   })
@@ -241,6 +254,12 @@ function ensureStudentClient(): ExamTlsClient {
           }
           return true
         }
+        // Phase 3c (UDP): เครื่องแม่ยืนยันช่องทางสตรีมหน้าจอ
+        if (type === NetMsgType.screenUdpReady) {
+          const ready = payload as { ok: boolean; reason?: string }
+          ensureScreenStreamController().handleUdpReady(ready.ok, ready.reason)
+          return true
+        }
         // Phase 3c: คำสั่งหน้าจอจากเครื่องแม่ (inspect / fetch / pin)
         return ensureScreenStreamController().handleNetMessage(type, payload)
       },
@@ -304,6 +323,10 @@ void app.whenReady().then(() => {
       if (role === 'host') {
         // โปรแกรมเครื่องแม่ต้องมีฐานข้อมูลพร้อมใช้ตั้งแต่เลือกบทบาท
         ensureHostDatabase()
+        // Phase 3c (UDP): bind ช่องทางรับสตรีมหน้าจอล่วงหน้า (พอร์ตถูกอ้างใน SCREEN_SESSION)
+        void ensureProctorViewService()
+          .getUdpPortAsync()
+          .then((port) => console.warn(`[screen-udp] receiver bound at port ${port ?? 'FAILED'}`))
       }
     },
     eventSender: sendEventToWindow
