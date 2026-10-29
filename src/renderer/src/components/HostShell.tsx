@@ -1,9 +1,19 @@
-import { MonitorCog, Activity } from 'lucide-react'
+import { useState } from 'react'
+import { MonitorCog, Activity, ClipboardList, PenTool } from 'lucide-react'
 import HostPanel from './HostPanel'
+import FormBuilderWorkspace from '@modules/dynamic-form/renderer/builder/FormBuilderWorkspace'
 import { useAppStore } from '../store/app-store'
+
+type HostTab = 'room' | 'form-builder'
 
 export default function HostShell(): React.JSX.Element {
   const connectionState = useAppStore((s) => s.connectionState)
+  const [tab, setTab] = useState<HostTab>('room')
+
+  const tabs: Array<{ id: HostTab; label: string; icon: React.ReactNode }> = [
+    { id: 'room', label: 'ห้องสอบ & ผู้คุม', icon: <ClipboardList size={14} /> },
+    { id: 'form-builder', label: 'Dynamic Form Builder', icon: <PenTool size={14} /> }
+  ]
 
   return (
     <div className="flex h-full flex-col">
@@ -20,8 +30,23 @@ export default function HostShell(): React.JSX.Element {
           {connectionState}
         </div>
       </header>
+      <nav className="flex gap-1 border-b border-slate-800 px-6">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`flex items-center gap-1.5 rounded-t-lg px-4 py-2 text-sm transition ${
+              tab === t.id ? 'border-b-2 border-emerald-500 font-semibold text-emerald-300' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            {t.icon}
+            {t.label}
+          </button>
+        ))}
+      </nav>
       <main className="flex-1 overflow-y-auto p-6">
-        <HostPanel />
+        {tab === 'room' ? <HostPanel /> : <FormBuilderWorkspace />}
       </main>
     </div>
   )
