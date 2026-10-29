@@ -21,6 +21,24 @@ export default function TeacherWorkspaceFolderConfig(props: Props): React.JSX.El
 
   async function handlePick(): Promise<void> {
     setError(null)
+    // Phase 10: เลือกผ่าน dialog ของ Main process ได้พาธจริงบนเครื่องครู + ผูก backend ทันที
+    try {
+      const api = window.ztExam
+      if (typeof api?.setCodeWorkspaceRoot === 'function') {
+        const res = await api.setCodeWorkspaceRoot()
+        if (res.ok && res.rootPath) {
+          props.onPick(res.rootPath)
+          return
+        }
+        if (res.reason !== 'CANCELLED') {
+          setError(`เลือกโฟลเดอร์ไม่สำเร็จ: ${res.reason ?? 'unknown'}`)
+          return
+        }
+        return
+      }
+    } catch {
+      /* IPC ยังไม่พร้อม — fallback ด้านล่าง */
+    }
     try {
       const picker = (
         window as unknown as {

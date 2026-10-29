@@ -4,9 +4,10 @@ import HostPanel from './HostPanel'
 import FormBuilderWorkspace from '@modules/dynamic-form/renderer/builder/FormBuilderWorkspace'
 import ResponsesDashboard from '@modules/dynamic-form/renderer/responses/ResponsesDashboard'
 import CodeExamBuilder from '@modules/code-ide/renderer/builder/CodeExamBuilder'
+import CodeSubmissionsTable from '@modules/code-ide/renderer/responses/CodeSubmissionsTable'
 import { useAppStore } from '../store/app-store'
 
-type HostTab = 'room' | 'form-builder' | 'form-responses' | 'code-builder'
+type HostTab = 'room' | 'form-builder' | 'form-responses' | 'code-builder' | 'code-responses'
 
 export default function HostShell(): React.JSX.Element {
   const connectionState = useAppStore((s) => s.connectionState)
@@ -16,7 +17,8 @@ export default function HostShell(): React.JSX.Element {
     { id: 'room', label: 'ห้องสอบ & ผู้คุม', icon: <ClipboardList size={14} /> },
     { id: 'form-builder', label: 'Dynamic Form Builder', icon: <PenTool size={14} /> },
     { id: 'form-responses', label: 'ผลตอบฟอร์ม (ตรวจ/ส่งออก)', icon: <Rows3 size={14} /> },
-    { id: 'code-builder', label: 'Code IDE Builder (.ztcode)', icon: <Code2 size={14} /> }
+    { id: 'code-builder', label: 'Code IDE Builder (.ztcode)', icon: <Code2 size={14} /> },
+    { id: 'code-responses', label: 'ผลตรวจ Code (Grader)', icon: <Rows3 size={14} /> }
   ]
 
   return (
@@ -56,8 +58,10 @@ export default function HostShell(): React.JSX.Element {
           <FormBuilderWorkspace />
         ) : tab === 'form-responses' ? (
           <ResponsesDashboard />
-        ) : (
+        ) : tab === 'code-builder' ? (
           <CodeExamBuilder />
+        ) : (
+          <CodeSubmissionsTable />
         )}
       </main>
     </div>

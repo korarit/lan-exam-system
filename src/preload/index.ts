@@ -53,6 +53,7 @@ const api: ZtExamApi = {
   submitAnswer: (req) => call('student:submit-answer', req),
   autosaveDraft: (req) => call('student:autosave-draft', req),
   navigate: (req) => call('student:navigate', req),
+  moduleSend: (req) => call('student:module-send', req),
   enterKiosk: () => call('student:enter-kiosk', undefined),
   markInternalCopy: (req) => call('student:internal-copy', req),
   sendTypingMetrics: (req) => call('student:typing-metrics', req),
@@ -101,6 +102,23 @@ const api: ZtExamApi = {
   saveZtresults: (req) => call('form:save-ztresults', req),
   loadZtresults: (req) => call('form:load-ztresults', req),
   openFormArtifact: (req) => call('form:artifact-open', req),
+
+  /* ---------- Code IDE — Backend / Grader / Export (Phase 10) ---------- */
+  attachCodeRoomPackage: (req) => call('code-ide:attach-room-package', req),
+  getCodeSubmissions: () => call('code-ide:submissions-get', undefined),
+  getCodeSubmissionDetail: (req) => call('code-ide:submission-detail', req),
+  codeManualGrade: (req) => call('code-ide:manual-grade', req),
+  codeRegradeAll: () => call('code-ide:regrade-all', undefined),
+  getCodeWorkspaceState: () => call('code-ide:workspace-state', undefined),
+  setCodeWorkspaceRoot: () => call('code-ide:set-workspace-root', undefined),
+  openCodeStudentFolder: (req) => call('code-ide:open-student-folder', req),
+  exportCodeCsv: () => call('code-ide:export-csv', undefined),
+  exportCodeBundle: () => call('code-ide:export-bundle', undefined),
+  runCodePreview: (req) => call('code-ide:run-preview', req),
+  probeCodeApi: (req) => call('code-ide:probe-api', req),
+  queryCodeSql: (req) => call('code-ide:query-sql', req),
+  saveCodeComment: (req) => call('code-ide:comment-save', req),
+  listCodeComments: (req) => call('code-ide:comment-list', req),
 
   /* ---------- Code IDE — Local Runtime (Phase 9) ---------- */
   runCliTest: (req) => call('code-ide:run-cli', req),

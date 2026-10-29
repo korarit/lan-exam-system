@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Play, RotateCcw, Rocket, Timer, PanelLeftClose, PanelLeftOpen, FileText } from 'lucide-react'
 import {
   PROJECT_CATEGORY_LABELS,
@@ -71,6 +71,30 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
   const [runSignal, setRunSignal] = useState(0)
   const [showProblem, setShowProblem] = useState(true)
   const [showExplorer, setShowExplorer] = useState(true)
+  // mirror ของ entries กัน stale closure ตอนพิมพ์เร็ว + throttle autosave ทุก 5 วิ
+  // (ท่อ LAN จริง: ExamView ส่งต่อผ่าน student:module-send — workspace เองไม่ยิง IPC ตรง)
+  const entriesRef = useRef(entries)
+  const lastAutosaveRef = useRef(0)
+  const isTeacherPreview = (props.viewerRole ?? 'student') === 'teacher'
+
+  /** autosave ผ่าน callback (ExamView ส่งต่อเข้า LAN / host) — throttle 5 วิกันสแปม */
+  function queueAutosave(next: VirtualEntry[]): void {
+    if (isTeacherPreview) return
+    const now = Date.now()
+    if (now - lastAutosaveRef.current < 5000) return
+    lastAutosaveRef.current = now
+    props.onAutosave?.(next)
+  }
+
+  function handleSubmit(): void {
+    const snapshot = entriesRef.current
+    props.onSubmit?.(snapshot)
+    if (isTeacherPreview) {
+      setNotice('👁️ โหมดพรีวิวครู — ไม่ส่งงานจริง')
+      return
+    }
+    setNotice('🚀 ส่งงานแล้ว — รอเครื่องแม่รับเข้า (ดูสถานะจากแถบด้านบนเมื่อ host ตอบกลับ)')
+  }
 
   const sampleTests = useMemo(
     () => (isFullPackage(pkg) ? pkg.testCases.filter((t) => t.visibility === 'sample') : pkg.sampleTests),
@@ -104,8 +128,9 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
   }, [])
 
   function mutate(next: VirtualEntry[], message?: string): void {
+    entriesRef.current = next
     setEntries(next)
-    props.onAutosave?.(next)
+    queueAutosave(next)
     if (message !== undefined) setNotice(message)
   }
 
@@ -243,9 +268,12 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
             onSelectFile={setActivePath}
             onChangeContent={(p, c) => {
               try {
-                setEntries((prev) => updateFileContentInTree(prev, p, c))
-                // Real-time write-through ลงโฟลเดอร์จริง + autosave ผ่าน callback (Main ผูก Phase 10)
-                props.onAutosave?.(entries)
+                // ใช้ ref mirror กัน stale closure ตอนพิมพ์เร็ว — state กับ ref อัปเดตพร้อมกัน
+                const next = updateFileContentInTree(entriesRef.current, p, c)
+                entriesRef.current = next
+                setEntries(next)
+                // Real-time write-through ลงโฟลเดอร์จริง + autosave ผ่าน callback (throttle 5 วิ)
+                queueAutosave(next)
               } catch (err) { fail(err) }
             }}
           />
@@ -294,7 +322,7 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
         </button>
         <button
           type="button"
-          onClick={() => props.onSubmit?.(entries)}
+          onClick={handleSubmit}
           className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-sky-500"
         >
           <Rocket size={15} /> ส่งงาน

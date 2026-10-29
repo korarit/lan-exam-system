@@ -160,7 +160,148 @@ export default function TestCaseEditor(props: Props): React.JSX.Element {
       )}
 
       {test.kind === 'http-api' && (
-        <p className="mt-2 text-[11px] text-slate-500">API requests แบบละเอียดแก้ไขใน Phase 10 grader — ตอนนี้เก็บ path/matcher พื้นฐาน ({test.requests.length} requests)</p>
+        <div className="mt-2 space-y-2">
+          {test.requests.map((r, ri) => (
+            <div key={ri} className="rounded border border-slate-800 bg-slate-950/60 p-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <select
+                  value={r.method}
+                  onChange={(e) => patch({
+                    requests: test.requests.map((x, xi) => (xi === ri
+                      ? { ...x, method: e.target.value as typeof x.method }
+                      : x))
+                  })}
+                  className="rounded border border-slate-700 bg-slate-900 px-1.5 py-1 font-mono text-xs"
+                >
+                  {(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const).map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <input
+                  value={r.path}
+                  onChange={(e) => patch({
+                    requests: test.requests.map((x, xi) => (xi === ri ? { ...x, path: e.target.value } : x))
+                  })}
+                  placeholder="/api/users?role=admin"
+                  className="min-w-40 flex-1 rounded border border-slate-700 bg-slate-900 px-1.5 py-1 font-mono text-xs"
+                />
+                <label className="flex items-center gap-1 text-[11px] text-slate-400">
+                  <input
+                    type="number" value={r.expectedStatus} min={100} max={599}
+                    onChange={(e) => patch({
+                      requests: test.requests.map((x, xi) => (xi === ri
+                        ? { ...x, expectedStatus: Math.max(100, Math.min(599, Number(e.target.value) || 200)) }
+                        : x))
+                    })}
+                    className="w-16 rounded border border-slate-700 bg-slate-900 px-1.5 py-1 font-mono text-xs"
+                  /> status
+                </label>
+                <button
+                  type="button"
+                  onClick={() => patch({ requests: test.requests.filter((_, xi) => xi !== ri) })}
+                  className="text-slate-500 hover:text-red-300"
+                >✕</button>
+              </div>
+              <div className="mt-1.5 grid grid-cols-1 gap-1.5 md:grid-cols-2">
+                <label className="block text-[11px] text-slate-400">
+                  bodyJson (ส่ง — เว้นว่างได้)
+                  <textarea
+                    value={r.bodyJson ?? ''} rows={2}
+                    onChange={(e) => patch({
+                      requests: test.requests.map((x, xi) => (xi === ri ? { ...x, bodyJson: e.target.value } : x))
+                    })}
+                    placeholder='{"name": "Ann"}'
+                    className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-1.5 py-1 font-mono text-xs"
+                  />
+                </label>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400">ตรวจ response:</span>
+                    <select
+                      value={r.expectedBodyMatcher}
+                      onChange={(e) => patch({
+                        requests: test.requests.map((x, xi) => (xi === ri
+                          ? { ...x, expectedBodyMatcher: e.target.value as typeof x.expectedBodyMatcher }
+                          : x))
+                      })}
+                      className="rounded border border-slate-700 bg-slate-900 px-1.5 py-1 font-mono text-xs"
+                    >
+                      <option value="json-subset">json-subset</option>
+                      <option value="exact-json">exact-json</option>
+                      <option value="regex">regex</option>
+                      <option value="custom-script">contains</option>
+                    </select>
+                  </div>
+                  <textarea
+                    value={r.expectedBody} rows={2}
+                    onChange={(e) => patch({
+                      requests: test.requests.map((x, xi) => (xi === ri ? { ...x, expectedBody: e.target.value } : x))
+                    })}
+                    placeholder='{"ok": true} / regex / ข้อความที่ต้องมี'
+                    className="mt-1 w-full rounded border border-emerald-900/60 bg-slate-900 px-1.5 py-1 font-mono text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => patch({
+              requests: [...test.requests, { method: 'GET' as const, path: '/api/users', expectedStatus: 200, expectedBodyMatcher: 'json-subset' as const, expectedBody: '{}' }]
+            })}
+            className="rounded border border-slate-700 px-2 py-1 text-[11px] text-sky-300 hover:border-sky-500"
+          >
+            + เพิ่ม request
+          </button>
+          <label className="block rounded border border-slate-800 bg-slate-950/60 p-2 text-[11px] text-slate-400">
+            <span className="mb-1 flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={test.verifyDb !== undefined}
+                onChange={(e) => patch(e.target.checked
+                  ? { verifyDb: { query: 'SELECT * FROM users;', expectedColumns: [], expectedRows: [], checkColumnOrder: true, checkRowOrder: true } }
+                  : { verifyDb: undefined })}
+                className="h-3.5 w-3.5 accent-emerald-500"
+              />
+              🗄️ ตรวจสถานะ DB หลังยิง API (เช่น POST แล้ว SELECT ตรวจว่าแถวเข้าจริง)
+            </span>
+            {test.verifyDb !== undefined && (
+              <span className="block">
+                <textarea
+                  value={test.verifyDb.query} rows={2}
+                  onChange={(e) => patch({ verifyDb: { ...test.verifyDb!, query: e.target.value } })}
+                  placeholder="SELECT id, name FROM users ORDER BY id;"
+                  className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-1.5 py-1 font-mono text-xs"
+                />
+                <input
+                  value={test.verifyDb.expectedColumns.join(', ')}
+                  onChange={(e) => patch({
+                    verifyDb: {
+                      ...test.verifyDb!,
+                      expectedColumns: e.target.value.split(',').map((s) => s.trim()).filter(Boolean)
+                    }
+                  })}
+                  placeholder="expected columns คั่นด้วย , (เช่น id, name)"
+                  className="mt-1 w-full rounded border border-slate-700 bg-slate-900 px-1.5 py-1 font-mono text-xs"
+                />
+                <span className="mt-1 block text-[10px] text-slate-600">
+                  แถวที่คาดหวัง (JSON array เช่น [[1,&quot;Ann&quot;]]) — ตรวจแบบเดียวกับข้อ SQL
+                </span>
+                <textarea
+                  value={JSON.stringify(test.verifyDb.expectedRows)}
+                  rows={2}
+                  onChange={(e) => {
+                    try {
+                      const parsed = JSON.parse(e.target.value) as unknown
+                      if (Array.isArray(parsed)) patch({ verifyDb: { ...test.verifyDb!, expectedRows: parsed as Array<Array<string | number | null>> } })
+                    } catch {
+                      /* JSON ยังไม่ครบ — รอครูพิมพ์ต่อ */
+                    }
+                  }}
+                  className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-1.5 py-1 font-mono text-xs"
+                />
+              </span>
+            )}
+          </label>
+        </div>
       )}
       {test.kind === 'dom-assertion' && (
         <label className="mt-2 block text-[11px] text-slate-400">

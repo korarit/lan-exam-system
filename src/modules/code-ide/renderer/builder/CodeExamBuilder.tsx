@@ -15,7 +15,7 @@ import { stripCodePackageForStudent } from '../../shared/student-view'
 import TrackAndLanguageSelector from './TrackAndLanguageSelector'
 import ProjectTemplateUploader, { type TemplateView } from './ProjectTemplateUploader'
 import type { DatabaseConfig } from '../../shared/code-schema'
-import OfflineDependencyManager from './OfflineDependencyManager'
+import OfflineDependencyManager, { type LibFileAttachment } from './OfflineDependencyManager'
 import MissingRuntimePrompt from '../MissingRuntimePrompt'
 import TestCaseEditor from './TestCaseEditor'
 import TeacherWorkspaceFolderConfig, { defaultTeacherWorkspace } from './TeacherWorkspaceFolderConfig'
@@ -85,12 +85,14 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
   const [reference, setReference] = useState<VirtualEntry[]>([])
   const [templateView, setTemplateView] = useState<TemplateView>('starter')
   const [bundles, setBundles] = useState<DependencyBundle[]>([])
+  const [libFiles, setLibFiles] = useState<LibFileAttachment[]>([])
   const [entryPoint, setEntryPoint] = useState('src/Main.java')
   const [tests, setTests] = useState<CodeTestCase[]>([])
   const [teacherFolder, setTeacherFolder] = useState(() => defaultTeacherWorkspace('CS202_Final'))
   const [previewOpen, setPreviewOpen] = useState(false)
   const [report, setReport] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [attaching, setAttaching] = useState(false)
 
   const fileEntries = useMemo(() => starter.filter((e) => e.kind === 'file'), [starter])
 
@@ -155,6 +157,15 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
     }
   }
 
+  /** blobs ของไฟล์ lib จริงที่ครูแนบ (key = archiveRelativePath — host แตกเข้า deps cache) */
+  function buildBlobs(): Record<string, { encoding: 'base64'; dataBase64: string }> {
+    const blobs: Record<string, { encoding: 'base64'; dataBase64: string }> = {}
+    for (const f of libFiles) {
+      blobs[f.blobPath] = { encoding: 'base64', dataBase64: f.dataBase64 }
+    }
+    return blobs
+  }
+
   async function saveZtcode(): Promise<void> {
     setSaving(true)
     setReport(null)
@@ -172,7 +183,7 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
         dependencies: bundles,
         database: buildDatabase(),
         testCases: tests,
-        blobs: {}
+        blobs: buildBlobs()
       })
       const nowMs = Date.now()
       const manifest = {
@@ -226,13 +237,50 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
         dependencies: bundles,
         database: buildDatabase(),
         testCases: tests,
-        blobs: {}
+        blobs: buildBlobs()
       })
     } catch {
       return null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title, instructions, category, language, starter, reference, entryPoint, bundles, enableDatabase, dbConfig, tests])
+
+  async function attachToRoom(): Promise<void> {
+    setAttaching(true)
+    setReport(null)
+    try {
+      const pkg = CodeExamPackageSchema.parse({
+        moduleId: 'code-ide',
+        packageId: newPackageId(),
+        title,
+        instructions,
+        category,
+        language,
+        entries: starter,
+        referenceSolution: reference,
+        policy: { entryPointPath: entryPoint },
+        dependencies: bundles,
+        database: buildDatabase(),
+        testCases: tests,
+        blobs: buildBlobs()
+      })
+      const approxBytes = JSON.stringify(pkg).length
+      if (approxBytes > 25 * 1024 * 1024) {
+        setReport(`⛔ package ใหญ่เกิน ~${(approxBytes / 1048576).toFixed(1)}MB (แนบ libs เยอะไป) — ลบไฟล์แนบออกบ้างแล้วผูกใหม่ (ขีดจำกัดส่งผ่าน IPC ~25MB)`)
+        return
+      }
+      const res = await window.ztExam.attachCodeRoomPackage({ packageJson: JSON.stringify(pkg) })
+      setReport(
+        res.ok
+          ? `✅ ผูกข้อสอบเข้าห้องแล้ว (“${res.packageTitle ?? title}”) — นักเรียนส่งงานแล้วงานจะเข้าคิวตรวจ ดูผลที่แท็บ “ผลตรวจ Code (Grader)”`
+          : `⛔ ผูกไม่สำเร็จ: ${res.reason === 'ROOM_NOT_OPEN' ? 'ยังไม่เปิดห้องสอบ (แท็บห้องสอบ & ผู้คุม)' : (res.reason ?? 'unknown')}`
+      )
+    } catch (err) {
+      setReport(`⛔ ผูกไม่สำเร็จ: ${err instanceof Error ? err.message.slice(0, 160) : 'unknown'}`)
+    } finally {
+      setAttaching(false)
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -346,7 +394,7 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
 
       <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
         <h4 className="mb-2 text-sm font-semibold">📦 Offline Libraries</h4>
-        <OfflineDependencyManager bundles={bundles} onChange={setBundles} />
+        <OfflineDependencyManager bundles={bundles} onChange={setBundles} files={libFiles} onChangeFiles={setLibFiles} />
       </div>
 
       <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
@@ -380,6 +428,9 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
       <div className="flex flex-wrap gap-2">
         <button type="button" onClick={testReferenceSolution} className="inline-flex items-center gap-1.5 rounded-xl bg-amber-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-600">
           <Play size={15} /> ▶ ทดสอบรันโปรเจกต์เฉลยกับทุก Test Case
+        </button>
+        <button type="button" onClick={() => void attachToRoom()} disabled={attaching} className="inline-flex items-center gap-1.5 rounded-xl bg-sky-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-600 disabled:opacity-40">
+          📌 {attaching ? 'กำลังผูก…' : 'ผูกเข้าห้องสอบ'}
         </button>
         <button type="button" onClick={() => setPreviewOpen((v) => !v)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-200 hover:border-sky-500">
           <Eye size={15} /> {previewOpen ? 'ซ่อนพรีวิวนักเรียน' : 'พรีวิวฝั่งนักเรียน'}

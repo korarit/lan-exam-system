@@ -507,6 +507,34 @@ export interface FormLoadZtresultsResponse {
   message?: string | undefined
 }
 
+/* ---------- Module Packet Transport — Student → Host ผ่าน LAN (Phase 2 สเปค/เพิ่งมีโค้ด) ---------- */
+
+/** นักเรียนส่ง action/autosave ของโมดูลผ่านสาย TLS (main หั่น chunks ให้เอง) */
+export interface StudentModuleSendRequest {
+  moduleId: 'dynamic-form' | 'code-ide' | 'external-url'
+  kind: 'action' | 'autosave'
+  payloadJson: string
+}
+export interface StudentModuleSendResponse {
+  ok: boolean
+  chunked?: boolean | undefined
+  chunks?: number | undefined
+  reason?: string | undefined
+}
+/** Host ตอบรับงานของโมดูล (ต่อชิ้น) */
+export interface ModuleAckEvent {
+  moduleId: 'dynamic-form' | 'code-ide' | 'external-url'
+  kind: 'action' | 'autosave'
+  ok: boolean
+  progressText?: string | undefined
+  reason?: string | undefined
+}
+/** Host ผลัก state เริ่มต้นของโมดูลรายคน (stripped view) */
+export interface ModuleStateEvent {
+  moduleId: 'dynamic-form' | 'code-ide' | 'external-url'
+  stateJson: string
+}
+
 /* ---------- Code IDE — Local Runtime (Phase 9: รันบนเครื่องตัวเองผ่าน Main) ---------- */
 
 /** รัน 1 CLI test ด้วยโค้ดปัจจุบันของนักเรียน (entries สดจาก IDE) */
@@ -604,6 +632,169 @@ export interface CodeIdeAddSdkPathRequest {
 export interface CodeIdeAddSdkPathResponse {
   ok: boolean
   version?: string | undefined
+  reason?: string | undefined
+}
+
+/* ---------- Code IDE — Backend / Grader / Export (Phase 10: งาน + คิวตรวจ + ส่งออก) ---------- */
+
+/** นักเรียนส่งโปรเจกต์ทั้งชุด (entries สดจาก IDE) — host แยก room จากห้องที่เปิดอยู่ */
+export interface CodeIdeSubmitProjectRequest {
+  studentId: string
+  entries: Array<{
+    path: string
+    kind: 'file' | 'folder'
+    content?: string | undefined
+    encoding?: 'utf8' | 'base64' | undefined
+    readOnly?: boolean | undefined
+    allowStudentCreateInside?: boolean | undefined
+    hiddenFromStudent?: boolean | undefined
+  }>
+}
+export interface CodeIdeSubmitProjectResponse {
+  ok: boolean
+  fileCount?: number | undefined
+  projectBytes?: number | undefined
+  reason?: string | undefined
+}
+/** ครูผูก .ztcode package (JSON จาก Builder) เข้ากับห้องที่เปิดอยู่ */
+export interface CodeIdeAttachPackageRequest {
+  packageJson: string
+}
+export interface CodeIdeAttachPackageResponse {
+  ok: boolean
+  roomId?: string | undefined
+  packageTitle?: string | undefined
+  reason?: string | undefined
+}
+/** สรุปงานรายคนสำหรับตารางคะแนน (ไม่มีโค้ดนักเรียน — เปิด entries แยกรายคน) */
+export interface CodeIdeSubmissionSummary {
+  studentId: string
+  fileCount: number
+  passedCount: number
+  totalCount: number
+  autoPoints: number
+  manualPoints: number | null
+  totalPoints: number
+  maxPoints: number
+  status: 'queued' | 'grading' | 'graded' | 'blocked' | 'error'
+  submittedAtMs: number | null
+  gradedAtMs: number | null
+  blockedReason: string | null
+}
+export interface CodeIdeSubmissionsResponse {
+  ok: boolean
+  roomId: string | null
+  roomName: string | null
+  packageTitle: string | null
+  category: string | null
+  language: string | null
+  questionSlug: string | null
+  maxPoints: number
+  queue: { active: number; pending: number }
+  /** archive ของ offline libs ที่ใช้ไม่ได้ (ครูต้องอัปโหลดเป็น .zip/.jar ใหม่) */
+  depsUnsupported: string[]
+  submissions: CodeIdeSubmissionSummary[]
+  reason?: string | undefined
+}
+/** ผลตรวจราย test case (เปิดเผย sample + hidden — ฝั่งครูเท่านั้น) */
+export interface CodeIdeGradeResultView {
+  testId: string
+  kind: string
+  visibility: 'sample' | 'hidden'
+  points: number
+  earned: number
+  passed: boolean | null
+  note: string
+  durationMs: number
+}
+/** รายละเอียดงานรายคนสำหรับ Mirror IDE Inspector */
+export interface CodeIdeSubmissionDetailResponse {
+  ok: boolean
+  studentId?: string | undefined
+  status?: string | undefined
+  manualPoints?: number | null | undefined
+  entries?: CodeIdeSubmitProjectRequest['entries'] | undefined
+  /** starter ที่นักเรียนเห็นตอนเริ่ม (เทียบจุดตั้งต้นใน Playback) */
+  starterEntries?: CodeIdeSubmitProjectRequest['entries'] | undefined
+  /** autosave ล่าสุด (อาจใหม่กว่าฉบับที่ส่ง) */
+  draftEntries?: CodeIdeSubmitProjectRequest['entries'] | undefined
+  referenceEntries?: CodeIdeSubmitProjectRequest['entries'] | undefined
+  gradeResults?: CodeIdeGradeResultView[] | undefined
+  blockedReason?: string | null | undefined
+  reason?: string | undefined
+}
+export interface CodeIdeManualGradeRequest {
+  studentId: string
+  points: number | null
+}
+export interface CodeIdeManualGradeResponse {
+  ok: boolean
+  reason?: string | undefined
+}
+export interface CodeIdeRegradeResponse {
+  ok: boolean
+  students?: number | undefined
+  graded?: number | undefined
+  reason?: string | undefined
+}
+export interface CodeIdeWorkspaceStateResponse {
+  rootPath: string | null
+  workspaceOk: boolean
+  workspaceReason?: string | undefined
+  queue: { active: number; pending: number }
+}
+export interface CodeIdeSetWorkspaceResponse {
+  ok: boolean
+  rootPath?: string | undefined
+  reason?: string | undefined
+}
+/** Live Preview งาน frontend ของนักเรียน (bundle แล้ว — รันใน sandboxed iframe + CSP) */
+export interface CodeIdeRunPreviewResponse {
+  ok: boolean
+  html?: string | undefined
+  js?: string | undefined
+  reason?: string | undefined
+}
+/** ครูยิง API ทดสอบเซิร์ฟเวอร์นักเรียน 1 request (spawn ชั่วคราวแล้ว teardown) */
+export interface CodeIdeProbeApiRequest {
+  studentId: string
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  path: string
+  bodyJson?: string | undefined
+}
+export interface CodeIdeProbeApiResponse {
+  ok: boolean
+  status?: number | null | undefined
+  body?: string | undefined
+  note?: string | undefined
+  reason?: string | undefined
+}
+/** ครูรัน SQL ดู/ตรวจ DB ของนักเรียน (seed ใหม่ + รัน studentSql ก่อน) */
+export interface CodeIdeQuerySqlRequest {
+  studentId: string
+  sql: string
+}
+export interface CodeIdeQuerySqlResponse {
+  ok: boolean
+  columns?: string[] | undefined
+  rows?: Array<Array<string | number | null>> | undefined
+  note?: string | undefined
+  reason?: string | undefined
+}
+/** คอมเมนต์รายไฟล์ของครูใน Inspector */
+export interface CodeIdeCommentSaveRequest {
+  studentId: string
+  path: string
+  comment: string
+}
+export interface CodeIdeCommentItem {
+  path: string
+  comment: string
+  updatedAtMs: number
+}
+export interface CodeIdeCommentListResponse {
+  ok: boolean
+  comments?: CodeIdeCommentItem[] | undefined
   reason?: string | undefined
 }
 
@@ -712,6 +903,8 @@ export interface IpcInvokeMap {
   'student:enter-kiosk': { req: void; res: KioskEnterResponse }
   'student:internal-copy': { req: InternalCopyRequest; res: StudentSubmitResponse }
   'student:typing-metrics': { req: TypingMetricsRequest; res: StudentSubmitResponse }
+  /* ---------- Module Packet Transport (Phase 2 สเปค/เพิ่งมีโค้ด) ---------- */
+  'student:module-send': { req: StudentModuleSendRequest; res: StudentModuleSendResponse }
   /* ---------- Mode 2 / Mode 3 (Phase 5) ---------- */
   'exam:docs-toggle': { req: DocsToggleRequest; res: OkResponse }
   'exam:docs-navigate': { req: DocsNavigateRequest; res: OkResponse }
@@ -759,6 +952,24 @@ export interface IpcInvokeMap {
   'code-ide:check-runtimes': { req: CodeIdeCheckRuntimesRequest; res: CodeIdeCheckRuntimesResponse }
   'code-ide:browse-sdk-path': { req: CodeIdeBrowseSdkPathRequest; res: CodeIdeBrowseSdkPathResponse }
   'code-ide:add-sdk-path': { req: CodeIdeAddSdkPathRequest; res: CodeIdeAddSdkPathResponse }
+  /* ---------- Code IDE — Backend / Grader / Export (Phase 10) ---------- */
+  /* (ส่งงาน/autosave ของนักเรียนวิ่งผ่านท่อกลาง student:module-send → LAN เท่านั้น — ไม่มี direct IPC) */
+  'code-ide:attach-room-package': { req: CodeIdeAttachPackageRequest; res: CodeIdeAttachPackageResponse }
+  'code-ide:submissions-get': { req: void; res: CodeIdeSubmissionsResponse }
+  'code-ide:submission-detail': { req: { studentId: string }; res: CodeIdeSubmissionDetailResponse }
+  'code-ide:manual-grade': { req: CodeIdeManualGradeRequest; res: CodeIdeManualGradeResponse }
+  'code-ide:regrade-all': { req: void; res: CodeIdeRegradeResponse }
+  'code-ide:workspace-state': { req: void; res: CodeIdeWorkspaceStateResponse }
+  'code-ide:set-workspace-root': { req: void; res: CodeIdeSetWorkspaceResponse }
+  'code-ide:open-student-folder': { req: { studentId: string }; res: CodeIdeSetWorkspaceResponse }
+  'code-ide:export-csv': { req: void; res: CodeIdeSetWorkspaceResponse }
+  'code-ide:export-bundle': { req: void; res: CodeIdeSetWorkspaceResponse }
+  /* ---------- Code IDE — Inspector Run Tabs & Comments (Phase 10 ค้าง) ---------- */
+  'code-ide:run-preview': { req: { studentId: string }; res: CodeIdeRunPreviewResponse }
+  'code-ide:probe-api': { req: CodeIdeProbeApiRequest; res: CodeIdeProbeApiResponse }
+  'code-ide:query-sql': { req: CodeIdeQuerySqlRequest; res: CodeIdeQuerySqlResponse }
+  'code-ide:comment-save': { req: CodeIdeCommentSaveRequest; res: CodeIdeManualGradeResponse }
+  'code-ide:comment-list': { req: { studentId: string }; res: CodeIdeCommentListResponse }
 }
 
 /** Main -> Renderer (webContents.send) push event channels */
@@ -774,6 +985,8 @@ export interface IpcEventMap {
   'exam:question': ClientQuestionPayload
   'exam:recovery': StateRecoveryPayload
   'exam:submit-rejected': SubmitRejectedPayload
+  'exam:module-ack': ModuleAckEvent
+  'exam:module-state': ModuleStateEvent
   'exam:time-up': Record<string, never>
   'exam:completed': ExamCompletedPayload
   'exam:tick': ExamTickEvent
@@ -944,6 +1157,24 @@ export const IpcInvokeSchemas: {
       .object({ intervalsMs: z.array(z.number().int().min(0).max(10_000)).min(1).max(500) })
       .strict(),
     response: z.object({ ok: z.boolean() }).strict()
+  },
+  /* ---------- Module Packet Transport (Phase 2 สเปค/เพิ่งมีโค้ด) ---------- */
+  'student:module-send': {
+    request: z
+      .object({
+        moduleId: z.enum(['dynamic-form', 'code-ide', 'external-url']),
+        kind: z.enum(['action', 'autosave']),
+        payloadJson: z.string().min(2).max(12_000_000)
+      })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        chunked: z.boolean().optional(),
+        chunks: z.number().int().nonnegative().optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
   },
   /* ---------- Mode 2 / Mode 3 (Phase 5) ---------- */
   'exam:docs-toggle': {
@@ -1398,6 +1629,234 @@ export const IpcInvokeSchemas: {
         reason: z.string().max(300).optional()
       })
       .strict()
+  },
+  /* ---------- Code IDE — Backend / Grader / Export (Phase 10) ---------- */
+  'code-ide:attach-room-package': {
+    request: z.object({ packageJson: z.string().min(2).max(30_000_000) }).strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        roomId: z.string().max(64).optional(),
+        packageTitle: z.string().max(160).optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'code-ide:submissions-get': {
+    request: z.void(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        roomId: z.string().max(64).nullable(),
+        roomName: z.string().max(120).nullable(),
+        packageTitle: z.string().max(160).nullable(),
+        category: z.string().max(32).nullable(),
+        language: z.string().max(32).nullable(),
+        questionSlug: z.string().max(80).nullable(),
+        maxPoints: z.number().nonnegative(),
+        queue: z.object({ active: z.number().int().nonnegative(), pending: z.number().int().nonnegative() }).strict(),
+        depsUnsupported: z.array(z.string().max(300)).max(50),
+        submissions: z
+          .array(
+            z
+              .object({
+                studentId: z.string().min(1).max(40),
+                fileCount: z.number().int().nonnegative(),
+                passedCount: z.number().int().nonnegative(),
+                totalCount: z.number().int().nonnegative(),
+                autoPoints: z.number(),
+                manualPoints: z.number().nullable(),
+                totalPoints: z.number(),
+                maxPoints: z.number(),
+                status: z.enum(['queued', 'grading', 'graded', 'blocked', 'error']),
+                submittedAtMs: z.number().int().nullable(),
+                gradedAtMs: z.number().int().nullable(),
+                blockedReason: z.string().max(500).nullable()
+              })
+              .strict()
+          )
+          .max(500),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'code-ide:submission-detail': {
+    request: z.object({ studentId: z.string().min(1).max(40) }).strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        studentId: z.string().max(40).optional(),
+        status: z.string().max(20).optional(),
+        manualPoints: z.number().nullable().optional(),
+        entries: z.array(VirtualEntrySchema).max(2000).optional(),
+        starterEntries: z.array(VirtualEntrySchema).max(2000).optional(),
+        draftEntries: z.array(VirtualEntrySchema).max(2000).optional(),
+        referenceEntries: z.array(VirtualEntrySchema).max(2000).optional(),
+        gradeResults: z
+          .array(
+            z
+              .object({
+                testId: z.string().max(64),
+                kind: z.string().max(32),
+                visibility: z.enum(['sample', 'hidden']),
+                points: z.number(),
+                earned: z.number(),
+                passed: z.boolean().nullable(),
+                note: z.string().max(500),
+                durationMs: z.number().int().nonnegative()
+              })
+              .strict()
+          )
+          .max(200)
+          .optional(),
+        blockedReason: z.string().max(500).nullable().optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'code-ide:manual-grade': {
+    request: z
+      .object({ studentId: z.string().min(1).max(40), points: z.number().nonnegative().max(10000).nullable() })
+      .strict(),
+    response: z.object({ ok: z.boolean(), reason: z.string().max(200).optional() }).strict()
+  },
+  'code-ide:regrade-all': {
+    request: z.void(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        students: z.number().int().nonnegative().optional(),
+        graded: z.number().int().nonnegative().optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'code-ide:workspace-state': {
+    request: z.void(),
+    response: z
+      .object({
+        rootPath: z.string().max(1_000).nullable(),
+        workspaceOk: z.boolean(),
+        workspaceReason: z.string().max(120).optional(),
+        queue: z.object({ active: z.number().int().nonnegative(), pending: z.number().int().nonnegative() }).strict()
+      })
+      .strict()
+  },
+  'code-ide:set-workspace-root': {
+    request: z.void(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        rootPath: z.string().max(1_000).optional(),
+        reason: z.string().max(120).optional()
+      })
+      .strict()
+  },
+  'code-ide:open-student-folder': {
+    request: z.object({ studentId: z.string().min(1).max(40) }).strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        rootPath: z.string().max(1_000).optional(),
+        reason: z.string().max(120).optional()
+      })
+      .strict()
+  },
+  'code-ide:export-csv': {
+    request: z.void(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        rootPath: z.string().max(1_000).optional(),
+        reason: z.string().max(120).optional()
+      })
+      .strict()
+  },
+  'code-ide:export-bundle': {
+    request: z.void(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        rootPath: z.string().max(1_000).optional(),
+        reason: z.string().max(120).optional()
+      })
+      .strict()
+  },
+  /* ---------- Code IDE — Inspector Run Tabs & Comments (Phase 10 ค้าง) ---------- */
+  'code-ide:run-preview': {
+    request: z.object({ studentId: z.string().min(1).max(40) }).strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        html: z.string().max(1_000_000).optional(),
+        js: z.string().max(2_000_000).optional(),
+        reason: z.string().max(300).optional()
+      })
+      .strict()
+  },
+  'code-ide:probe-api': {
+    request: z
+      .object({
+        studentId: z.string().min(1).max(40),
+        method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+        path: z.string().min(1).max(500),
+        bodyJson: z.string().max(200_000).optional()
+      })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        status: z.number().int().min(100).max(599).nullable().optional(),
+        body: z.string().max(8_000).optional(),
+        note: z.string().max(300).optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'code-ide:query-sql': {
+    request: z
+      .object({ studentId: z.string().min(1).max(40), sql: z.string().max(100_000) })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        columns: z.array(z.string().min(1).max(128)).max(64).optional(),
+        rows: z.array(z.array(z.union([z.string(), z.number(), z.null()])).max(64)).max(200).optional(),
+        note: z.string().max(500).optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'code-ide:comment-save': {
+    request: z
+      .object({
+        studentId: z.string().min(1).max(40),
+        path: z.string().min(1).max(500),
+        comment: z.string().max(5000)
+      })
+      .strict(),
+    response: z.object({ ok: z.boolean(), reason: z.string().max(200).optional() }).strict()
+  },
+  'code-ide:comment-list': {
+    request: z.object({ studentId: z.string().min(1).max(40) }).strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        comments: z
+          .array(
+            z
+              .object({
+                path: z.string().min(1).max(500),
+                comment: z.string().max(5000),
+                updatedAtMs: z.number().int().nonnegative()
+              })
+              .strict()
+          )
+          .max(2000)
+          .optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
   }
 }
 
@@ -1450,6 +1909,21 @@ export const IpcEventSchemas: {
   'exam:question': ClientQuestionPayloadSchema,
   'exam:recovery': StateRecoveryPayloadSchema,
   'exam:submit-rejected': SubmitRejectedPayloadSchema,
+  'exam:module-ack': z
+    .object({
+      moduleId: z.enum(['dynamic-form', 'code-ide', 'external-url']),
+      kind: z.enum(['action', 'autosave']),
+      ok: z.boolean(),
+      progressText: z.string().max(200).optional(),
+      reason: z.string().max(200).optional()
+    })
+    .strict(),
+  'exam:module-state': z
+    .object({
+      moduleId: z.enum(['dynamic-form', 'code-ide', 'external-url']),
+      stateJson: z.string().min(2).max(8_000_000)
+    })
+    .strict(),
   'exam:time-up': ExamTimeUpPayloadSchema,
   'exam:completed': ExamCompletedPayloadSchema,
   'exam:tick': z.object({ remainingSeconds: z.number().int().nonnegative() }).strict(),

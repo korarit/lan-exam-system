@@ -48,6 +48,7 @@ export interface ZtExamApi {
   submitAnswer(req: IpcInvokeMap['student:submit-answer']['req']): Promise<StudentSubmitResponse>
   autosaveDraft(req: IpcInvokeMap['student:autosave-draft']['req']): Promise<StudentSubmitResponse>
   navigate(req: { cursorIndex: number }): Promise<StudentSubmitResponse>
+  moduleSend(req: IpcInvokeMap['student:module-send']['req']): Promise<IpcInvokeMap['student:module-send']['res']>
   enterKiosk(): Promise<KioskEnterResponse>
   /* ---------- Guard (Phase 3a) ---------- */
   markInternalCopy(req: IpcInvokeMap['student:internal-copy']['req']): Promise<StudentSubmitResponse>
@@ -95,6 +96,22 @@ export interface ZtExamApi {
   saveZtresults(req: IpcInvokeMap['form:save-ztresults']['req']): Promise<IpcInvokeMap['form:save-ztresults']['res']>
   loadZtresults(req: IpcInvokeMap['form:load-ztresults']['req']): Promise<IpcInvokeMap['form:load-ztresults']['res']>
   openFormArtifact(req: IpcInvokeMap['form:artifact-open']['req']): Promise<IpcInvokeMap['form:artifact-open']['res']>
+  /* ---------- Code IDE — Backend / Grader / Export (Phase 10) ---------- */
+  attachCodeRoomPackage(req: IpcInvokeMap['code-ide:attach-room-package']['req']): Promise<IpcInvokeMap['code-ide:attach-room-package']['res']>
+  getCodeSubmissions(): Promise<IpcInvokeMap['code-ide:submissions-get']['res']>
+  getCodeSubmissionDetail(req: IpcInvokeMap['code-ide:submission-detail']['req']): Promise<IpcInvokeMap['code-ide:submission-detail']['res']>
+  codeManualGrade(req: IpcInvokeMap['code-ide:manual-grade']['req']): Promise<IpcInvokeMap['code-ide:manual-grade']['res']>
+  codeRegradeAll(): Promise<IpcInvokeMap['code-ide:regrade-all']['res']>
+  getCodeWorkspaceState(): Promise<IpcInvokeMap['code-ide:workspace-state']['res']>
+  setCodeWorkspaceRoot(): Promise<IpcInvokeMap['code-ide:set-workspace-root']['res']>
+  openCodeStudentFolder(req: IpcInvokeMap['code-ide:open-student-folder']['req']): Promise<IpcInvokeMap['code-ide:open-student-folder']['res']>
+  exportCodeCsv(): Promise<IpcInvokeMap['code-ide:export-csv']['res']>
+  exportCodeBundle(): Promise<IpcInvokeMap['code-ide:export-bundle']['res']>
+  runCodePreview(req: IpcInvokeMap['code-ide:run-preview']['req']): Promise<IpcInvokeMap['code-ide:run-preview']['res']>
+  probeCodeApi(req: IpcInvokeMap['code-ide:probe-api']['req']): Promise<IpcInvokeMap['code-ide:probe-api']['res']>
+  queryCodeSql(req: IpcInvokeMap['code-ide:query-sql']['req']): Promise<IpcInvokeMap['code-ide:query-sql']['res']>
+  saveCodeComment(req: IpcInvokeMap['code-ide:comment-save']['req']): Promise<IpcInvokeMap['code-ide:comment-save']['res']>
+  listCodeComments(req: IpcInvokeMap['code-ide:comment-list']['req']): Promise<IpcInvokeMap['code-ide:comment-list']['res']>
   /* ---------- Code IDE — Local Runtime (Phase 9: รันบนเครื่องตัวเอง) ---------- */
   runCliTest(req: IpcInvokeMap['code-ide:run-cli']['req']): Promise<IpcInvokeMap['code-ide:run-cli']['res']>
   runSqlTest(req: IpcInvokeMap['code-ide:run-sql']['req']): Promise<IpcInvokeMap['code-ide:run-sql']['res']>

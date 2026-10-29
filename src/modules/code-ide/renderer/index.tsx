@@ -1,6 +1,7 @@
 import type { RendererExamModuleUI, StudentWorkspaceProps } from '@shared/module-contract'
 import { CODE_IDE_METADATA } from '../shared/module-metadata'
 import CodeExamBuilder from './builder/CodeExamBuilder'
+import CodeSubmissionsTable from './responses/CodeSubmissionsTable'
 import StudentCodeIdeWorkspace from './student/StudentCodeIdeWorkspace'
 import { CodeExamPackageSchema } from '../shared/code-schema'
 
@@ -26,6 +27,7 @@ function CodeIdeStudentEntry(props: StudentWorkspaceProps): React.JSX.Element {
   return (
     <StudentCodeIdeWorkspace
       pkg={parsed.data}
+      {...(props.studentId !== undefined ? { studentId: props.studentId } : {})}
       onAutosave={(entries) => props.onAutosaveDraft({ entries })}
       onSubmit={(entries) => void props.onDispatchAction({ type: 'code-ide.submit', entries })}
     />
@@ -35,13 +37,6 @@ function CodeIdeStudentEntry(props: StudentWorkspaceProps): React.JSX.Element {
 export const CODE_IDE_RENDERER_UI: RendererExamModuleUI = {
   metadata: CODE_IDE_METADATA,
   HostBuilderView: () => <CodeExamBuilder />,
-  HostResponsesView: () => (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-8 text-center">
-      <h2 className="font-semibold">ผลตรวจ Code IDE (Phase 10)</h2>
-      <p className="mt-2 text-sm text-slate-500">
-        หน้าดูโค้ด / Diff / Code Playback + Export CSV มาพร้อม Hidden Grader ใน Phase 10
-      </p>
-    </div>
-  ),
+  HostResponsesView: () => <CodeSubmissionsTable />,
   StudentExamWorkspace: (props: StudentWorkspaceProps) => <CodeIdeStudentEntry {...props} />
 }
