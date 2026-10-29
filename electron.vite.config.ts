@@ -16,7 +16,7 @@ function devCspRelaxer(mode: string): Plugin {
       if (mode !== 'production') {
         return html.replace(
           /<meta\s+http-equiv="Content-Security-Policy"[^>]*>/i,
-          '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\' \'unsafe-inline\'; style-src \'self\' \'unsafe-inline\'; img-src \'self\' data: blob:; connect-src \'self\' ws: http://*:*; font-src \'self\' data:" />'
+          '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\' \'unsafe-inline\'; style-src \'self\' \'unsafe-inline\'; img-src \'self\' data: blob:; connect-src \'self\' ws: http://*:*; font-src \'self\' data:; worker-src \'self\' blob:" />'
         )
       }
       return html
@@ -65,7 +65,10 @@ export default defineConfig({
       alias: {
         '@renderer': resolve(__dirname, 'src/renderer/src'),
         '@shared': resolve(__dirname, 'src/shared'),
-        '@modules': resolve(__dirname, 'src/modules')
+        '@modules': resolve(__dirname, 'src/modules'),
+        // Monaco workers อยู่ลึกกว่า exports map ของ monaco-editor — alias ตรงเป็นไฟล์
+        // เพื่อให้ `?worker&inline` resolve ได้ (inline = ทำงานบน file:// ในแอปแพ็กแล้ว)
+        'monaco-editor/esm/': `${resolve(__dirname, 'node_modules/monaco-editor/esm/')}/`
       }
     }
   }

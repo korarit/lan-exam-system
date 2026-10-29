@@ -28,6 +28,7 @@
   "dependencies": {
     "better-sqlite3": "^13.0.3",
     "lucide-react": "^1.62.0",
+    "monaco-editor": "^0.57.0",
     "node-addon-api": "^8.9.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
