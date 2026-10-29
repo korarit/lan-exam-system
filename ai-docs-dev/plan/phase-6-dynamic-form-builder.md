@@ -168,14 +168,14 @@ src/modules/dynamic-form/
 
 ## 4. Checklist งานย่อย (Implementation Checklist)
 
-- [ ] **6.1.1** สร้าง Zod Schema สำหรับ Input ทั้ง 12 ชนิด, `FormValidationRuleSchema`, และ `AnswerKeySchema` ใน `src/shared/form-schema.ts`
-- [ ] **6.1.2** สร้างฟังก์ชัน `stripAnswerKeyForStudent` ที่ตัดเฉลยและเตรียมตัวเลือก/พารามิเตอร์ตาม Seed ของนักเรียนแต่ละคน
-- [ ] **6.2.1** สร้าง UI `FormBuilderWorkspace.tsx` และการ์ดแก้ไขคำถามสไตล์ Google Forms รองรับการเปลี่ยนชนิด Input ทั้ง 12 แบบ
-- [ ] **6.2.2** สร้างโหมด `AnswerKeyEditor.tsx` ในการ์ดคำถามแต่ละชนิดสำหรับตั้งเฉลย เกณฑ์คะแนน และโหมดการหักคะแนน
-- [ ] **6.2.3** สร้างระบบแนบรูปภาพแบบ Offline Content-Addressed Asset (ย่อขนาดอัตโนมัติและฝังในชุดฟอร์ม)
-- [ ] **6.2.4** สร้างโหมด `StudentFormPreviewModal.tsx` ให้ครูทดลองทำข้อสอบและทดสอบการตรวจเฉลยได้ทันทีขณะสร้างฟอร์ม
-- [ ] **6.3.1** สร้างโมดูล `form-file-io.ts` สำหรับ Save และ Load ไฟล์ `.ztform` (รองรับการเข้ารหัสด้วยรหัสผ่าน `PBKDF2 + AES-256-GCM`)
-- [ ] **6.3.2** สร้างตัวนำเข้าคำถามจากไฟล์ CSV / Excel Template เพื่อให้ครูที่มีโจทย์ในตารางนำเข้าเป็นฟอร์มได้รวดเร็ว
+- [x] **6.1.1** สร้าง Zod Schema สำหรับ Input ทั้ง 12 ชนิด, `FormValidationRuleSchema`, และ `AnswerKeySchema` ใน `src/modules/dynamic-form/shared/form-schema.ts`
+- [x] **6.1.2** สร้างฟังก์ชัน `stripAnswerKeyForStudent` ที่ตัดเฉลยและเตรียมตัวเลือก/พารามิเตอร์ตาม Seed ของนักเรียนแต่ละคน (`src/modules/dynamic-form/shared/student-view.ts`)
+- [x] **6.2.1** สร้าง UI `FormBuilderWorkspace.tsx` และการ์ดแก้ไขคำถามสไตล์ Google Forms รองรับการเปลี่ยนชนิด Input ทั้ง 12 แบบ (`src/modules/dynamic-form/renderer/builder/` เข้าถึงผ่านแท็บ Dynamic Form Builder ฝั่งครู)
+- [x] **6.2.2** สร้างโหมด `AnswerKeyEditor.tsx` ในการ์ดคำถามแต่ละชนิดสำหรับตั้งเฉลย เกณฑ์คะแนน และโหมดการหักคะแนน
+- [x] **6.2.3** สร้างระบบแนบรูปภาพแบบ Offline Content-Addressed Asset (ย่อขนาดอัตโนมัติด้วย canvas และฝังในชุดฟอร์มด้วย sha256 → `builder-assets.ts`)
+- [x] **6.2.4** สร้างโหมด `StudentFormPreviewModal.tsx` ให้ครูทดลองทำข้อสอบและทดสอบการตรวจเฉลยได้ทันทีขณะสร้างฟอร์ม (ใช้ `form-grading.ts` คิดคะแนนอัตโนมัติในพรีวิว)
+- [x] **6.3.1** สร้างโมดูล `main/form-file-io.ts` สำหรับ Save และ Load ไฟล์ `.ztform` (PBKDF2-HMAC-SHA256 100,000 รอบ + AES-256-GCM + HMAC ตรวจ integrity เชื่อมผ่าน IPC `form:save-ztform` / `form:load-ztform` / `host:list-saved-forms` และตาราง SQLite `saved_forms`)
+- [x] **6.3.2** สร้างตัวนำเข้าคำถามจากไฟล์ CSV / JSON Template (`shared/csv-import.ts` — ครูเลือกไฟล์ผ่านหน้า Builder)
 
 ---
 
