@@ -115,14 +115,14 @@ flowchart LR
 
 ## 3. Checklist งานย่อย (Implementation Checklist)
 
-- [ ] **7.1.1** สร้าง `FormValidator` ใน Electron Main ตรวจสอบคำตอบทุกชนิดเทียบกับ `FormValidationRuleSchema`
-- [ ] **7.1.2** สร้าง `FileVault` สำหรับรับและเข้ารหัสไฟล์อัปโหลดของข้อสอบชนิด `file_upload` ผ่านท่อ TLS
-- [ ] **7.2.1** สร้าง `SafeMathEvaluator` (ไม่ใช้ `eval`) สำหรับคำนวณสูตรเฉลยของข้อสอบชนิด `numeric_param`
-- [ ] **7.2.2** สร้าง `AutoGrader` ตรวจให้คะแนนอัตโนมัติครบทุกชนิด Input (`exact_choice`, `multi_choice`, `short_text_match`, `numeric_formula`, `grid_match`)
-- [ ] **7.2.3** สร้างฟีเจอร์ `regradeAllSubmissions(roomId, updatedFormDefinition)` สำหรับคำนวณคะแนนใหม่ทั้งห้องเมื่อครูแก้เฉลย
-- [ ] **7.3.1** สร้างหน้าจอ `ResponsesDashboard.tsx` แบ่ง 3 แท็บ: `Summary`, `By Question (Fast Manual Grading)`, และ `Individual Student`
-- [ ] **7.4.1** สร้าง `CsvResponseExporter` ที่จัดเรียงคำตอบที่เคยถูกสลับลำดับรายคน กลับมาเรียงตามคอลัมน์ข้อมาตรฐาน `Q1..QN` พร้อมใส่ UTF-8 BOM
-- [ ] **7.4.2** สร้างระบบ Save / Open ไฟล์ `.ztresults` เพื่อให้ครูนำผลสอบกลับไปตรวจต่อหรือเปิดดูย้อนหลังได้
+- [x] **7.1.1** สร้าง `FormValidator` ใน Electron Main ตรวจสอบคำตอบทุกชนิดเทียบกับ `FormValidationRuleSchema`
+- [x] **7.1.2** สร้าง `FileVault` สำหรับรับและเข้ารหัสไฟล์อัปโหลดของข้อสอบชนิด `file_upload` ผ่านท่อ TLS
+- [x] **7.2.1** สร้าง `SafeMathEvaluator` (ไม่ใช้ `eval`) สำหรับคำนวณสูตรเฉลยของข้อสอบชนิด `numeric_param`
+- [x] **7.2.2** สร้าง `AutoGrader` ตรวจให้คะแนนอัตโนมัติครบทุกชนิด Input (`exact_choice`, `multi_choice`, `short_text_match`, `numeric_formula`, `grid_match`)
+- [x] **7.2.3** สร้างฟีเจอร์ `regradeAllSubmissions(roomId, updatedFormDefinition)` สำหรับคำนวณคะแนนใหม่ทั้งห้องเมื่อครูแก้เฉลย
+- [x] **7.3.1** สร้างหน้าจอ `ResponsesDashboard.tsx` แบ่ง 3 แท็บ: `Summary`, `By Question (Fast Manual Grading)`, และ `Individual Student`
+- [x] **7.4.1** สร้าง `CsvResponseExporter` ที่จัดเรียงคำตอบที่เคยถูกสลับลำดับรายคน กลับมาเรียงตามคอลัมน์ข้อมาตรฐาน `Q1..QN` พร้อมใส่ UTF-8 BOM
+- [x] **7.4.2** สร้างระบบ Save / Open ไฟล์ `.ztresults` เพื่อให้ครูนำผลสอบกลับไปตรวจต่อหรือเปิดดูย้อนหลังได้
 
 ---
 
