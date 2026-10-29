@@ -31,5 +31,10 @@
     "src/shared/**/*.ts",
     "src/modules/**/*",
     "src/preload/index.d.ts"
+  ],
+  "exclude": [
+    "src/modules/dynamic-form/main/**",
+    "src/modules/register-modules.ts",
+    "src/modules/**/*.test.ts"
   ]
 }

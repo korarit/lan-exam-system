@@ -153,5 +153,62 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_saved_forms_updated
         ON saved_forms(updated_at_ms DESC);
     `
+  },
+  {
+    /** Phase 7: Backend ฟอร์ม — คำตอบ/คะแนนรายข้อ (เข้ารหัส), ไฟล์แนบใน vault, ประวัติ re-grade */
+    version: 6,
+    sql: `
+      -- คำตอบรายข้อของโมดูล dynamic-form (ciphertext = { value, artifacts, journey })
+      -- สถานะการตรวจ + คะแนนเก็บเพื่อให้ query/export ได้โดยไม่ต้องถอดรหัส
+      CREATE TABLE IF NOT EXISTS form_responses (
+        session_id     TEXT NOT NULL REFERENCES exam_sessions(id),
+        student_id     TEXT NOT NULL,
+        item_id        TEXT NOT NULL,
+        status         TEXT NOT NULL CHECK (status IN ('auto-graded','needs-manual','manual-graded','invalid','ungraded')),
+        earned_points  REAL NOT NULL DEFAULT 0,
+        manual_points  REAL,
+        violations_json TEXT NOT NULL DEFAULT '[]',
+        ciphertext     TEXT NOT NULL,
+        iv             TEXT NOT NULL,
+        tag            TEXT NOT NULL,
+        hmac           TEXT NOT NULL,
+        time_spent_ms  INTEGER NOT NULL DEFAULT 0,
+        submitted_at_ms INTEGER,
+        revision       INTEGER NOT NULL DEFAULT 0,
+        updated_at_ms  INTEGER NOT NULL,
+        PRIMARY KEY (session_id, student_id, item_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_form_responses_session
+        ON form_responses(session_id, student_id);
+
+      -- Local Encrypted File Vault (ข้อ file_upload): ไฟล์ถูกเข้ารหัส AES-256-GCM
+      -- เก็บที่ userData/exam-vault/<roomId>/<studentId>/<itemId>/<artifactId>_<safe>.enc
+      CREATE TABLE IF NOT EXISTS uploaded_artifacts (
+        session_id      TEXT NOT NULL REFERENCES exam_sessions(id),
+        student_id      TEXT NOT NULL,
+        item_id         TEXT NOT NULL,
+        artifact_id     TEXT NOT NULL,
+        file_name       TEXT NOT NULL,
+        mime_type       TEXT NOT NULL DEFAULT 'application/octet-stream',
+        size_bytes      INTEGER NOT NULL,
+        sha256          TEXT NOT NULL,
+        file_path       TEXT NOT NULL,
+        iv              TEXT NOT NULL,
+        tag             TEXT NOT NULL,
+        row_hmac        TEXT NOT NULL,
+        received_at_ms  INTEGER NOT NULL,
+        PRIMARY KEY (session_id, student_id, item_id, artifact_id)
+      );
+
+      -- ประวัติ "คำนวณคะแนนใหม่ทั้งห้อง" (Re-grade All) — ครูแก้เฉลยแล้วต้องมีร่องรอย
+      CREATE TABLE IF NOT EXISTS form_regrade_history (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id   TEXT NOT NULL REFERENCES exam_sessions(id),
+        run_at_ms    INTEGER NOT NULL,
+        trigger_source TEXT NOT NULL DEFAULT 'teacher-ui',
+        form_sha256  TEXT NOT NULL,
+        summary_json TEXT NOT NULL DEFAULT '{}'
+      );
+    `
   }
 ]
