@@ -155,3 +155,62 @@ describe('NetworkInspector.scanOnce — mode-aware socket check', () => {
     expect(produced.some((e) => e.code === 'DIRECT_SOCKET_PROXY_BYPASS')).toBe(true)
   })
 })
+
+describe('NetworkInspector + code-ide sandbox (Phase 9.5)', () => {
+  function makeSandboxInspector(
+    sockets: Array<{ pid: number; processName: string; peerAddress: string; peerPort: number; state: string }>,
+    authorizedPids: number[]
+  ): { inspector: NetworkInspector; events: DetectionEvent[] } {
+    const events: DetectionEvent[] = []
+    const inspector = new NetworkInspector({
+      getPolicy: () => ({ ...policy, examMode: 'closed' as const }),
+      getHostIp: () => null,
+      getLocalProxyPort: () => 0,
+      isAuthorizedPid: (pid) => authorizedPids.includes(pid),
+      emit: (e) => events.push(e),
+      listDnsCache: async () => [],
+      listSockets: async () =>
+        sockets.map((s) => ({
+          ...s,
+          protocol: 'TCP',
+          localAddress: '192.168.1.10',
+          localPort: 51_000
+        })),
+      now: () => 1_000_000
+    })
+    inspector.start()
+    return { inspector, events }
+  }
+
+  it('โปรเซสลูกของ sandbox ยิงเน็ตออกนอก → STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL (ไม่ใช่รหัส generic)', async () => {
+    const { inspector, events } = makeSandboxInspector(
+      [{ pid: 777, processName: 'python.exe', peerAddress: '104.18.7.9', peerPort: 443, state: 'ESTABLISHED' }],
+      [777]
+    )
+    const produced = await inspector.scanOnce()
+    expect(produced).toHaveLength(1)
+    expect(produced[0]!.code).toBe('STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL')
+    expect(produced[0]!.severity).toBe('critical')
+    expect(produced[0]!.detail.pid).toBe('777')
+    expect(events).toHaveLength(1)
+  })
+
+  it('โปรเซสอื่น (ไม่ใช่ลูก sandbox) ยังฟ้องรหัสเดิม DIRECT_SOCKET_PROXY_BYPASS', async () => {
+    const { inspector } = makeSandboxInspector(
+      [{ pid: 10, processName: 'curl.exe', peerAddress: '104.18.7.9', peerPort: 443, state: 'ESTABLISHED' }],
+      [777]
+    )
+    const produced = await inspector.scanOnce()
+    expect(produced.some((e) => e.code === 'DIRECT_SOCKET_PROXY_BYPASS')).toBe(true)
+    expect(produced.some((e) => e.code === 'STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL')).toBe(false)
+  })
+
+  it('โปรเซสลูกของ sandbox ที่คุยแค่ loopback → ไม่ฟ้อง', async () => {
+    const { inspector } = makeSandboxInspector(
+      [{ pid: 777, processName: 'node.exe', peerAddress: '127.0.0.1', peerPort: 49152, state: 'ESTABLISHED' }],
+      [777]
+    )
+    const produced = await inspector.scanOnce()
+    expect(produced).toHaveLength(0)
+  })
+})

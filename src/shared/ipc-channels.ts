@@ -39,6 +39,12 @@ export type { RingSegmentMeta } from './screen-protocol'
 import type { FormResponsesSnapshot } from '@modules/dynamic-form/shared/form-responses-view'
 export type { FormResponsesSnapshot } from '@modules/dynamic-form/shared/form-responses-view'
 import {
+  VirtualEntrySchema,
+  CliTestCaseSchema,
+  SqlTestCaseSchema,
+  SupportedCodeLanguageSchema
+} from '@modules/code-ide/shared/code-schema'
+import {
   TriageOverviewEventSchema,
   StudentEvidenceResponseSchema,
   type TriageOverviewEvent,
@@ -501,6 +507,106 @@ export interface FormLoadZtresultsResponse {
   message?: string | undefined
 }
 
+/* ---------- Code IDE — Local Runtime (Phase 9: รันบนเครื่องตัวเองผ่าน Main) ---------- */
+
+/** รัน 1 CLI test ด้วยโค้ดปัจจุบันของนักเรียน (entries สดจาก IDE) */
+export interface CodeIdeRunCliRequest {
+  language: string
+  entryPointPath: string
+  entries: Array<{
+    path: string
+    kind: 'file' | 'folder'
+    content?: string | undefined
+    encoding?: 'utf8' | 'base64' | undefined
+    readOnly?: boolean | undefined
+    allowStudentCreateInside?: boolean | undefined
+    hiddenFromStudent?: boolean | undefined
+  }>
+  test: {
+    testId: string
+    kind: 'stdio' | 'unit-harness'
+    title: string
+    stdin?: string | undefined
+    expectedStdout?: string | undefined
+    inputs?: Array<{ name: string; type: 'string' | 'int' | 'float' | 'bool'; value: string }> | undefined
+    harnessTarget?: string | undefined
+    visibility: 'sample' | 'hidden'
+    points: number
+    timeoutMs?: number | undefined
+  }
+}
+export interface CodeIdeRunCliResponse {
+  testId: string
+  passed: boolean | null
+  actualStdout: string
+  stderr: string
+  exitCode: number | null
+  timedOut: boolean
+  blockedReason?: string | undefined
+  note: string
+}
+/** รัน 1 SQL test ด้วย query ปัจจุบันของนักเรียนบน SQLite ephemeral */
+export interface CodeIdeRunSqlRequest {
+  seedSql: string
+  studentSql: string
+  test: {
+    testId: string
+    kind: 'sql-query'
+    title: string
+    setupSqlOverride?: string | undefined
+    verificationQuery?: string | undefined
+    expectedColumns: string[]
+    expectedRows: Array<Array<string | number | null>>
+    checkColumnOrder?: boolean | undefined
+    checkRowOrder?: boolean | undefined
+    visibility: 'sample' | 'hidden'
+    points: number
+    timeoutMs?: number | undefined
+  }
+}
+export interface CodeIdeRunSqlResponse {
+  testId: string
+  passed: boolean | null
+  actualColumns: string[]
+  actualRows: Array<Array<string | number | null>>
+  note: string
+}
+/** เช็คว่า runtime ของภาษาที่ใช้มีในเครื่องไหม (ไม่ดาวน์โหลดแยก — ให้ผู้ใช้ติดตั้งเอง) */
+export interface CodeIdeCheckRuntimesRequest {
+  languages: string[]
+}
+export interface CodeIdeRuntimeStatus {
+  name: string
+  found: boolean
+  version?: string | undefined
+  path?: string | undefined
+  /** โฟลเดอร์ SDK ที่ผู้ใช้ Browse เลือกเอง (ถ้ามี) */
+  customPath?: string | undefined
+  hint: string
+}
+export interface CodeIdeCheckRuntimesResponse {
+  runtimes: CodeIdeRuntimeStatus[]
+}
+/** เปิด dialog เลือกโฟลเดอร์ SDK ที่ติดตั้งเอง */
+export interface CodeIdeBrowseSdkPathRequest {
+  title?: string | undefined
+}
+export interface CodeIdeBrowseSdkPathResponse {
+  ok: boolean
+  dirPath?: string | undefined
+  reason?: string | undefined
+}
+/** ลงทะเบียนโฟลเดอร์ SDK + ตรวจว่ามี binary ของ runtime นั้นจริง */
+export interface CodeIdeAddSdkPathRequest {
+  runtime: string
+  dirPath: string
+}
+export interface CodeIdeAddSdkPathResponse {
+  ok: boolean
+  version?: string | undefined
+  reason?: string | undefined
+}
+
 /* ---------- Channel maps (single source of truth for IPC surface) ---------- */
 
 /* ---------- Zod schemas สำหรับ payload ของ network channels ---------- */
@@ -647,6 +753,12 @@ export interface IpcInvokeMap {
   'form:save-ztresults': { req: FormSaveResultsRequest; res: FormExportFileResponse }
   'form:load-ztresults': { req: LoadZtformRequest; res: FormLoadZtresultsResponse }
   'form:artifact-open': { req: { studentId: string; itemId: string; artifactId: string }; res: FormExportFileResponse }
+  /* ---------- Code IDE — Local Runtime (Phase 9) ---------- */
+  'code-ide:run-cli': { req: CodeIdeRunCliRequest; res: CodeIdeRunCliResponse }
+  'code-ide:run-sql': { req: CodeIdeRunSqlRequest; res: CodeIdeRunSqlResponse }
+  'code-ide:check-runtimes': { req: CodeIdeCheckRuntimesRequest; res: CodeIdeCheckRuntimesResponse }
+  'code-ide:browse-sdk-path': { req: CodeIdeBrowseSdkPathRequest; res: CodeIdeBrowseSdkPathResponse }
+  'code-ide:add-sdk-path': { req: CodeIdeAddSdkPathRequest; res: CodeIdeAddSdkPathResponse }
 }
 
 /** Main -> Renderer (webContents.send) push event channels */
@@ -1194,6 +1306,96 @@ export const IpcInvokeSchemas: {
         ok: z.boolean(),
         filePath: z.string().max(1_000).optional(),
         reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  /* ---------- Code IDE — Local Runtime (Phase 9) ---------- */
+  'code-ide:run-cli': {
+    request: z
+      .object({
+        language: SupportedCodeLanguageSchema,
+        entryPointPath: z.string().min(1).max(500),
+        entries: z.array(VirtualEntrySchema).min(1).max(2000),
+        test: CliTestCaseSchema
+      })
+      .strict(),
+    response: z
+      .object({
+        testId: z.string().min(1).max(64),
+        passed: z.boolean().nullable(),
+        actualStdout: z.string().max(25_000),
+        stderr: z.string().max(6_000),
+        exitCode: z.number().int().nullable(),
+        timedOut: z.boolean(),
+        blockedReason: z.string().max(500).optional(),
+        note: z.string().max(500)
+      })
+      .strict()
+  },
+  'code-ide:run-sql': {
+    request: z
+      .object({
+        seedSql: z.string().max(500_000),
+        studentSql: z.string().max(500_000),
+        test: SqlTestCaseSchema
+      })
+      .strict(),
+    response: z
+      .object({
+        testId: z.string().min(1).max(64),
+        passed: z.boolean().nullable(),
+        actualColumns: z.array(z.string().min(1).max(128)).max(64),
+        actualRows: z
+          .array(z.array(z.union([z.string(), z.number(), z.null()])).max(64))
+          .max(200),
+        note: z.string().max(500)
+      })
+      .strict()
+  },
+  'code-ide:check-runtimes': {
+    request: z
+      .object({ languages: z.array(z.string().min(1).max(32)).max(32) })
+      .strict(),
+    response: z
+      .object({
+        runtimes: z
+          .array(
+            z
+              .object({
+                name: z.string().min(1).max(32),
+                found: z.boolean(),
+                version: z.string().max(200).optional(),
+                path: z.string().max(500).optional(),
+                customPath: z.string().max(500).optional(),
+                hint: z.string().max(300)
+              })
+              .strict()
+          )
+          .max(32)
+      })
+      .strict()
+  },
+  'code-ide:browse-sdk-path': {
+    request: z
+      .object({ title: z.string().min(1).max(120).optional() })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        dirPath: z.string().max(1_000).optional(),
+        reason: z.string().max(120).optional()
+      })
+      .strict()
+  },
+  'code-ide:add-sdk-path': {
+    request: z
+      .object({ runtime: z.string().min(1).max(32), dirPath: z.string().min(1).max(1_000) })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        version: z.string().max(200).optional(),
+        reason: z.string().max(300).optional()
       })
       .strict()
   }

@@ -142,6 +142,8 @@ export const DetectionEventCatalog = {
   ATTESTATION_VERIFICATION_FAILED: { category: 'app-tamper', severity: 'critical', score: 80 },
   BLOCKED_SYSTEM_SHORTCUT: { category: 'kiosk-escape', severity: 'warning', score: 15 },
   /* ---------- Phase 5: Mode 2 docs viewer & Mode 3 external tools ---------- */
+  /* ---------- Phase 9: code-ide sandbox (โปรเซสลูกที่อนุญาตยิงออกนอก loopback) ---------- */
+  STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL: { category: 'network-tunnel', severity: 'critical', score: 60 },
   UNAUTHORIZED_DOCS_URL_ATTEMPT: { category: 'network-tunnel', severity: 'critical', score: 40 },
   PROXY_DOMAIN_VIOLATION: { category: 'network-tunnel', severity: 'critical', score: 40 },
   DIRECT_IP_PROXY_ATTEMPT: { category: 'network-tunnel', severity: 'critical', score: 40 },

@@ -220,6 +220,8 @@ export interface ProcessInspectorOptions {
   detectorId?: string
   getPolicy: () => DetectionPolicyBody | null
   emit: (event: DetectionEvent) => void
+  /** Phase 9.5: pid ลูกที่ code-ide sandbox สั่งรันเอง — ข้ามการฟ้องทั้งหมด (รู้ pid แน่ชัดจึงปลอดภัย) */
+  isAuthorizedPid?: (pid: number) => boolean
   listProcesses?: () => Promise<ProcessSnapshot[]>
   listListeningPorts?: () => Promise<ListeningPort[]>
   startProcessTrace?: (onProcess: (p: EphemeralProcess) => void) => (() => void) | null
@@ -316,6 +318,9 @@ export class ProcessInspector {
     for (const snapshot of processes) {
       // ไม่ตรวจโปรเซสของตัวเอง
       if (snapshot.pid === process.pid) continue
+      // Phase 9.5: ไม่ฟ้องโปรเซสลูกที่ code-ide sandbox สั่งรันเอง (กัน false positive
+      // เช่น SUSPICIOUS_COMPUTE_SPIKE ใส่ python.exe ที่กำลังรันโค้ดนักเรียน)
+      if (this.opts.isAuthorizedPid?.(snapshot.pid) === true) continue
       const metadata =
         snapshot.exePath && process.platform === 'win32'
           ? await this.metadataCache.get(snapshot.exePath, statFile(snapshot.exePath))
@@ -381,6 +386,7 @@ export class ProcessInspector {
     const policy = this.opts.getPolicy()
     if (!policy) return
     if (p.pid === process.pid) return
+    if (this.opts.isAuthorizedPid?.(p.pid) === true) return
     const matches = matchProcessRules({ exeName: p.name, commandLine: p.name }, null, policy.rules)
     for (const { rule } of matches) {
       this.opts.emit(

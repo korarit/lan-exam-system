@@ -19,6 +19,7 @@ import { registerAttestationHandlers } from './ipc/attestation-handlers'
 import { registerModeHandlers } from './ipc/mode-handlers'
 import { registerDynamicFormHandlers } from './ipc/dynamic-form-handlers'
 import { registerFormResponseHandlers } from './ipc/form-response-handlers'
+import { registerCodeIdeHandlers } from './ipc/code-ide-handlers'
 import type { FormHostService } from '@modules/dynamic-form/main/form-host-service'
 import { FormHostService as FormHostServiceImpl } from '@modules/dynamic-form/main/form-host-service'
 import '@modules/register-modules'
@@ -698,6 +699,8 @@ void app.whenReady().then(() => {
   registerDynamicFormHandlers(router, state, {
     getDatabase: ensureHostDatabase
   })
+  // Phase 9: โมดูล code-ide — รัน CLI/SQL บนเครื่องตัวเอง + เช็ค runtime
+  registerCodeIdeHandlers(router)
   // Phase 7: Backend ฟอร์ม (validator/vault/auto-grader/regrade/export)
   registerFormResponseHandlers(router, state, {
     getDatabase: ensureHostDatabase,

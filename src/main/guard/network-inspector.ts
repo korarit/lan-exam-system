@@ -160,6 +160,8 @@ export interface NetworkInspectorOptions {
   getHostIp: () => string | null
   /** พอร์ต local proxy (Mode 3) — 0 = ไม่มี */
   getLocalProxyPort: () => number
+  /** Phase 9.5: pid ลูกที่ code-ide sandbox สั่งรันเอง — loopback อนุญาต, ออกนอกฟ้องรหัสเฉพาะ */
+  isAuthorizedPid?: (pid: number) => boolean
   emit: (event: DetectionEvent) => void
   listDnsCache?: () => Promise<string[]>
   listSockets?: () => Promise<SocketInfo[]>
@@ -249,6 +251,19 @@ export class NetworkInspector {
         if (isLoopback(socket.peerAddress)) continue
         if (hostIp && socket.peerAddress === hostIp) continue
         if (socket.localPort === proxyPort || socket.peerPort === proxyPort) continue
+        // Phase 9.5: โปรเซสลูกของ code-ide sandbox (เซิร์ฟเวอร์ backend / CLI run)
+        // หลุดออกนอก loopback = ฟ้องรหัสเฉพาะ STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL ทันที
+        if (this.opts.isAuthorizedPid?.(socket.pid) === true) {
+          events.push(
+            makeDetectionEvent('STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL', this.detectorId, {
+              pid: String(socket.pid),
+              processName: socket.processName,
+              peer: `${socket.peerAddress}:${socket.peerPort}`,
+              origin: 'student-code-sandbox'
+            })
+          )
+          continue
+        }
         if (policy.examMode === 'closed') {
           events.push(
             makeDetectionEvent('DIRECT_SOCKET_PROXY_BYPASS', this.detectorId, {

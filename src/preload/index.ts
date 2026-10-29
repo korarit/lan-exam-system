@@ -102,6 +102,13 @@ const api: ZtExamApi = {
   loadZtresults: (req) => call('form:load-ztresults', req),
   openFormArtifact: (req) => call('form:artifact-open', req),
 
+  /* ---------- Code IDE — Local Runtime (Phase 9) ---------- */
+  runCliTest: (req) => call('code-ide:run-cli', req),
+  runSqlTest: (req) => call('code-ide:run-sql', req),
+  checkRuntimes: (req) => call('code-ide:check-runtimes', req),
+  browseSdkPath: (req) => call('code-ide:browse-sdk-path', req),
+  addSdkPath: (req) => call('code-ide:add-sdk-path', req),
+
   onRoleChanged: (listener) => subscribe('app:role-changed', listener),
   onEvent: (channel, listener) => subscribe(channel, listener)
 }

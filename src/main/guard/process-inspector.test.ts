@@ -150,4 +150,23 @@ describe('ProcessInspector.scanOnce — ephemeral & sweep', () => {
     expect(produced).toEqual([])
     expect(events).toEqual([])
   })
+
+  it('Phase 9.5: pid ลูกของ code-ide sandbox ถูกข้ามทั้งหมด (กัน false positive ใส่โค้ดนักเรียน)', async () => {
+    const events: DetectionEvent[] = []
+    const inspector = new ProcessInspector({
+      getPolicy: () => policy,
+      isAuthorizedPid: (pid) => pid === 4242,
+      emit: (e) => events.push(e),
+      listProcesses: async () => [
+        // ตัวเดียวกับเคสแรก แต่เป็นลูก sandbox → ต้องเงียบ
+        { pid: 4242, exeName: 'ollama.exe', exePath: '', commandLine: 'ollama serve', memBytes: 2 * 1024 * 1024 * 1024, cpuPercent: 90 }
+      ],
+      listListeningPorts: async () => [],
+      startProcessTrace: () => () => {},
+      now: () => 1_000_000
+    })
+    const produced = await inspector.scanOnce()
+    expect(produced).toEqual([])
+    expect(events).toEqual([])
+  })
 })

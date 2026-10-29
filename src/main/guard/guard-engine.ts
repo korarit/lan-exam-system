@@ -15,6 +15,7 @@ import { NetworkInspector } from './network-inspector'
 import { InputClipboardGuard } from './input-clipboard-guard'
 import { SelfIntegrityGuard } from './self-integrity-guard'
 import { HardwareVmGuard } from './hardware-vm-guard'
+import { authorizedChildProcesses } from '@modules/code-ide/main/authorized-process-registry'
 
 /* ============================================================
  * GuardEngine — ตัวคุมการสอบฝั่งเครื่องนักเรียน (Phase 3a)
@@ -55,6 +56,8 @@ export class GuardEngine {
     const emit = (event: DetectionEvent): void => this.enqueueEvent(event)
     this.processInspector = new ProcessInspector({
       getPolicy: () => this.policyBody,
+      // Phase 9.5: ข้ามการฟ้องโปรเซสลูกที่ code-ide sandbox สั่งรันเอง
+      isAuthorizedPid: (pid) => authorizedChildProcesses.isAuthorized(pid),
       emit
     })
     this.overlayInspector = new OverlayInspector({
@@ -65,6 +68,8 @@ export class GuardEngine {
       getPolicy: () => this.policyBody,
       getHostIp: opts.getHostIp,
       getLocalProxyPort: opts.getLocalProxyPort,
+      // Phase 9.5: loopback-only สำหรับโปรเซสลูกของ code-ide sandbox — ออกนอกฟ้องรหัสเฉพาะ
+      isAuthorizedPid: (pid) => authorizedChildProcesses.isAuthorized(pid),
       emit
     })
     this.inputClipboardGuard = new InputClipboardGuard({

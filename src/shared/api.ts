@@ -95,6 +95,12 @@ export interface ZtExamApi {
   saveZtresults(req: IpcInvokeMap['form:save-ztresults']['req']): Promise<IpcInvokeMap['form:save-ztresults']['res']>
   loadZtresults(req: IpcInvokeMap['form:load-ztresults']['req']): Promise<IpcInvokeMap['form:load-ztresults']['res']>
   openFormArtifact(req: IpcInvokeMap['form:artifact-open']['req']): Promise<IpcInvokeMap['form:artifact-open']['res']>
+  /* ---------- Code IDE — Local Runtime (Phase 9: รันบนเครื่องตัวเอง) ---------- */
+  runCliTest(req: IpcInvokeMap['code-ide:run-cli']['req']): Promise<IpcInvokeMap['code-ide:run-cli']['res']>
+  runSqlTest(req: IpcInvokeMap['code-ide:run-sql']['req']): Promise<IpcInvokeMap['code-ide:run-sql']['res']>
+  checkRuntimes(req: IpcInvokeMap['code-ide:check-runtimes']['req']): Promise<IpcInvokeMap['code-ide:check-runtimes']['res']>
+  browseSdkPath(req: IpcInvokeMap['code-ide:browse-sdk-path']['req']): Promise<IpcInvokeMap['code-ide:browse-sdk-path']['res']>
+  addSdkPath(req: IpcInvokeMap['code-ide:add-sdk-path']['req']): Promise<IpcInvokeMap['code-ide:add-sdk-path']['res']>
   /* ---------- Event subscribe (คืน unsubscribe() กัน memory leak ใน React) ---------- */
   onRoleChanged(listener: (event: RoleChangedEvent) => void): Unsubscribe
   onEvent<C extends IpcEventChannel>(
