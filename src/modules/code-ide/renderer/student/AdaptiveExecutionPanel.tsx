@@ -1,4 +1,4 @@
-import type { CliTestCase, CodeTestCase, DatabaseConfig, DomTestCase, HttpApiTestCase, ProjectCategory, SqlTestCase, VirtualEntry } from '../../shared/code-schema'
+import type { CliTestCase, CodeTestCase, DatabaseConfig, DomTestCase, HttpApiTestCase, ProjectCategory, SqlTestCase, SupportedCodeLanguage, VirtualEntry } from '../../shared/code-schema'
 import CliTestRunnerPanel from './panels/CliTestRunnerPanel'
 import WebReactPreviewPanel from './panels/WebReactPreviewPanel'
 import BackendApiTesterPanel from './panels/BackendApiTesterPanel'
@@ -8,17 +8,21 @@ import DatabaseWorkbenchPanel from './panels/DatabaseWorkbenchPanel'
 
 interface Props {
   category: ProjectCategory
-  language: string
+  language: SupportedCodeLanguage
   entries: readonly VirtualEntry[]
+  entryPointPath: string
   sampleTests: CodeTestCase[]
   database: DatabaseConfig
   seedSql: string
   /** ตัวนับจาก Ctrl+Enter — CLI/DB panels รันทันทีเมื่อค่าเปลี่ยน */
   runSignal?: number | undefined
+  /** 'teacher' ดู schema ได้ตลอด / 'student' ดูได้เฉพาะเมื่อครูเปิด exposeDbViewerToStudent */
+  viewerRole?: 'teacher' | 'student'
 }
 
 export default function AdaptiveExecutionPanel(props: Props): React.JSX.Element {
   const tabs = executionTabsFor(props.category)
+  const viewerRole = props.viewerRole ?? 'student'
 
   if (props.category === 'fullstack') {
     const cli = props.sampleTests.filter((t): t is CliTestCase => t.kind === 'stdio' || t.kind === 'unit-harness')
@@ -27,16 +31,16 @@ export default function AdaptiveExecutionPanel(props: Props): React.JSX.Element 
     const sql = props.sampleTests.filter((t): t is SqlTestCase => t.kind === 'sql-query')
     return (
       <div className="divide-y divide-slate-800">
-        <section><SectionLabel text="CLI" /><CliTestRunnerPanel tests={cli} runSignal={props.runSignal} /></section>
+        <section><SectionLabel text="CLI" /><CliTestRunnerPanel tests={cli} entries={props.entries} language={props.language} entryPointPath={props.entryPointPath} runSignal={props.runSignal} /></section>
         <section><SectionLabel text="Web Preview" /><WebReactPreviewPanel entries={props.entries} language={props.language} tests={dom} /></section>
         <section><SectionLabel text="API" /><BackendApiTesterPanel tests={api} /></section>
-        <section><SectionLabel text="Database" /><DatabaseWorkbenchPanel database={props.database} seedSql={props.seedSql} tests={sql} runSignal={props.runSignal} /></section>
+        <section><SectionLabel text="Database" /><DatabaseWorkbenchPanel database={props.database} seedSql={props.seedSql} tests={sql} runSignal={props.runSignal} viewerRole={viewerRole} /></section>
       </div>
     )
   }
 
   if (tabs === 'cli') {
-    return <CliTestRunnerPanel tests={props.sampleTests.filter((t): t is CliTestCase => t.kind === 'stdio' || t.kind === 'unit-harness')} runSignal={props.runSignal} />
+    return <CliTestRunnerPanel tests={props.sampleTests.filter((t): t is CliTestCase => t.kind === 'stdio' || t.kind === 'unit-harness')} entries={props.entries} language={props.language} entryPointPath={props.entryPointPath} runSignal={props.runSignal} />
   }
   if (tabs === 'web') {
     return <WebReactPreviewPanel entries={props.entries} language={props.language} tests={props.sampleTests.filter((t): t is DomTestCase => t.kind === 'dom-assertion')} />
@@ -44,7 +48,7 @@ export default function AdaptiveExecutionPanel(props: Props): React.JSX.Element 
   if (tabs === 'api') {
     return <BackendApiTesterPanel tests={props.sampleTests.filter((t): t is HttpApiTestCase => t.kind === 'http-api')} />
   }
-  return <DatabaseWorkbenchPanel database={props.database} seedSql={props.seedSql} tests={props.sampleTests.filter((t): t is SqlTestCase => t.kind === 'sql-query')} runSignal={props.runSignal} />
+  return <DatabaseWorkbenchPanel database={props.database} seedSql={props.seedSql} tests={props.sampleTests.filter((t): t is SqlTestCase => t.kind === 'sql-query')} runSignal={props.runSignal} viewerRole={viewerRole} />
 }
 
 function executionTabsFor(category: ProjectCategory): 'cli' | 'web' | 'api' | 'db' {

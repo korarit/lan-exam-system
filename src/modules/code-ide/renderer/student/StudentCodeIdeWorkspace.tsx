@@ -17,6 +17,7 @@ import {
   updateFileContentInTree
 } from '../../shared/project-tree'
 import StudentWorkspaceFolderPicker, { defaultWorkspaceFolder } from './StudentWorkspaceFolderPicker'
+import MissingRuntimePrompt from '../MissingRuntimePrompt'
 import ProjectFileExplorerTree from './ProjectFileExplorerTree'
 import MonacoCodeWorkspace from './MonacoCodeWorkspace'
 import AdaptiveExecutionPanel from './AdaptiveExecutionPanel'
@@ -38,6 +39,8 @@ interface Props {
   questionNo?: number
   questionTotal?: number
   timeLeftText?: string
+  /** 'teacher' = พรีวิวฝั่งครู (ดู schema ได้ตลอด) / 'student' = ฝั่งนักเรียน (ดูได้ตามที่ครูเปิด) */
+  viewerRole?: 'teacher' | 'student'
   onSubmit?: (entries: VirtualEntry[]) => void
   onAutosave?: (entries: VirtualEntry[]) => void
 }
@@ -161,6 +164,8 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
           <button type="button" onClick={() => setNotice(null)} className="text-slate-500 hover:text-slate-200">ปิด</button>
         </div>
       )}
+      {/* Phase 9.1: เช็ค runtime ของภาษาที่ข้อสอบใช้จริงก่อนเริ่ม (ขาดให้ติดตั้งเอง + Re-scan/Browse) */}
+      <MissingRuntimePrompt languages={[pkg.language]} compact />
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         {/* โจทย์ + libraries (ยุบได้) */}
@@ -265,10 +270,12 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
               category={pkg.category}
               language={pkg.language}
               entries={entries}
+              entryPointPath={pkg.policy.entryPointPath}
               sampleTests={sampleTests}
               database={pkg.database}
               seedSql={seedSqlOf(pkg, entries)}
               runSignal={runSignal}
+              viewerRole={props.viewerRole ?? 'student'}
             />
           </div>
         </div>

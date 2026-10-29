@@ -14,7 +14,10 @@ import {
 import { stripCodePackageForStudent } from '../../shared/student-view'
 import TrackAndLanguageSelector from './TrackAndLanguageSelector'
 import ProjectTemplateUploader, { type TemplateView } from './ProjectTemplateUploader'
+import type { DatabaseConfig } from '../../shared/code-schema'
 import OfflineDependencyManager from './OfflineDependencyManager'
+import MissingRuntimePrompt from '../MissingRuntimePrompt'
+import TestCaseEditor from './TestCaseEditor'
 import TeacherWorkspaceFolderConfig, { defaultTeacherWorkspace } from './TeacherWorkspaceFolderConfig'
 import StudentCodeIdeWorkspace from '../student/StudentCodeIdeWorkspace'
 
@@ -41,10 +44,12 @@ function starterEntries(language: SupportedCodeLanguage): VirtualEntry[] {
   const starter: Record<string, string> = {
     java: 'src/Main.java',
     python: 'src/main.py',
-    'sql-sqlite': 'query.sql'
+    'sql-sqlite': 'query.sql',
+    'sql-mysql': 'query.sql'
   }
   const main = starter[language] ?? 'src/main.ts'
-  const content = language === 'sql-sqlite' ? '-- เขียนคำตอบ SQL ที่นี่\nSELECT 1;\n' : '// เขียนโค้ดที่นี่\n'
+  const content =
+    language === 'sql-sqlite' || language === 'sql-mysql' ? '-- เขียนคำตอบ SQL ที่นี่\nSELECT 1;\n' : '// เขียนโค้ดที่นี่\n'
   const entries: VirtualEntry[] = [
     { path: 'src', kind: 'folder', encoding: 'utf8', readOnly: false, allowStudentCreateInside: true, hiddenFromStudent: false }
   ]
@@ -62,6 +67,20 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
   const [category, setCategory] = useState<ProjectCategory>('cli-algorithm')
   const [language, setLanguage] = useState<SupportedCodeLanguage>('java')
   const [enableDatabase, setEnableDatabase] = useState(false)
+  const [dbConfig, setDbConfig] = useState<DatabaseConfig>(() => ({
+    enabled: false,
+    engine: 'sqlite',
+    sqlMode: 'query',
+    seedSqlPath: 'db/seed.sql',
+    allowDestructiveQueries: true,
+    respawnFreshDbOnEveryRun: true,
+    exposeDbViewerToStudent: true,
+    host: 'localhost',
+    port: 3303,
+    dbUser: 'root',
+    dbPassword: '',
+    databaseName: ''
+  }))
   const [starter, setStarter] = useState<VirtualEntry[]>(() => starterEntries('java'))
   const [reference, setReference] = useState<VirtualEntry[]>([])
   const [templateView, setTemplateView] = useState<TemplateView>('starter')
@@ -95,7 +114,7 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
     const id = `test-${tests.length + 1}`
     const base = { testId: id, visibility: 'sample' as const, points: 10, timeoutMs: 5000 }
     if (kind === 'stdio' || kind === 'unit-harness') {
-      setTests((prev) => [...prev, { ...base, kind, title: `Sample ${id}`, stdin: '', expectedStdout: '' }])
+      setTests((prev) => [...prev, { ...base, kind, title: `Sample ${id}`, stdin: '', expectedStdout: '', inputs: kind === 'stdio' ? [{ name: 'x', type: 'int' as const, value: '' }] : [] }])
     } else if (kind === 'dom-assertion') {
       setTests((prev) => [...prev, { ...base, kind, title: `DOM ${id}`, route: '/', assertionScript: '// expect(...)...' }])
     } else if (kind === 'http-api') {
@@ -123,6 +142,19 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
     setReport(`✅ โครงเฉลยพร้อม — Reference ${reference.length} entries × ${tests.length} tests (${countCodePoints(tests)} คะแนน) — การรันจริงผูก Runtime Phase 9`)
   }
 
+  function buildDatabase(): DatabaseConfig {
+    if (!enableDatabase && category !== 'database') {
+      return { ...dbConfig, enabled: false }
+    }
+    // SQLite เท่านั้นทั้งฝั่งครูและนักเรียน (ไฟล์ .ztcode เก่าที่เป็น mysql จะถูก normalize เป็น sqlite)
+    return {
+      ...dbConfig,
+      enabled: true,
+      engine: 'sqlite' as const,
+      seedSqlPath: dbConfig.seedSqlPath ?? 'db/seed.sql'
+    }
+  }
+
   async function saveZtcode(): Promise<void> {
     setSaving(true)
     setReport(null)
@@ -138,9 +170,7 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
         referenceSolution: reference,
         policy: { entryPointPath: entryPoint },
         dependencies: bundles,
-        database: enableDatabase
-          ? { enabled: true, engine: 'sqlite', seedSqlPath: 'db/seed.sql', allowDestructiveQueries: true, respawnFreshDbOnEveryRun: true, exposeDbViewerToStudent: true }
-          : { enabled: false, engine: 'sqlite', allowDestructiveQueries: true, respawnFreshDbOnEveryRun: true, exposeDbViewerToStudent: true },
+        database: buildDatabase(),
         testCases: tests,
         blobs: {}
       })
@@ -194,7 +224,7 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
         referenceSolution: reference,
         policy: { entryPointPath: entryPoint },
         dependencies: bundles,
-        database: { enabled: enableDatabase, engine: 'sqlite', allowDestructiveQueries: true, respawnFreshDbOnEveryRun: true, exposeDbViewerToStudent: true },
+        database: buildDatabase(),
         testCases: tests,
         blobs: {}
       })
@@ -202,7 +232,7 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
       return null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, instructions, category, language, starter, reference, entryPoint, bundles, enableDatabase, tests])
+  }, [title, instructions, category, language, starter, reference, entryPoint, bundles, enableDatabase, dbConfig, tests])
 
   return (
     <div className="space-y-4">
@@ -225,15 +255,63 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
           enableDatabase={enableDatabase}
           onChangeCategory={(c) => {
             setCategory(c)
-            if (c === 'database') setEnableDatabase(true)
+            if (c === 'database') {
+              setEnableDatabase(true)
+              if (language !== 'sql-sqlite') setLanguage('sql-sqlite')
+            }
           }}
           onChangeLanguage={(l) => {
             setLanguage(l)
+            if (l === 'sql-sqlite') {
+              setEnableDatabase(true)
+              setDbConfig((prev) => ({ ...prev, enabled: true, engine: 'sqlite' }))
+            }
             setStarter((prev) => (prev.length <= 2 ? starterEntries(l) : prev))
           }}
           onToggleDatabase={setEnableDatabase}
         />
       </div>
+
+      {(enableDatabase || category === 'database') && (
+        <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+          <h4 className="mb-2 text-sm font-semibold">🗄️ ฐานข้อมูล SQLite (รันทั้งฝั่งครูและนักเรียน — ไม่ต้องตั้งเซิร์ฟเวอร์)</h4>
+          <div className="space-y-2">
+            <div>
+              <span className="mb-1 block text-xs text-slate-400">รูปแบบข้อสอบ SQL</span>
+              <div className="flex flex-col gap-1.5 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => setDbConfig((prev) => ({ ...prev, sqlMode: 'query' }))}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-left text-[13px] ${dbConfig.sqlMode === 'query' ? 'border-emerald-500/70 bg-emerald-950/30 text-emerald-200' : 'border-slate-800 bg-slate-950/40 text-slate-300'}`}
+                >
+                  📋 มี table + data ให้แล้ว — นักเรียนเขียน query
+                  <span className="block text-[11px] opacity-70">อัปโหลด db/seed.sql (CREATE TABLE + INSERT) แล้วให้ SELECT</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDbConfig((prev) => ({ ...prev, sqlMode: 'create-table' }))}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-left text-[13px] ${dbConfig.sqlMode === 'create-table' ? 'border-emerald-500/70 bg-emerald-950/30 text-emerald-200' : 'border-slate-800 bg-slate-950/40 text-slate-300'}`}
+                >
+                  🏗️ ให้สร้าง table เอง — นักเรียนเขียน DDL
+                  <span className="block text-[11px] opacity-70">เริ่มจาก DB ว่าง แล้วตรวจด้วย verificationQuery</span>
+                </button>
+              </div>
+            </div>
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/40 px-2.5 py-2 text-[13px] text-slate-300">
+              <input
+                type="checkbox"
+                checked={dbConfig.exposeDbViewerToStudent}
+                onChange={(e) => setDbConfig((prev) => ({ ...prev, exposeDbViewerToStudent: e.target.checked }))}
+                className="h-4 w-4 accent-emerald-500"
+              />
+              <span>👁️ ให้นักเรียนดู schema ได้ (Schema Viewer) — <span className="text-slate-500">ปิดแล้วนักเรียนจะไม่เห็นตาราง/คอลัมน์ ส่วนฝั่งครูดูได้ตลอด</span></span>
+            </label>
+            <p className="text-[11px] text-slate-500">
+              seed: <code className="font-mono">db/seed.sql</code> · รันจริงด้วย SQLite (better-sqlite3) ทั้งตอนครูกดทดสอบเฉลยและตอนตรวจงานนักเรียน · DELETE/DROP ได้เต็มที่ ระบบ spawn DB ใหม่พร้อมข้อมูลเดิมทุกครั้ง
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
         <h4 className="mb-2 text-sm font-semibold">📁 โปรเจกต์ตั้งต้น / เฉลย</h4>
@@ -272,50 +350,32 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
       </div>
 
       <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-        <h4 className="mb-2 text-sm font-semibold">🧪 Test Cases ({tests.length} — {countCodePoints(tests)} คะแนน)</h4>
+        <h4 className="mb-2 text-sm font-semibold">🧪 Test Cases — ตั้ง input/output (LeetCode-style) ({tests.length} — {countCodePoints(tests)} คะแนน)</h4>
         <div className="mb-2 flex flex-wrap gap-1.5">
-          {(['stdio', 'dom-assertion', 'http-api', 'sql-query'] as const).map((k) => (
+          {(['stdio', 'unit-harness', 'dom-assertion', 'http-api', 'sql-query'] as const).map((k) => (
             <button key={k} type="button" onClick={() => addTest(k)} className="rounded-lg border border-slate-700 px-2.5 py-1 font-mono text-[11px] text-slate-300 hover:border-emerald-500 hover:text-emerald-200">
               + {k}
             </button>
           ))}
         </div>
-        <div className="max-h-52 space-y-1.5 overflow-y-auto">
+        <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
           {tests.map((t, i) => (
-            <div key={t.testId} className="flex flex-wrap items-center gap-2 rounded bg-slate-900/60 px-2 py-1.5 text-xs">
-              <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">{t.kind}</span>
-              <input
-                value={t.title}
-                onChange={(e) => setTests((prev) => prev.map((x, xi) => (xi === i ? { ...x, title: e.target.value } : x)))}
-                className="min-w-32 flex-1 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-xs"
-              />
-              <label className="flex items-center gap-1 text-[11px] text-slate-400">
-                <input
-                  type="number"
-                  value={t.points}
-                  min={1}
-                  onChange={(e) => setTests((prev) => prev.map((x, xi) => (xi === i ? { ...x, points: Math.max(1, Number(e.target.value) || 1) } : x)))}
-                  className="w-16 rounded border border-slate-700 bg-slate-950 px-1.5 py-1 font-mono text-xs"
-                /> คะแนน
-              </label>
-              <select
-                value={t.visibility}
-                onChange={(e) => setTests((prev) => prev.map((x, xi) => (xi === i ? { ...x, visibility: e.target.value as 'sample' | 'hidden' } : x)))}
-                className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-[11px]"
-              >
-                <option value="sample">sample (นักเรียนเห็น)</option>
-                <option value="hidden">hidden (ตรวจลับ)</option>
-              </select>
-              <button type="button" onClick={() => setTests((prev) => prev.filter((_, xi) => xi !== i))} className="rounded px-1.5 py-1 text-slate-500 hover:text-red-300">🗑</button>
-            </div>
+            <TestCaseEditor
+              key={t.testId} test={t} index={i}
+              onChange={(next) => setTests((prev) => prev.map((x, xi) => (xi === i ? next : x)))}
+              onDelete={() => setTests((prev) => prev.filter((_, xi) => xi !== i))}
+            />
           ))}
-          {tests.length === 0 && <p className="text-xs text-slate-600">ยังไม่มี test — กด + เพิ่มตามประเภทโจทย์ (stdio / dom-assertion / http-api / sql-query)</p>}
+          {tests.length === 0 && <p className="text-xs text-slate-600">ยังไม่มี test — กด + เพิ่ม (stdio = รับ input ทางคีย์บอร์ดแล้วตรวจ output, ปล่อยว่างได้ถ้าตั้งโจทย์เฉย ๆ)</p>}
         </div>
       </div>
 
       {report !== null && (
         <p className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-[13px] text-slate-200">{report}</p>
       )}
+
+      {/* Phase 9.1: เช็ค runtime ของภาษาที่โจทย์ใช้ (ไม่ดาวน์โหลดแยก — ขาดให้ติดตั้งเอง + Re-scan/Browse) */}
+      <MissingRuntimePrompt languages={[language]} />
 
       <div className="flex flex-wrap gap-2">
         <button type="button" onClick={testReferenceSolution} className="inline-flex items-center gap-1.5 rounded-xl bg-amber-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-600">
@@ -331,7 +391,7 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
 
       {previewOpen && previewPkg !== null && (
         <div className="h-[560px] rounded-xl border border-sky-800/50">
-          <StudentCodeIdeWorkspace pkg={stripCodePackageForStudent(previewPkg)} examId="preview" studentId="preview-student" questionNo={1} questionTotal={1} timeLeftText="01:25:00" />
+          <StudentCodeIdeWorkspace pkg={stripCodePackageForStudent(previewPkg)} examId="preview" studentId="preview-student" questionNo={1} questionTotal={1} timeLeftText="01:25:00" viewerRole="teacher" />
         </div>
       )}
     </div>

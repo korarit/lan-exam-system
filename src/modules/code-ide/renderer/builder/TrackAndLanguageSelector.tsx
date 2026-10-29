@@ -78,7 +78,7 @@ export default function TrackAndLanguageSelector(props: Props): React.JSX.Elemen
             onChange={(e) => props.onToggleDatabase(e.target.checked)}
             className="h-4 w-4 accent-emerald-500"
           />
-          เปิดใช้งานฐานข้อมูล SQLite ในโจทย์ข้อนี้ (seed .sql/.sqlite + Ephemeral Respawn)
+          เปิดใช้งานฐานข้อมูลในโจทย์ข้อนี้ (SQLite seed .sql/.sqlite + Ephemeral Respawn หรือ MySQL/MariaDB ภายนอก)
         </label>
       </div>
     </div>
