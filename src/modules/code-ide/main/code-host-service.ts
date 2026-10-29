@@ -11,7 +11,7 @@ import path from 'node:path'
 import { CodeWorkspaceStore } from './code-workspace-store'
 import { TeacherWorkspaceDirectoryManager, sanitizeQuestionSlug } from './code-workspace-dirs'
 import { GradingWorkerQueue, defaultMaxConcurrentRuns, type GradeReport } from './code-grader-queue'
-import { materializeDependencyCache, type DepsCacheLayout } from './code-deps-cache'
+import { materializeDependencyCache, pickStudentBlobs, type DepsCacheLayout } from './code-deps-cache'
 import type { HostDatabase } from '@main/storage/db'
 
 /* ============================================================
@@ -70,6 +70,8 @@ export class CodeIdeHostService {
   private readonly depsByRoom = new Map<string, DepsCacheLayout>()
   /** กันยิง grading ซ้ำซ้อนของงานชิ้นเดิม (studentId+packageId+hash) */
   private readonly gradingInFlight = new Set<string>()
+  /** F-3b: manifest ที่นักเรียนรายงานหลัง pip/npm install (key = roomId + studentId) */
+  private readonly installManifests = new Map<string, { packages: string[]; atMs: number }>()
 
   constructor(
     private readonly db: HostDatabase,
@@ -283,6 +285,7 @@ export class CodeIdeHostService {
       })
       try {
         if (this.dirs.getRootPath()) {
+          const installed = this.installManifests.get(`${roomId} ${studentId}`)
           this.dirs.writeGradingReport(studentId, room.questionSlug, {
             packageId,
             studentId,
@@ -292,6 +295,10 @@ export class CodeIdeHostService {
             totalCount: report.totalCount,
             gradedAtMs,
             ...(report.blockedReason ? { blockedReason: report.blockedReason } : {}),
+            // F-3b: นักเรียนติดตั้งอะไรเองบ้าง (ครู opt-in) — ตรวจเทียบกับ bundles ที่อนุมัติ
+            ...(installed !== undefined && installed.packages.length > 0
+              ? { studentInstalledPackages: installed.packages, studentInstalledAtMs: installed.atMs }
+              : {}),
             results: report.results
           })
         }
@@ -370,6 +377,15 @@ export class CodeIdeHostService {
     } catch {
       return { ok: false, reason: 'PAYLOAD_NOT_JSON' }
     }
+    // F-3b: นักเรียนรายงาน manifest หลัง pip/npm install สำเร็จ (ไม่ใช่งานส่ง — บันทึกไว้เฉย ๆ)
+    if (typeof parsed === 'object' && parsed !== null && (parsed as { type?: unknown }).type === 'code-ide.deps-installed') {
+      const pkgs = (parsed as { packages?: unknown }).packages
+      this.installManifests.set(`${input.roomId} ${input.studentId}`, {
+        packages: Array.isArray(pkgs) ? pkgs.filter((p): p is string => typeof p === 'string').map((p) => p.slice(0, 160)).slice(0, 50) : [],
+        atMs: input.serverTimestampMs > 0 ? input.serverTimestampMs : Date.now()
+      })
+      return { ok: true, progressText: 'deps-install-recorded' }
+    }
     // action = { type:'code-ide.submit', entries } / autosave = { entries } หรือ entries ตรง ๆ
     const entriesRaw =
       typeof parsed === 'object' && parsed !== null && 'entries' in parsed
@@ -406,10 +422,50 @@ export class CodeIdeHostService {
     return submission.earnedPoints
   }
 
+  /**
+   * F-2: จบสอบ — เลื่อน draft ค้างที่ยังไม่เคยส่งเป็น submission แล้วเข้าคิวตรวจ
+   * (นักเรียนที่ส่งงานแล้วไม่ถูกแตะ; คนที่มีแต่ draft จะได้สถานะ queued/graded
+   * แทนการหายไปเฉย ๆ)
+   */
+  async finalizeStudentSessions(
+    roomId: string,
+    studentIds: string[],
+    reason: 'submitted' | 'time-up'
+  ): Promise<{ students: number; promoted: number }> {
+    const room = this.rooms.get(roomId)
+    if (!room) return { students: 0, promoted: 0 }
+    void reason
+    let promoted = 0
+    for (const studentId of studentIds) {
+      try {
+        if (this.store.getSubmission(roomId, studentId, room.examPackage.packageId)) continue
+        const draft = this.store.getDraft(roomId, studentId, room.examPackage.packageId)
+        if (!draft) continue
+        const res = this.ingestProjectSubmission({
+          roomId,
+          studentId,
+          entries: draft.entries,
+          serverTimestampMs: Date.now()
+        })
+        if (res.accepted) promoted += 1
+      } catch {
+        /* draft เสีย/ถูกลบระหว่าง finalize — ข้ามรายคน */
+      }
+    }
+    return { students: studentIds.length, promoted }
+  }
+
+  /** F-3b: manifest ที่นักเรียนรายงานหลัง pip/npm install (ครูตรวจเทียบกับ bundles ที่อนุมัติ) */
+  getInstallManifest(roomId: string, studentId: string): { packages: string[]; atMs: number } | null {
+    return this.installManifests.get(`${roomId} ${studentId}`) ?? null
+  }
+
   studentViewFor(roomId: string): ReturnType<typeof stripCodePackageForStudent> | null {
     const room = this.rooms.get(roomId)
     if (!room) return null
-    return stripCodePackageForStudent(room.examPackage)
+    // F-3: แนบ blobs ไฟล์เล็กในงบไปกับ stripped view (ใหญ่เกินงบอยู่ฝั่งแม่เท่านั้น)
+    const bundleBlobs = pickStudentBlobs(room.examPackage.blobs)
+    return stripCodePackageForStudent(room.examPackage, { bundleBlobs })
   }
 }
 

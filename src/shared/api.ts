@@ -114,6 +114,9 @@ export interface ZtExamApi {
   listCodeComments(req: IpcInvokeMap['code-ide:comment-list']['req']): Promise<IpcInvokeMap['code-ide:comment-list']['res']>
   /* ---------- Code IDE — Local Runtime (Phase 9: รันบนเครื่องตัวเอง) ---------- */
   runCliTest(req: IpcInvokeMap['code-ide:run-cli']['req']): Promise<IpcInvokeMap['code-ide:run-cli']['res']>
+  cacheStudentBundles(req: IpcInvokeMap['code-ide:cache-student-bundles']['req']): Promise<IpcInvokeMap['code-ide:cache-student-bundles']['res']>
+  studentDepsStatus(req: IpcInvokeMap['code-ide:student-deps-status']['req']): Promise<IpcInvokeMap['code-ide:student-deps-status']['res']>
+  installStudentDeps(req: IpcInvokeMap['code-ide:install-student-deps']['req']): Promise<IpcInvokeMap['code-ide:install-student-deps']['res']>
   runSqlTest(req: IpcInvokeMap['code-ide:run-sql']['req']): Promise<IpcInvokeMap['code-ide:run-sql']['res']>
   checkRuntimes(req: IpcInvokeMap['code-ide:check-runtimes']['req']): Promise<IpcInvokeMap['code-ide:check-runtimes']['res']>
   browseSdkPath(req: IpcInvokeMap['code-ide:browse-sdk-path']['req']): Promise<IpcInvokeMap['code-ide:browse-sdk-path']['res']>

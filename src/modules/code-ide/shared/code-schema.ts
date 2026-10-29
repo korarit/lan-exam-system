@@ -160,6 +160,25 @@ export type ProjectWorkspacePolicy = z.infer<typeof ProjectWorkspacePolicySchema
 
 /* ---------- 8.1.3 Libraries / Dependencies + Database ตั้งต้น ---------- */
 
+/**
+ * นโยบายติดตั้งไลบรารีฝั่งนักเรียน (ครู opt-in เท่านั้น — default ปิด)
+ * แทนการส่ง blob ก้อนใหญ่ผ่าน LAN: เครื่องนักเรียนรัน `pip install` / `npm install`
+ * เองจาก registry ทางการ ตามรายชื่อ exact name@version ที่ครูอนุมัติใน bundles
+ * - รองรับเฉพาะ npm/pip (maven/cargo/go/composer ยังต้องแนบ blob ออฟไลน์)
+ * - ห้องแล็บต้องเปิดเน็ตถึง registry.npmjs.org / pypi.org + files.pythonhosted.org
+ */
+export const StudentInstallPolicySchema = z.object({
+  enabled: z.boolean().default(false),
+  ecosystems: z.array(z.enum(['npm', 'pip'])).max(2).default([])
+})
+export type StudentInstallPolicy = z.infer<typeof StudentInstallPolicySchema>
+
+/** registry ทางการที่ pin ไว้ต่อ ecosystem (ห้าม override จากฝั่งนักเรียน) */
+export const STUDENT_INSTALL_REGISTRIES: Record<'npm' | 'pip', { indexUrl: string; extraHosts: string[] }> = {
+  npm: { indexUrl: 'https://registry.npmjs.org/', extraHosts: [] },
+  pip: { indexUrl: 'https://pypi.org/simple/', extraHosts: ['files.pythonhosted.org'] }
+}
+
 export const DependencyBundleSchema = z.object({
   bundleId: z.string().min(1).max(128),
   ecosystem: z.enum([
@@ -388,6 +407,8 @@ export const CodeExamPackageSchema = z.object({
     databaseName: ''
   })),
   testCases: z.array(CodeTestCaseSchema).max(200).default([]),
+  /** ครูอนุญาตให้นักเรียน pip/npm install เอง (default ปิด — ออฟไลน์ 100%) */
+  installPolicy: StudentInstallPolicySchema.default({ enabled: false, ecosystems: [] }),
   /** ไฟล์แนบไบนารี (key = archiveRelativePath / seed/prebuilt path) */
   blobs: z.record(z.string().min(1).max(500), ZtcodeBlobSchema).default({})
 })
@@ -442,6 +463,60 @@ export type ZtcodeEncryptedEnvelope = z.infer<typeof ZtcodeEncryptedEnvelopeSche
 
 /* ---------- มุมมองนักเรียน (ตัดความลับออกหมด) ---------- */
 
+/**
+ * F-3: งบแจก blobs ให้เครื่องนักเรียนผ่าน MODULE_STATE_PUSH (stateJson ≤ 8MB)
+ * - แนบเฉพาะไฟล์เล็ก (เช่น .d.ts / seed เล็ก) รวมไม่เกินงบ เพื่อให้นักเรียน
+ *   รัน sample ได้ออฟไลน์ด้วย lib จริงโดยไม่ต้องติดตั้งเอง
+ * - archive ก้อนใหญ่ (เกินงบ) อยู่ฝั่งเครื่องแม่เท่านั้น — ใช้ตอนตรวจ hidden
+ */
+export const STUDENT_BUNDLE_BLOB_BUDGET_BYTES = 5 * 1024 * 1024
+export const STUDENT_BUNDLE_BLOB_FILE_CAP_BYTES = 3 * 1024 * 1024
+
+export interface StudentBundleBlob {
+  /** key เดียวกับ archiveRelativePath ใน DependencyBundle (ไม่ลับ — แค่ชื่อไฟล์) */
+  archivePath: string
+  dataBase64: string
+  /** SHA-256 ของไบนารี (เครื่องนักเรียนตรวจก่อนแตก cache) */
+  sha256: string
+}
+
+/** Zod สำหรับ stripped view ที่ host ดันผ่าน MODULE_STATE_PUSH (กัน drift กับ interface ด้านล่าง) */
+export const StudentCodePackageViewSchema = z.object({
+  moduleId: z.literal('code-ide'),
+  packageId: z.string().uuid(),
+  title: z.string().min(1).max(160),
+  instructions: z.string().max(20_000),
+  category: ProjectCategorySchema,
+  language: SupportedCodeLanguageSchema,
+  entries: z.array(VirtualEntrySchema).min(0).max(2000),
+  policy: ProjectWorkspacePolicySchema,
+  dependencies: z
+    .array(
+      z.object({
+        bundleId: z.string().min(1).max(128),
+        ecosystem: DependencyBundleSchema.shape.ecosystem,
+        packages: DependencyBundleSchema.shape.packages,
+        archiveRelativePath: z.string().min(1).max(500)
+      })
+    )
+    .max(50)
+    .default([]),
+  bundleBlobs: z
+    .array(
+      z.object({
+        archivePath: z.string().min(1).max(500),
+        dataBase64: z.string().min(1).max(8_000_000),
+        sha256: z.string().length(64)
+      })
+    )
+    .max(50)
+    .optional(),
+  installPolicy: StudentInstallPolicySchema,
+  database: DatabaseConfigSchema,
+  sampleTests: z.array(CodeTestCaseSchema).max(200).default([]),
+  totalSamplePoints: z.number().nonnegative()
+})
+
 /** โจทย์ที่ส่งถึงนักเรียนได้: ไม่มี hidden entries / เฉลย / hidden tests / blobs ลับ */
 export interface StudentCodePackageView {
   moduleId: 'code-ide'
@@ -452,8 +527,17 @@ export interface StudentCodePackageView {
   language: SupportedCodeLanguage
   entries: VirtualEntry[]
   policy: ProjectWorkspacePolicy
-  /** เหลือเฉพาะ bundle ที่ต้องใช้รัน (ตัด archive path ลับออก เหลือชื่อ packages) */
-  dependencies: Array<{ ecosystem: DependencyBundle['ecosystem']; packages: DependencyBundle['packages'] }>
+  /** เหลือเฉพาะ bundle ที่ต้องใช้รัน (bundleId + archivePath ใช้ผูก blob ที่แนบมา) */
+  dependencies: Array<{
+    bundleId: string
+    ecosystem: DependencyBundle['ecosystem']
+    packages: DependencyBundle['packages']
+    archiveRelativePath: string
+  }>
+  /** blobs ไฟล์เล็กในงบ F-3 (undefined/ว่าง = รันด้วย runtime เครื่องตัวเองล้วน) */
+  bundleBlobs?: StudentBundleBlob[] | undefined
+  /** นโยบายติดตั้งเองฝั่งนักเรียน (ครู opt-in — ไม่ลับ ส่งผ่าน stripped view ได้) */
+  installPolicy: StudentInstallPolicy
   database: DatabaseConfig
   /** เหลือเฉพาะ test ที่ visibility === 'sample' */
   sampleTests: CodeTestCase[]

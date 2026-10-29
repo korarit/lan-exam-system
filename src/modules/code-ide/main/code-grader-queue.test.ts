@@ -59,6 +59,7 @@ function sqlPackage(): CodeExamPackage {
         checkColumnOrder: true, checkRowOrder: true, visibility: 'sample', points: 5, timeoutMs: 2000
       }
     ],
+    installPolicy: { enabled: false, ecosystems: [] },
     blobs: {}
   }
 }

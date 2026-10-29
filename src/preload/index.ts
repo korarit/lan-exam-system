@@ -122,6 +122,9 @@ const api: ZtExamApi = {
 
   /* ---------- Code IDE — Local Runtime (Phase 9) ---------- */
   runCliTest: (req) => call('code-ide:run-cli', req),
+  cacheStudentBundles: (req) => call('code-ide:cache-student-bundles', req),
+  studentDepsStatus: (req) => call('code-ide:student-deps-status', req),
+  installStudentDeps: (req) => call('code-ide:install-student-deps', req),
   runSqlTest: (req) => call('code-ide:run-sql', req),
   checkRuntimes: (req) => call('code-ide:check-runtimes', req),
   browseSdkPath: (req) => call('code-ide:browse-sdk-path', req),

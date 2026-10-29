@@ -195,6 +195,8 @@ function ensureSessionManager(): CoreSessionManager {
       ensureTriageService().startRoom(roomId, policy)
       // Phase 2 (ท่อกลาง modules): ดัน stripped code-ide package ให้ทุกคนตอนเริ่มสอบ
       pushCodeIdePackageToStudents(roomId)
+      // F-1: ดัน stripped form view รายคน (ลำดับข้อ/ตัวเลือกของตัวเอง) ตอนเริ่มสอบ
+      pushFormViewToStudents(roomId)
       // Phase 4: เริ่มสุ่มตรวจ attestation ตลอดการสอบ (45–120 วินาที/รอบ)
       ensureAttestationHostService().startExam(
         ensureRoomManager().students.map((student) => student.studentId)
@@ -202,6 +204,12 @@ function ensureSessionManager(): CoreSessionManager {
     },
     onExamEnded: (roomId, reason) => {
       ensureTriageService().endRoom(roomId, reason)
+      // F-2: finalize โมดูลที่ผูกไว้ (เลื่อน draft ค้างเป็น submission + ปั๊มสถานะ)
+      try {
+        finalizeModuleSessions(roomId)
+      } catch {
+        /* finalize ล้มเหลว — คำตอบที่ ingest แล้วใน DB ยังอยู่ */
+      }
       // Phase 4: จบการสอบ → หยุดตรวจ attestation (เคลียร์ timer ทั้งหมด)
       attestationHost?.stop()
       attestationHost = null
@@ -291,16 +299,27 @@ function ensureModuleTransport(): ModuleTransportHost {
     sendToStudent: (studentId, type, payload) => {
       roomManager?.tlsServerInstance?.sendToStudent(studentId, type, payload)
     },
-    handleModuleMessage: async ({ roomId, studentId, moduleId, kind, payloadJson, serverTimestampMs }) => {
-      if (moduleId !== 'code-ide') return { ok: false, reason: 'UNKNOWN_MODULE' }
-      return ensureCodeIdeService().ingestViaTransport({
-        roomId,
-        studentId,
-        kind,
-        payloadJson,
-        serverTimestampMs
-      })
-    }
+      handleModuleMessage: async ({ roomId, studentId, moduleId, kind, payloadJson, serverTimestampMs }) => {
+        if (moduleId === 'code-ide') {
+          return ensureCodeIdeService().ingestViaTransport({
+            roomId,
+            studentId,
+            kind,
+            payloadJson,
+            serverTimestampMs
+          })
+        }
+        if (moduleId === 'dynamic-form') {
+          return ensureFormHostService().ingestViaTransport({
+            roomId,
+            studentId,
+            kind,
+            payloadJson,
+            serverTimestampMs
+          })
+        }
+        return { ok: false, reason: 'UNKNOWN_MODULE' }
+      }
   })
   return moduleTransport
 }
@@ -324,6 +343,48 @@ function pushCodeIdePackageToStudents(roomId: string): void {
     }
   } catch {
     /* push ไม่ได้ — นักเรียนจะเห็นห้องว่างแล้วแจ้งครู */
+  }
+}
+
+/** F-1: ดัน stripped form view รายคนให้เครื่องนักเรียนทุกคนตอนเริ่มสอบ (host → student) */
+function pushFormViewToStudents(roomId: string): void {
+  try {
+    const service = ensureFormHostService()
+    if (!service.getRoomForm(roomId)) return
+    const students = ensureRoomManager().students
+    for (const s of students) {
+      if (!s.online) continue
+      const view = service.studentViewFor(roomId, s.studentId)
+      if (!view) continue
+      roomManager?.tlsServerInstance?.sendToStudent(s.studentId, NetMsgType.moduleStatePush, {
+        moduleId: 'dynamic-form',
+        stateJson: JSON.stringify(view)
+      })
+    }
+  } catch {
+    /* push ไม่ได้ — นักเรียนทำได้เฉพาะข้อสอบหลัก แล้วแจ้งครู */
+  }
+}
+
+/**
+ * F-2: จบสอบ — finalize โมดูลที่ผูกไว้กับห้อง
+ * - code-ide: เลื่อน draft ค้างที่ยังไม่เคยส่งเป็น submission แล้วเข้าคิวตรวจ
+ * - dynamic-form: ปั๊ม endedAtMs (คำตอบรายข้อบันทึกครบแล้วตอน ingest)
+ */
+function finalizeModuleSessions(roomId: string): void {
+  const students = ensureRoomManager().students.map((s) => s.studentId)
+  if (students.length === 0) return
+  try {
+    if (ensureCodeIdeService().getRoomPackage(roomId)) {
+      void ensureCodeIdeService().finalizeStudentSessions(roomId, students, 'time-up')
+    }
+  } catch {
+    /* ข้าม — submission ที่ส่งแล้วใน DB ยังอยู่ */
+  }
+  try {
+    ensureFormHostService().finalizeStudentSession(roomId)
+  } catch {
+    /* ข้าม */
   }
 }
 

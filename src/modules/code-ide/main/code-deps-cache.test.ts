@@ -91,6 +91,7 @@ function depPkg(
       host: 'localhost', port: 3303, dbUser: 'root', dbPassword: '', databaseName: ''
     },
     testCases: [],
+    installPolicy: { enabled: false, ecosystems: [] },
     blobs
   }
 }
@@ -153,5 +154,54 @@ describe('Phase 10 — code-deps-cache', () => {
     expect(layout.unsupported.length).toBeGreaterThanOrEqual(1)
     expect(fs.existsSync(path.join(root, 'evil.txt'))).toBe(false)
     expect(fs.existsSync(path.join(path.dirname(root), 'evil.txt'))).toBe(false)
+  })
+
+  it('F-3 pickStudentBlobs: คัดเฉพาะไฟล์เล็กในงบ + sha256 ตรง', async () => {
+    const { pickStudentBlobs } = await import('./code-deps-cache')
+    const small = Buffer.from('export type X = number;')
+    const big = Buffer.alloc(4 * 1024 * 1024, 7)
+    const picked = pickStudentBlobs({
+      'vendor/types.d.ts': { dataBase64: small.toString('base64') },
+      'vendor/npm/huge.zip': { dataBase64: big.toString('base64') }
+    })
+    // 4MB เกิน cap รายไฟล์ 3MB → เหลือแค่ไฟล์เล็ก
+    expect(picked.map((b) => b.archivePath)).toEqual(['vendor/types.d.ts'])
+    expect(picked[0]?.dataBase64).toBe(small.toString('base64'))
+
+    // งบรวมเล็กกว่านั้น → ไม่แนบเลย
+    const none = pickStudentBlobs(
+      { 'a.bin': { dataBase64: small.toString('base64') } },
+      { budgetBytes: 4 }
+    )
+    expect(none).toHaveLength(0)
+  })
+
+  it('F-3 ensureStudentBundleCache: ตรวจ sha ก่อนแตก + getStudentDepsLayout อ่านกลับได้', async () => {
+    const { ensureStudentBundleCache, getStudentDepsLayout } = await import('./code-deps-cache')
+    const zip = buildStoredZip([{ name: 'mylib/__init__.py', data: 'X = 1' }])
+    const packageId = 'a23e4567-e89b-12d3-a456-426614174009'
+    const { verified } = ensureStudentBundleCache({
+      packageId,
+      dependencies: [bundle('b9', 'pip', 'vendor/pip/mylib.zip')],
+      blobs: [
+        {
+          archivePath: 'vendor/pip/mylib.zip',
+          dataBase64: zip.toString('base64'),
+          sha256: (await import('node:crypto')).createHash('sha256').update(zip).digest('hex')
+        }
+      ]
+    })
+    expect(verified).toBe(1)
+    const layout = getStudentDepsLayout(packageId)
+    expect(layout?.sitePackagesDirs.length).toBeGreaterThanOrEqual(1)
+
+    // sha ผิด → ปฏิเสธก่อนแตก cache
+    expect(() =>
+      ensureStudentBundleCache({
+        packageId: 'b23e4567-e89b-12d3-a456-426614174010',
+        dependencies: [bundle('b9', 'pip', 'vendor/pip/mylib.zip')],
+        blobs: [{ archivePath: 'vendor/pip/mylib.zip', dataBase64: zip.toString('base64'), sha256: '0'.repeat(64) }]
+      })
+    ).toThrow(/HASH_MISMATCH/)
   })
 })

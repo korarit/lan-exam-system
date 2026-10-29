@@ -42,7 +42,8 @@ import {
   VirtualEntrySchema,
   CliTestCaseSchema,
   SqlTestCaseSchema,
-  SupportedCodeLanguageSchema
+  SupportedCodeLanguageSchema,
+  DependencyBundleSchema
 } from '@modules/code-ide/shared/code-schema'
 import {
   TriageOverviewEventSchema,
@@ -562,6 +563,8 @@ export interface CodeIdeRunCliRequest {
     points: number
     timeoutMs?: number | undefined
   }
+  /** F-3: ใช้ offline libs ที่แคชจาก DependencyBundle ของโจทย์ข้อนี้ (ถ้าเครื่องนักเรียนแคชไว้แล้ว) */
+  packageId?: string | undefined
 }
 export interface CodeIdeRunCliResponse {
   testId: string
@@ -572,6 +575,48 @@ export interface CodeIdeRunCliResponse {
   timedOut: boolean
   blockedReason?: string | undefined
   note: string
+}
+/**
+ * F-3: เครื่องนักเรียนแคช DependencyBundle blobs ที่มากับ stripped view
+ * ลง deps cache ฝั่งตัวเอง — รัน sample ด้วย lib จริงได้ออฟไลน์
+ */
+export interface CodeIdeCacheStudentBundlesRequest {
+  packageId: string
+  dependencies: Array<{
+    bundleId: string
+    ecosystem: 'npm' | 'pip' | 'maven-jar' | 'c-cpp-headers-libs' | 'cargo-vendor' | 'go-vendor' | 'composer-vendor' | 'frontend-vendor'
+    packages: Array<{ name: string; version: string }>
+    archiveRelativePath: string
+  }>
+  blobs: Array<{ archivePath: string; dataBase64: string; sha256: string }>
+}
+export interface CodeIdeCacheStudentBundlesResponse {
+  ok: boolean
+  cached: boolean
+  unsupported: string[]
+  reason?: string | undefined
+}
+/** F-3b: สถานะ deps ที่เครื่องนักเรียนมี (แคช blob / ติดตั้งเอง) */
+export interface CodeIdeStudentDepsStatusRequest {
+  packageId: string
+}
+export interface CodeIdeStudentDepsStatusResponse {
+  cached: boolean
+}
+/** F-3b: เครื่องนักเรียน pip/npm install เอง (ครู opt-in + รายชื่อ exact ที่ครูอนุมัติ) */
+export interface CodeIdeInstallStudentDepsRequest {
+  packageId: string
+  packages: Array<{
+    ecosystem: 'npm' | 'pip'
+    name: string
+    version: string
+  }>
+}
+export interface CodeIdeInstallStudentDepsResponse {
+  ok: boolean
+  installed: string[]
+  note: string
+  reason?: string | undefined
 }
 /** รัน 1 SQL test ด้วย query ปัจจุบันของนักเรียนบน SQLite ephemeral */
 export interface CodeIdeRunSqlRequest {
@@ -948,6 +993,9 @@ export interface IpcInvokeMap {
   'form:artifact-open': { req: { studentId: string; itemId: string; artifactId: string }; res: FormExportFileResponse }
   /* ---------- Code IDE — Local Runtime (Phase 9) ---------- */
   'code-ide:run-cli': { req: CodeIdeRunCliRequest; res: CodeIdeRunCliResponse }
+  'code-ide:cache-student-bundles': { req: CodeIdeCacheStudentBundlesRequest; res: CodeIdeCacheStudentBundlesResponse }
+  'code-ide:student-deps-status': { req: CodeIdeStudentDepsStatusRequest; res: CodeIdeStudentDepsStatusResponse }
+  'code-ide:install-student-deps': { req: CodeIdeInstallStudentDepsRequest; res: CodeIdeInstallStudentDepsResponse }
   'code-ide:run-sql': { req: CodeIdeRunSqlRequest; res: CodeIdeRunSqlResponse }
   'code-ide:check-runtimes': { req: CodeIdeCheckRuntimesRequest; res: CodeIdeCheckRuntimesResponse }
   'code-ide:browse-sdk-path': { req: CodeIdeBrowseSdkPathRequest; res: CodeIdeBrowseSdkPathResponse }
@@ -1547,7 +1595,8 @@ export const IpcInvokeSchemas: {
         language: SupportedCodeLanguageSchema,
         entryPointPath: z.string().min(1).max(500),
         entries: z.array(VirtualEntrySchema).min(1).max(2000),
-        test: CliTestCaseSchema
+        test: CliTestCaseSchema,
+        packageId: z.string().uuid().optional()
       })
       .strict(),
     response: z
@@ -1580,6 +1629,63 @@ export const IpcInvokeSchemas: {
           .array(z.array(z.union([z.string(), z.number(), z.null()])).max(64))
           .max(200),
         note: z.string().max(500)
+      })
+      .strict()
+  },
+  'code-ide:cache-student-bundles': {
+    request: z
+      .object({
+        packageId: z.string().uuid(),
+        dependencies: z.array(DependencyBundleSchema).max(50),
+        blobs: z
+          .array(
+            z
+              .object({
+                archivePath: z.string().min(1).max(500),
+                dataBase64: z.string().min(1).max(8_000_000),
+                sha256: z.string().length(64)
+              })
+              .strict()
+          )
+          .max(50)
+      })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        cached: z.boolean(),
+        unsupported: z.array(z.string().max(200)).max(50),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'code-ide:student-deps-status': {
+    request: z.object({ packageId: z.string().uuid() }).strict(),
+    response: z.object({ cached: z.boolean() }).strict()
+  },
+  'code-ide:install-student-deps': {
+    request: z
+      .object({
+        packageId: z.string().uuid(),
+        packages: z
+          .array(
+            z
+              .object({
+                ecosystem: z.enum(['npm', 'pip']),
+                name: z.string().min(1).max(128),
+                version: z.string().min(1).max(64)
+              })
+              .strict()
+          )
+          .max(50)
+      })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        installed: z.array(z.string().max(160)).max(50),
+        note: z.string().max(1000),
+        reason: z.string().max(200).optional()
       })
       .strict()
   },

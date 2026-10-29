@@ -3,7 +3,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { inflateRawSync } from 'node:zlib'
-import type { CodeExamPackage } from '../shared/code-schema'
+import {
+  STUDENT_BUNDLE_BLOB_BUDGET_BYTES,
+  STUDENT_BUNDLE_BLOB_FILE_CAP_BYTES,
+  type DependencyBundle,
+  type StudentBundleBlob
+} from '../shared/code-schema'
 import { assertPathInside } from './anti-delete-guard'
 
 /* ============================================================
@@ -42,7 +47,11 @@ function sanitizeKey(key: string): string {
  * cacheRoot ปกติ = os.tmpdir()/ztcode-deps-cache (เรียกครั้งเดียวตอน attach)
  */
 export function materializeDependencyCache(
-  pkg: CodeExamPackage,
+  pkg: {
+    packageId: string
+    dependencies: DependencyBundle[]
+    blobs: Record<string, { dataBase64: string }>
+  },
   cacheRoot: string = path.join(os.tmpdir(), 'ztcode-deps-cache')
 ): DepsCacheLayout {
   const root = path.join(cacheRoot, pkg.packageId)
@@ -114,7 +123,10 @@ export function materializeDependencyCache(
 }
 
 /** อ่าน layout กลับจาก cache เดิม (ไม่แตกใหม่) */
-function readBackLayout(root: string, pkg: CodeExamPackage): DepsCacheLayout {
+function readBackLayout(
+  root: string,
+  pkg: { dependencies: DependencyBundle[] }
+): DepsCacheLayout {
   const layout: DepsCacheLayout = { root, sitePackagesDirs: [], jarFiles: [], unsupported: [] }
   for (const bundle of pkg.dependencies) {
     const destDir = path.join(root, sanitizeKey(bundle.bundleId))
@@ -236,4 +248,88 @@ function extractEntry(bytes: Buffer, e: ZipEntry): Buffer {
   const data = bytes.subarray(dataStart, dataStart + e.compSize)
   if (e.method === 0) return Buffer.from(data)
   return inflateRawSync(data)
+}
+
+/* ============================================================
+ * F-3 — คัด blobs ไฟล์เล็กแนบไปกับ stripped student view
+ * (stateJson ผ่าน MODULE_STATE_PUSH จำกัด ~8MB → งบรวม 5MB, รายไฟล์ 3MB)
+ * คืนรายการพร้อม sha256 ให้เครื่องนักเรียนตรวจก่อนแตก cache
+ * ============================================================ */
+
+export function pickStudentBlobs(
+  blobs: Record<string, { dataBase64: string }>,
+  opts: { budgetBytes?: number | undefined; fileCapBytes?: number | undefined } = {}
+): StudentBundleBlob[] {
+  const budget = opts.budgetBytes ?? STUDENT_BUNDLE_BLOB_BUDGET_BYTES
+  const cap = opts.fileCapBytes ?? STUDENT_BUNDLE_BLOB_FILE_CAP_BYTES
+  const picked: StudentBundleBlob[] = []
+  let total = 0
+  for (const archivePath of Object.keys(blobs).sort()) {
+    const blob = blobs[archivePath]
+    if (!blob) continue
+    let bytes: Buffer
+    try {
+      bytes = Buffer.from(blob.dataBase64, 'base64')
+    } catch {
+      continue
+    }
+    if (bytes.length === 0 || bytes.length > cap) continue
+    if (total + bytes.length > budget) continue
+    total += bytes.length
+    picked.push({
+      archivePath,
+      dataBase64: bytes.toString('base64'),
+      sha256: createHash('sha256').update(bytes).digest('hex')
+    })
+  }
+  return picked
+}
+
+/* ============================================================
+ * F-3 (ฝั่งเครื่องนักเรียน) — แคช blobs ที่มากับ stripped view
+ * แยกโฟลเดอร์จาก cache ฝั่งครู (กันปนกับ grading cache ของเครื่องแม่)
+ * ============================================================ */
+
+export function studentDepsCacheRoot(): string {
+  return path.join(os.tmpdir(), 'ztcode-student-deps-cache')
+}
+
+const studentLayouts = new Map<string, DepsCacheLayout>()
+
+/** แคช blobs ของโจทย์ข้อนี้ (ตรวจ sha256 ทุกไฟล์ก่อนแตก) */
+export function ensureStudentBundleCache(input: {
+  packageId: string
+  dependencies: DependencyBundle[]
+  blobs: StudentBundleBlob[]
+}): { layout: DepsCacheLayout; verified: number } {
+  const blobs: Record<string, { dataBase64: string }> = {}
+  for (const b of input.blobs) {
+    let bytes: Buffer
+    try {
+      bytes = Buffer.from(b.dataBase64, 'base64')
+    } catch {
+      throw new Error(`BLOB_DECODE_FAILED:${b.archivePath}`)
+    }
+    const digest = createHash('sha256').update(bytes).digest('hex')
+    if (digest !== b.sha256.toLowerCase()) {
+      throw new Error(`BLOB_HASH_MISMATCH:${b.archivePath}`)
+    }
+    blobs[b.archivePath] = { dataBase64: b.dataBase64 }
+  }
+  const layout = materializeDependencyCache(
+    { packageId: input.packageId, dependencies: input.dependencies, blobs },
+    studentDepsCacheRoot()
+  )
+  studentLayouts.set(input.packageId, layout)
+  return { layout, verified: input.blobs.length }
+}
+
+/** layout ที่แคชไว้ของโจทย์ข้อนี้ (undefined = ยังไม่แคช → รันด้วย runtime ตัวเองล้วน) */
+export function getStudentDepsLayout(packageId: string): DepsCacheLayout | undefined {
+  return studentLayouts.get(packageId)
+}
+
+/** ลงทะเบียน layout ที่ติดตั้งจากช่องทางอื่น (เช่น pip/npm install ฝั่งนักเรียน) */
+export function registerStudentDepsLayout(packageId: string, layout: DepsCacheLayout): void {
+  studentLayouts.set(packageId, layout)
 }

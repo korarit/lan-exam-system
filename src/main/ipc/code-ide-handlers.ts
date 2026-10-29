@@ -48,8 +48,12 @@ export function registerCodeIdeHandlers(router: IpcRouter): void {
     const test = CliTestCaseSchema.parse(req.test)
     // Custom SDK path ที่ผู้ใช้ Browse เองต้องมีผลตอนรันด้วย — เติมนำหน้า PATH
     const { getRuntimePathEntries } = await import('@modules/code-ide/main/runtime-locator')
+    // F-3: ถ้าเครื่องนี้แคช DependencyBundle ของโจทย์ข้อนี้ไว้แล้ว ลิงก์เข้า sandbox ด้วย
+    const { getStudentDepsLayout } = await import('@modules/code-ide/main/code-deps-cache')
+    const cached = req.packageId !== undefined ? getStudentDepsLayout(req.packageId) : undefined
     const r = await runCliTest(entries, language, req.entryPointPath, test, {
-      extraPathDirs: getRuntimePathEntries(runtimesForLanguage(language))
+      extraPathDirs: getRuntimePathEntries(runtimesForLanguage(language)),
+      ...(cached !== undefined ? { depsCache: cached } : {})
     })
     const res: CodeIdeRunCliResponse = {
       testId: r.testId,
@@ -129,5 +133,50 @@ export function registerCodeIdeHandlers(router: IpcRouter): void {
       return { ok: true, version: info.version ?? '' }
     }
     return { ok: false, reason: `NO_RUNTIME_BINARY (ไม่พบ ${req.runtime} ใน ${dir} — เลือกโฟลเดอร์ bin ที่มีตัว runtime อยู่)` }
+  })
+
+  /* F-3: เครื่องนักเรียนแคช DependencyBundle blobs จาก stripped view (ตรวจ sha256 ก่อนแตก) */
+  router.register('code-ide:cache-student-bundles', async (req) => {
+    try {
+      const { ensureStudentBundleCache } = await import('@modules/code-ide/main/code-deps-cache')
+      const { layout } = ensureStudentBundleCache({
+        packageId: req.packageId,
+        dependencies: req.dependencies,
+        blobs: req.blobs
+      })
+      return { ok: true, cached: true, unsupported: layout.unsupported }
+    } catch (err) {
+      return {
+        ok: false,
+        cached: false,
+        unsupported: [],
+        reason: err instanceof Error ? err.message.slice(0, 120) : 'CACHE_FAILED'
+      }
+    }
+  })
+
+  /* F-3b: สถานะ deps ของโจทย์ข้อนี้บนเครื่องนี้ (blob cache / ติดตั้งเอง) */
+  router.register('code-ide:student-deps-status', async (req) => {
+    const { getStudentDepsLayout } = await import('@modules/code-ide/main/code-deps-cache')
+    return { cached: getStudentDepsLayout(req.packageId) !== undefined }
+  })
+
+  /* F-3b: เครื่องนักเรียน pip/npm install เอง (ครู opt-in — รายชื่อ exact ที่ครูอนุมัติเท่านั้น) */
+  router.register('code-ide:install-student-deps', async (req) => {
+    try {
+      const { installStudentPackages } = await import('@modules/code-ide/main/student-deps-installer')
+      const r = await installStudentPackages({ packageId: req.packageId, packages: req.packages })
+      if (!r.ok) {
+        return { ok: false, installed: r.installed, note: r.note.slice(0, 1000), ...(r.reason !== undefined ? { reason: r.reason.slice(0, 200) } : {}) }
+      }
+      return { ok: true, installed: r.installed, note: r.note.slice(0, 1000) }
+    } catch (err) {
+      return {
+        ok: false,
+        installed: [],
+        note: '',
+        reason: err instanceof Error ? err.message.slice(0, 120) : 'INSTALL_FAILED'
+      }
+    }
   })
 }

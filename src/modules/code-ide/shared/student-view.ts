@@ -1,6 +1,7 @@
 import {
   countCodePoints,
   type CodeExamPackage,
+  type StudentBundleBlob,
   type StudentCodePackageView
 } from './code-schema'
 import { listVisibleForStudent } from './project-tree'
@@ -15,7 +16,10 @@ import { listVisibleForStudent } from './project-tree'
  * - ย่อ dependencies เหลือชื่อ packages ที่ import ได้
  * ============================================================ */
 
-export function stripCodePackageForStudent(pkg: CodeExamPackage): StudentCodePackageView {
+export function stripCodePackageForStudent(
+  pkg: CodeExamPackage,
+  opts: { bundleBlobs?: StudentBundleBlob[] | undefined } = {}
+): StudentCodePackageView {
   const visibleEntries = listVisibleForStudent(pkg.entries)
   const sampleTests = pkg.testCases.filter((t) => t.visibility === 'sample')
   return {
@@ -28,9 +32,17 @@ export function stripCodePackageForStudent(pkg: CodeExamPackage): StudentCodePac
     entries: visibleEntries.map((e) => ({ ...e })),
     policy: { ...pkg.policy },
     dependencies: pkg.dependencies.map((d) => ({
+      bundleId: d.bundleId,
       ecosystem: d.ecosystem,
-      packages: d.packages.map((p) => ({ ...p }))
+      packages: d.packages.map((p) => ({ ...p })),
+      archiveRelativePath: d.archiveRelativePath
     })),
+    // F-3: แนบเฉพาะ blobs ไฟล์เล็กในงบ (host คัดมาแล้ว) — ใหญ่เกินงบไม่ส่ง ได้ runtime ตัวเองล้วน
+    ...(opts.bundleBlobs !== undefined && opts.bundleBlobs.length > 0
+      ? { bundleBlobs: opts.bundleBlobs.map((b) => ({ ...b })) }
+      : {}),
+    // นโยบายติดตั้งเอง (ครู opt-in) — ไม่ลับ ส่งผ่านไปได้
+    installPolicy: { ...pkg.installPolicy },
     // Host-authoritative: ห้ามส่งรหัสผ่าน MySQL ของครูให้นักเรียน — นักเรียนกรอกเองที่เครื่องตัวเอง
     database: { ...pkg.database, dbPassword: '' },
     sampleTests: sampleTests.map((t) => ({ ...t }) as StudentCodePackageView['sampleTests'][number]),

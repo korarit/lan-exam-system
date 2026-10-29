@@ -55,6 +55,7 @@ function cliPackage(): CodeExamPackage {
       host: 'localhost', port: 3303, dbUser: 'root', dbPassword: '', databaseName: ''
     },
     testCases: [],
+    installPolicy: { enabled: false, ecosystems: [] },
     blobs: {}
   }
 }
@@ -195,5 +196,79 @@ describe('Phase 10.1 — CodeIdeHostService ingest', () => {
     })
     const summary = await service.regradeAllSubmissions(ROOM)
     expect(summary.students).toBe(1)
+  })
+
+  it('F-2 finalize: เลื่อน draft ค้างเป็น submission + เข้าคิวตรวจ (คนส่งแล้วไม่ถูกแตะ)', async () => {
+    // คนที่ 1: มีแค่ autosave draft — finalize ต้องเลื่อนเป็น submission
+    const draftRes = service.ingestAutosave({
+      roomId: ROOM,
+      studentId: '65010001',
+      entries: [folder('src'), entry('src/main.py', 'print("hi")')],
+      serverTimestampMs: Date.now()
+    })
+    expect(draftRes.accepted).toBe(true)
+    expect(service.workspaceStore.getSubmission(ROOM, '65010001', cliPackage().packageId)).toBeNull()
+    // คนที่ 2: ส่งงานจริงแล้ว — finalize ต้องไม่ทับ
+    service.ingestProjectSubmission({
+      roomId: ROOM, studentId: '65010002',
+      entries: [folder('src'), entry('src/main.py', 'print("hi")')],
+      serverTimestampMs: Date.now()
+    })
+    const before = service.workspaceStore.getSubmission(ROOM, '65010002', cliPackage().packageId)
+    const summary = await service.finalizeStudentSessions(ROOM, ['65010001', '65010002', '65019999'], 'time-up')
+    expect(summary.students).toBe(3)
+    expect(summary.promoted).toBe(1)
+    await vi.waitFor(() => {
+      expect(service.workspaceStore.getSubmission(ROOM, '65010001', cliPackage().packageId)?.status).toBe('graded')
+    })
+    const after = service.workspaceStore.getSubmission(ROOM, '65010002', cliPackage().packageId)
+    expect(after?.submittedAtMs).toBe(before?.submittedAtMs)
+  })
+
+  it('F-3b deps-installed: นักเรียนรายงาน manifest → host บันทึก + ติด grading-report', async () => {
+    db.db.prepare(`UPDATE exam_sessions SET status = 'running' WHERE id = ?`).run(ROOM)
+    const res = await service.ingestViaTransport({
+      roomId: ROOM,
+      studentId: '65010001',
+      kind: 'action',
+      payloadJson: JSON.stringify({ type: 'code-ide.deps-installed', packages: ['pip:requests==2.31.0', 'npm:express@4.19.2'] }),
+      serverTimestampMs: Date.now()
+    })
+    expect(res.ok).toBe(true)
+    expect(res.progressText).toBe('deps-install-recorded')
+    const manifest = service.getInstallManifest(ROOM, '65010001')
+    expect(manifest?.packages).toEqual(['pip:requests==2.31.0', 'npm:express@4.19.2'])
+    // นโยบายติดตั้งเองส่งผ่าน stripped view (ไม่ลับ)
+    const view = service.studentViewFor(ROOM)
+    expect(view?.installPolicy).toEqual({ enabled: false, ecosystems: [] })
+  })
+
+  it('F-3 studentViewFor แนบเฉพาะ blobs ไฟล์เล็กในงบ + parse ด้วย StudentCodePackageViewSchema ผ่าน', async () => {
+    const { StudentCodePackageViewSchema } = await import('../shared/code-schema')
+    const small = Buffer.from('export type X = number;')
+    const big = Buffer.alloc(4 * 1024 * 1024, 7)
+    const withBlobs: CodeExamPackage = {
+      ...cliPackage(),
+      dependencies: [
+        { bundleId: 'b-small', ecosystem: 'frontend-vendor', packages: [{ name: 'types', version: '1.0.0' }], archiveRelativePath: 'vendor/types.d.ts' },
+        { bundleId: 'b-big', ecosystem: 'npm', packages: [{ name: 'huge', version: '1.0.0' }], archiveRelativePath: 'vendor/npm/huge.zip' }
+      ],
+      blobs: {
+        'vendor/types.d.ts': { encoding: 'base64', dataBase64: small.toString('base64') },
+        'vendor/npm/huge.zip': { encoding: 'base64', dataBase64: big.toString('base64') }
+      }
+    }
+    service.setRoomPackage(ROOM, 'ห้อง 401', withBlobs)
+    const view = service.studentViewFor(ROOM)
+    expect(view).not.toBeNull()
+    // ไฟล์เล็กแนบมา (ตรวจ sha ตรง), ไฟล์ 4MB เกิน cap 3MB ไม่แนบ
+    expect(view!.bundleBlobs?.map((b) => b.archivePath)).toEqual(['vendor/types.d.ts'])
+    expect(view!.dependencies).toEqual([
+      { bundleId: 'b-small', ecosystem: 'frontend-vendor', packages: [{ name: 'types', version: '1.0.0' }], archiveRelativePath: 'vendor/types.d.ts' },
+      { bundleId: 'b-big', ecosystem: 'npm', packages: [{ name: 'huge', version: '1.0.0' }], archiveRelativePath: 'vendor/npm/huge.zip' }
+    ])
+    // stripped view ต้องไม่มีความลับ และ parse ด้วย schema ฝั่งนักเรียนผ่าน
+    expect(view!.database.dbPassword).toBe('')
+    expect(StudentCodePackageViewSchema.safeParse(JSON.parse(JSON.stringify(view))).success).toBe(true)
   })
 })
