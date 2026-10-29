@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { MonitorCog, Activity, ClipboardList, PenTool, Rows3 } from 'lucide-react'
+import { MonitorCog, Activity, ClipboardList, PenTool, Rows3, Code2 } from 'lucide-react'
 import HostPanel from './HostPanel'
 import FormBuilderWorkspace from '@modules/dynamic-form/renderer/builder/FormBuilderWorkspace'
 import ResponsesDashboard from '@modules/dynamic-form/renderer/responses/ResponsesDashboard'
+import CodeExamBuilder from '@modules/code-ide/renderer/builder/CodeExamBuilder'
 import { useAppStore } from '../store/app-store'
 
-type HostTab = 'room' | 'form-builder' | 'form-responses'
+type HostTab = 'room' | 'form-builder' | 'form-responses' | 'code-builder'
 
 export default function HostShell(): React.JSX.Element {
   const connectionState = useAppStore((s) => s.connectionState)
@@ -14,7 +15,8 @@ export default function HostShell(): React.JSX.Element {
   const tabs: Array<{ id: HostTab; label: string; icon: React.ReactNode }> = [
     { id: 'room', label: 'ห้องสอบ & ผู้คุม', icon: <ClipboardList size={14} /> },
     { id: 'form-builder', label: 'Dynamic Form Builder', icon: <PenTool size={14} /> },
-    { id: 'form-responses', label: 'ผลตอบฟอร์ม (ตรวจ/ส่งออก)', icon: <Rows3 size={14} /> }
+    { id: 'form-responses', label: 'ผลตอบฟอร์ม (ตรวจ/ส่งออก)', icon: <Rows3 size={14} /> },
+    { id: 'code-builder', label: 'Code IDE Builder (.ztcode)', icon: <Code2 size={14} /> }
   ]
 
   return (
@@ -48,7 +50,15 @@ export default function HostShell(): React.JSX.Element {
         ))}
       </nav>
       <main className="flex-1 overflow-y-auto p-6">
-        {tab === 'room' ? <HostPanel /> : tab === 'form-builder' ? <FormBuilderWorkspace /> : <ResponsesDashboard />}
+        {tab === 'room' ? (
+          <HostPanel />
+        ) : tab === 'form-builder' ? (
+          <FormBuilderWorkspace />
+        ) : tab === 'form-responses' ? (
+          <ResponsesDashboard />
+        ) : (
+          <CodeExamBuilder />
+        )}
       </main>
     </div>
   )
