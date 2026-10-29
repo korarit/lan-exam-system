@@ -33,6 +33,7 @@
   ],
   "exclude": [
     "src/preload/index.d.ts",
-    "src/modules/dynamic-form/renderer/**"
+    "src/modules/dynamic-form/renderer/**",
+    "src/modules/code-ide/renderer/**"
   ]
 }

@@ -34,6 +34,7 @@
   ],
   "exclude": [
     "src/modules/dynamic-form/main/**",
+    "src/modules/code-ide/main/**",
     "src/modules/register-modules.ts",
     "src/modules/**/*.test.ts"
   ]
