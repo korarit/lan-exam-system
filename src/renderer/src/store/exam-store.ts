@@ -19,6 +19,10 @@ export interface StudentExamState {
   fontScale: number
   /** Phase 5: โหมดของห้องนี้ (split เอกสาร / floating HUD) */
   examMode: ExamMode | null
+  /** Phase 2 (ท่อกลาง modules): state เริ่มต้นรายโมดูลที่ host ผลักมา (key = moduleId, value = stripped view JSON) */
+  moduleStates: Record<string, unknown>
+  /** ack ล่าสุดของงาน module ที่ส่งไป (โชว์ใน IDE) */
+  lastModuleAck: { moduleId: string; kind: string; ok: boolean; progressText?: string; reason?: string; atMs: number } | null
   identity: { studentId: string; studentName: string } | null
 
   setIdentity: (identity: { studentId: string; studentName: string }) => void
@@ -38,6 +42,8 @@ export interface StudentExamState {
   onSubmitRejected: (payload: { reason: string }) => void
   onTimeUp: () => void
   onCompleted: (payload: { reason: string }) => void
+  onModuleState: (payload: { moduleId: string; stateJson: string }) => void
+  onModuleAck: (payload: { moduleId: string; kind: string; ok: boolean; progressText?: string | undefined; reason?: string | undefined }) => void
   reset: () => void
   setFontScale: (scale: number) => void
 }
@@ -54,6 +60,8 @@ const initial = {
   finishReason: null,
   fontScale: 1,
   examMode: null,
+  moduleStates: {},
+  lastModuleAck: null,
   identity: null
 }
 
@@ -95,6 +103,26 @@ export const useStudentExamStore = create<StudentExamState>((set) => ({
   onSubmitRejected: (payload) => set({ submitRejectedReason: payload.reason }),
   onTimeUp: () => set({ phase: 'timeup' }),
   onCompleted: (payload) => set({ phase: 'completed', finishReason: payload.reason }),
+  onModuleState: (payload) => {
+    let parsed: unknown = null
+    try {
+      parsed = JSON.parse(payload.stateJson) as unknown
+    } catch {
+      return
+    }
+    set((s) => ({ moduleStates: { ...s.moduleStates, [payload.moduleId]: parsed } }))
+  },
+  onModuleAck: (payload) =>
+    set({
+      lastModuleAck: {
+        moduleId: payload.moduleId,
+        kind: payload.kind,
+        ok: payload.ok,
+        ...(payload.progressText !== undefined ? { progressText: payload.progressText } : {}),
+        ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+        atMs: Date.now()
+      }
+    }),
   reset: () => set({ ...initial }),
   setFontScale: (scale) => set({ fontScale: Math.min(1.6, Math.max(0.8, scale)) })
 }))

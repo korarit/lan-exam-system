@@ -20,6 +20,10 @@ import { registerModeHandlers } from './ipc/mode-handlers'
 import { registerDynamicFormHandlers } from './ipc/dynamic-form-handlers'
 import { registerFormResponseHandlers } from './ipc/form-response-handlers'
 import { registerCodeIdeHandlers } from './ipc/code-ide-handlers'
+import { registerCodeIdeHostHandlers } from './ipc/code-ide-host-handlers'
+import { ModuleTransportHost, registerModuleTransportStudentHandlers } from './network/module-transport'
+import type { CodeIdeHostService } from '@modules/code-ide/main/code-host-service'
+import { CodeIdeHostService as CodeIdeHostServiceImpl } from '@modules/code-ide/main/code-host-service'
 import type { FormHostService } from '@modules/dynamic-form/main/form-host-service'
 import { FormHostService as FormHostServiceImpl } from '@modules/dynamic-form/main/form-host-service'
 import '@modules/register-modules'
@@ -189,6 +193,8 @@ function ensureSessionManager(): CoreSessionManager {
     },
     onExamStarted: (roomId, policy) => {
       ensureTriageService().startRoom(roomId, policy)
+      // Phase 2 (ท่อกลาง modules): ดัน stripped code-ide package ให้ทุกคนตอนเริ่มสอบ
+      pushCodeIdePackageToStudents(roomId)
       // Phase 4: เริ่มสุ่มตรวจ attestation ตลอดการสอบ (45–120 วินาที/รอบ)
       ensureAttestationHostService().startExam(
         ensureRoomManager().students.map((student) => student.studentId)
@@ -202,6 +208,8 @@ function ensureSessionManager(): CoreSessionManager {
     },
     // Phase 3c: รายการเซกเมนต์ย้อนหลังจากนักเรียน → ProctorViewService
     onStudentNetMessage: (studentId, type, payload) => {
+      // Phase 2 (ท่อกลาง modules): action/autosave/chunks ของ pluggable modules ก่อน
+      if (ensureModuleTransport().handleStudentMessage(studentId, type, payload)) return true
       if (type === NetMsgType.ringSegmentList) {
         ensureProctorViewService().ingestSegmentList(studentId, payload)
         return true
@@ -249,6 +257,22 @@ function ensureFormHostService(): FormHostService {
   return formHostService
 }
 
+/** Phase 10: Backend ของโมดูล code-ide ฝังใน Electron Main ของเครื่องแม่ */
+let codeIdeHostService: CodeIdeHostService | null = null
+function ensureCodeIdeService(): CodeIdeHostService {
+  codeIdeHostService ??= new CodeIdeHostServiceImpl(
+    ensureHostDatabase(),
+    (roomId) => {
+      const row = ensureHostDatabase()
+        .db.prepare('SELECT crypto_salt FROM exam_sessions WHERE id = ?')
+        .get(roomId) as { crypto_salt: string } | undefined
+      const salt = row?.crypto_salt ?? roomId
+      return pbkdf2Sync(salt, roomId, 10_000, 32, 'sha256')
+    }
+  )
+  return codeIdeHostService
+}
+
 /** Phase 3b: Audit hash chain + Triage engine ของเครื่องแม่ */
 function ensureTriageService(): TriageService {
   triageService ??= new TriageService({
@@ -257,6 +281,50 @@ function ensureTriageService(): TriageService {
     sendHostEvent: sendEventToWindow
   })
   return triageService
+}
+
+/** Phase 2 (ท่อกลาง MODULE_PACKET_ENVELOPE — สเปคมีแต่เพิ่งมีโค้ด): รับส่ง action/autosave ของ modules ผ่าน LAN */
+let moduleTransport: ModuleTransportHost | null = null
+function ensureModuleTransport(): ModuleTransportHost {
+  moduleTransport ??= new ModuleTransportHost({
+    getRoomId: () => roomManager?.room?.roomId ?? null,
+    sendToStudent: (studentId, type, payload) => {
+      roomManager?.tlsServerInstance?.sendToStudent(studentId, type, payload)
+    },
+    handleModuleMessage: async ({ roomId, studentId, moduleId, kind, payloadJson, serverTimestampMs }) => {
+      if (moduleId !== 'code-ide') return { ok: false, reason: 'UNKNOWN_MODULE' }
+      return ensureCodeIdeService().ingestViaTransport({
+        roomId,
+        studentId,
+        kind,
+        payloadJson,
+        serverTimestampMs
+      })
+    }
+  })
+  return moduleTransport
+}
+
+/** ดัน stripped package view ให้เครื่องนักเรียนทุกคนตอนเริ่มสอบ (host → student) */
+function pushCodeIdePackageToStudents(roomId: string): void {
+  try {
+    const service = ensureCodeIdeService()
+    const ctx = service.getRoomPackage(roomId)
+    if (!ctx) return
+    const view = service.studentViewFor(roomId)
+    if (!view) return
+    const stateJson = JSON.stringify(view)
+    const students = ensureRoomManager().students
+    for (const s of students) {
+      if (!s.online) continue
+      roomManager?.tlsServerInstance?.sendToStudent(s.studentId, NetMsgType.moduleStatePush, {
+        moduleId: 'code-ide',
+        stateJson
+      })
+    }
+  } catch {
+    /* push ไม่ได้ — นักเรียนจะเห็นห้องว่างแล้วแจ้งครู */
+  }
 }
 
 /** Phase 3c: บริการดูหน้าจอนักเรียน (Pull on Demand + Thumbnail store) ฝั่งเครื่องแม่ */
@@ -365,6 +433,15 @@ function ensureStudentClient(): ExamTlsClient {
         // Phase 5: เริ่มการสอบ → เตรียมโครง Mode 2/3 (แผงเอกสาร, proxy, floating HUD)
         if (type === NetMsgType.examStarted) {
           void prepareExamModeSurface(payload as { examMode?: string; docsUrl?: string | null })
+        }
+        // Phase 2 (ท่อกลาง modules): ack งานที่ส่ง + state เริ่มต้นของโมดูล
+        if (type === NetMsgType.moduleAck) {
+          sendEventToWindow('exam:module-ack', payload)
+          return true
+        }
+        if (type === NetMsgType.moduleStatePush) {
+          sendEventToWindow('exam:module-state', payload)
+          return true
         }
         // Phase 4: คำท้า attestation จากเครื่องแม่ (ผูกกับ TLS exporter ของเรา)
         if (type === NetMsgType.attestationChallenge) {
@@ -701,6 +778,29 @@ void app.whenReady().then(() => {
   })
   // Phase 9: โมดูล code-ide — รัน CLI/SQL บนเครื่องตัวเอง + เช็ค runtime
   registerCodeIdeHandlers(router)
+  // Phase 2 (ท่อกลาง modules): เครื่องนักเรียนส่ง action/autosave ผ่านสาย TLS
+  registerModuleTransportStudentHandlers(router, state, {
+    getStudentClient: () => (state.role === 'student' ? ensureStudentClient() : null),
+    isConnected: () => {
+      if (state.role !== 'student' || !studentClient) return false
+      // ExamTlsClient ไม่มี getter สถานะ — ถือว่าใช้ได้เมื่อ join สำเร็จแล้ว (มี session key)
+      try {
+        return studentClient.getSessionKey() !== null
+      } catch {
+        return false
+      }
+    }
+  })
+  // Phase 10: Backend code-ide (ส่งงาน + คิวตรวจ hidden + ส่งออก) ฝั่งเครื่องแม่
+  registerCodeIdeHostHandlers(router, state, {
+    getDatabase: ensureHostDatabase,
+    getCodeIdeService: ensureCodeIdeService,
+    getActiveRoom: () => {
+      const room = roomManager?.room
+      if (!room) return null
+      return { roomId: room.roomId, roomName: room.roomName }
+    }
+  })
   // Phase 7: Backend ฟอร์ม (validator/vault/auto-grader/regrade/export)
   registerFormResponseHandlers(router, state, {
     getDatabase: ensureHostDatabase,

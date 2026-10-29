@@ -7,6 +7,7 @@ import DocsPanel from './DocsPanel'
 import { useStudentExamStore } from '../store/exam-store'
 import { useStudentNetworkStore } from '../store/network-store'
 import { useDocsStore } from '../store/docs-store'
+import { CODE_IDE_RENDERER_UI } from '@modules/code-ide/renderer/index'
 
 let subscribed = false
 
@@ -30,6 +31,12 @@ function useExamEventSubscription(): void {
         window.ztExam.onEvent('exam:submit-rejected', (payload) =>
           useStudentExamStore.getState().onSubmitRejected(payload)
         ),
+        window.ztExam.onEvent('exam:module-state', (payload) =>
+          useStudentExamStore.getState().onModuleState(payload)
+        ),
+        window.ztExam.onEvent('exam:module-ack', (payload) =>
+          useStudentExamStore.getState().onModuleAck(payload)
+        ),
         window.ztExam.onEvent('exam:time-up', () => useStudentExamStore.getState().onTimeUp()),
         window.ztExam.onEvent('exam:completed', (payload) => {
           useStudentExamStore.getState().onCompleted(payload)
@@ -49,6 +56,44 @@ function useExamEventSubscription(): void {
   }, [])
 }
 
+function CodeIdeExamSlot(props: { studentId: string }): React.JSX.Element {
+  const moduleState = useStudentExamStore((s) => s.moduleStates['code-ide'])
+  if (moduleState === undefined || moduleState === null) return <></>
+  const { StudentExamWorkspace } = CODE_IDE_RENDERER_UI
+  return (
+    <StudentExamWorkspace
+      moduleState={moduleState}
+      studentId={props.studentId}
+      onDispatchAction={async (action) => {
+        try {
+          await window.ztExam.moduleSend({
+            moduleId: 'code-ide',
+            kind: 'action',
+            payloadJson: JSON.stringify(action)
+          })
+        } catch {
+          /* สายหลุด — autosave ในโฟลเดอร์นักเรียนยังอยู่, กดส่งใหม่หลัง reconnect */
+        }
+      }}
+      onAutosaveDraft={(draft) => {
+        void window.ztExam
+          .moduleSend({ moduleId: 'code-ide', kind: 'autosave', payloadJson: JSON.stringify(draft) })
+          .catch(() => undefined)
+      }}
+    />
+  )
+}
+
+function ModuleAckBanner(): React.JSX.Element | null {
+  const ack = useStudentExamStore((s) => s.lastModuleAck)
+  if (!ack || Date.now() - ack.atMs > 10000) return null
+  return (
+    <div className={`border-b px-4 py-1.5 text-center text-xs ${ack.ok ? 'border-emerald-800/60 bg-emerald-950/40 text-emerald-200' : 'border-red-800/60 bg-red-950/40 text-red-200'}`}>
+      {ack.ok ? `✅ เครื่องแม่รับงานแล้ว (${ack.progressText ?? ack.kind})` : `⛔ เครื่องแม่ปฏิเสธงาน: ${ack.reason ?? 'unknown'}`}
+    </div>
+  )
+}
+
 export default function ExamView(): React.JSX.Element | null {
   const phase = useStudentExamStore((s) => s.phase)
   const identity = useStudentExamStore((s) => s.identity)
@@ -56,6 +101,7 @@ export default function ExamView(): React.JSX.Element | null {
   const connection = useStudentNetworkStore((s) => s.connection)
   const remaining = useStudentExamStore((s) => s.remainingSeconds)
   const finishReason = useStudentExamStore((s) => s.finishReason)
+  const hasCodeIdeModule = useStudentExamStore((s) => s.moduleStates['code-ide'] !== undefined && s.moduleStates['code-ide'] !== null)
   useExamEventSubscription()
 
   // เข้าโหมด kiosk ทันทีที่เริ่ม/กู้คืนการสอบ (main process ล็อกจอระดับ OS)
@@ -120,6 +166,7 @@ export default function ExamView(): React.JSX.Element | null {
       />
 
       <HudBar connectionOk={connection.state === 'ready'} />
+      <ModuleAckBanner />
 
       {/* Fail-closed overlay: ขาดการติดต่อกับเครื่องแม่ — บังโจทย์ทั้งหมด */}
       {frozen ? (
@@ -138,7 +185,11 @@ export default function ExamView(): React.JSX.Element | null {
         </div>
       ) : (
         <div className="flex-1 flex overflow-hidden">
-          {examMode === 'in-app-docs' ? (
+          {hasCodeIdeModule ? (
+            <div className="w-full h-full overflow-hidden p-2">
+              <CodeIdeExamSlot studentId={identity.studentId} />
+            </div>
+          ) : examMode === 'in-app-docs' ? (
             <>
               <div className="w-1/2 h-full overflow-hidden">
                 <QuestionRenderer />

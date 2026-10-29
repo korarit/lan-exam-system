@@ -68,9 +68,16 @@ export interface HostExamModuleBackend<
 export interface StudentWorkspaceProps {
   /** state ล่าสุดที่ backend ส่งให้นักเรียนคนนี้ */
   moduleState: unknown
+  /** รหัสนักเรียนเจ้าของ session (ท่อ LAN ใช้ระบุเจ้าของงาน) */
+  studentId?: string | undefined
   onDispatchAction: (action: unknown) => Promise<void>
   onAutosaveDraft: (draft: unknown) => void
 }
+
+/* หมายเหตุท่อ LAN (Phase 2 สเปค/เพิ่งมีโค้ด): StudentExamWorkspace ส่ง action/autosave
+ * ผ่าน student:module-send → MODULE_ACTION/CHUNK → ModuleTransportHost → โมดูล backend
+ * (เช่น CodeIdeHostService.ingestViaTransport) ไม่ต้องแก้ contract นี้ */
+
 
 /** สัญญาฝั่ง Renderer (UI ของแต่ละโมดูล) */
 export interface RendererExamModuleUI {

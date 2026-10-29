@@ -85,7 +85,18 @@ export const NetMsgType = {
   attestationChallenge: 'ATTESTATION_CHALLENGE',
   attestationResponse: 'ATTESTATION_RESPONSE',
   /* ---------- Mode 2/3 activity log (Phase 5) ---------- */
-  docsUrlLog: 'DOCS_URL_LOG'
+  docsUrlLog: 'DOCS_URL_LOG',
+  /* ---------- Pluggable Exam Modules (Phase 2 สเปคไว้ — ท่อกลาง MODULE_PACKET_ENVELOPE) ---------- */
+  /** Student → Host: action ของโมดูล (เล็ก — เกินขีดใช้ moduleChunk แทน) */
+  moduleAction: 'MODULE_ACTION',
+  /** Student → Host: autosave ของโมดูล (เล็ก — เกินขีดใช้ moduleChunk แทน) */
+  moduleAutosave: 'MODULE_AUTOSAVE',
+  /** Student → Host: ชิ้นส่วน payload ก้อนใหญ่ (project หลายไฟล์, ประกอบที่โฮสต์) */
+  moduleChunk: 'MODULE_CHUNK',
+  /** Host → Student: ผลรับ action/autosave ต่อชิ้นงาน */
+  moduleAck: 'MODULE_ACK',
+  /** Host → Student: state เริ่มต้นรายคน (stripped view — ไม่มีความลับ) */
+  moduleStatePush: 'MODULE_STATE_PUSH'
 } as const
 
 export type NetMsgTypeValue = (typeof NetMsgType)[keyof typeof NetMsgType]
@@ -228,6 +239,65 @@ export const DocsUrlLogPayloadSchema = z
   .strict()
 export type DocsUrlLogPayload = z.infer<typeof DocsUrlLogPayloadSchema>
 
+/** โมดูลที่เสียบท่อกลางได้ (ตรงกับ ExamModuleId ใน module-contract — เขียน enum ตรงนี้เพื่อไม่ผูก react types) */
+export const ModulePacketModuleIdSchema = z.enum(['dynamic-form', 'code-ide', 'external-url'])
+export type ModulePacketModuleId = z.infer<typeof ModulePacketModuleIdSchema>
+
+export const ModulePacketKindSchema = z.enum(['action', 'autosave'])
+export type ModulePacketKind = z.infer<typeof ModulePacketKindSchema>
+
+/** Student → Host: action ของโมดูล 1 ชิ้น (payload เป็น JSON string — ใหญ่เกิน 1MB ให้ใช้ moduleChunk) */
+export const ModuleActionPayloadSchema = z
+  .object({
+    moduleId: ModulePacketModuleIdSchema,
+    actionJson: z.string().min(2).max(1_000_000)
+  })
+  .strict()
+export type ModuleActionPayload = z.infer<typeof ModuleActionPayloadSchema>
+
+/** Student → Host: autosave ของโมดูล 1 ชิ้น (draftPayload เป็น JSON string) */
+export const ModuleAutosavePayloadSchema = z
+  .object({
+    moduleId: ModulePacketModuleIdSchema,
+    draftJson: z.string().min(2).max(1_000_000)
+  })
+  .strict()
+export type ModuleAutosavePayload = z.infer<typeof ModuleAutosavePayloadSchema>
+
+/** Student → Host: ชิ้นส่วนของ payload ก้อนใหญ่ (ประกอบตาม transferId ที่โฮสต์) */
+export const ModuleChunkPayloadSchema = z
+  .object({
+    transferId: z.uuid(),
+    moduleId: ModulePacketModuleIdSchema,
+    kind: ModulePacketKindSchema,
+    chunkIndex: z.number().int().nonnegative().max(4096),
+    chunkTotal: z.number().int().min(1).max(4096),
+    contentBase64: z.string().min(1).max(700_000) // ~512KB ต่อ chunk
+  })
+  .strict()
+export type ModuleChunkPayload = z.infer<typeof ModuleChunkPayloadSchema>
+
+/** Host → Student: ผลรับ action/autosave (อ้าง transfer เดิม) */
+export const ModuleAckPayloadSchema = z
+  .object({
+    moduleId: ModulePacketModuleIdSchema,
+    kind: ModulePacketKindSchema,
+    ok: z.boolean(),
+    progressText: z.string().max(200).optional(),
+    reason: z.string().max(200).optional()
+  })
+  .strict()
+export type ModuleAckPayload = z.infer<typeof ModuleAckPayloadSchema>
+
+/** Host → Student: state เริ่มต้นรายคน (stripped view — ตรวจที่โฮสต์แล้วว่าไม่มีความลับ) */
+export const ModuleStatePushPayloadSchema = z
+  .object({
+    moduleId: ModulePacketModuleIdSchema,
+    stateJson: z.string().min(2).max(8_000_000)
+  })
+  .strict()
+export type ModuleStatePushPayload = z.infer<typeof ModuleStatePushPayloadSchema>
+
 /** Envelope กลางของทุกข้อความ (Length-prefixed frame บรรจุ JSON ของ envelope นี้) */
 export const NetEnvelopeSchema = z
   .object({
@@ -278,7 +348,12 @@ export const NetMessagePayloadSchemas: Record<string, z.ZodType> = {
   [NetMsgType.screenUdpReady]: ScreenUdpReadyPayloadSchema,
   [NetMsgType.attestationChallenge]: AttestationChallengeSchema,
   [NetMsgType.attestationResponse]: AttestationResponseSchema,
-  [NetMsgType.docsUrlLog]: DocsUrlLogPayloadSchema
+  [NetMsgType.docsUrlLog]: DocsUrlLogPayloadSchema,
+  [NetMsgType.moduleAction]: ModuleActionPayloadSchema,
+  [NetMsgType.moduleAutosave]: ModuleAutosavePayloadSchema,
+  [NetMsgType.moduleChunk]: ModuleChunkPayloadSchema,
+  [NetMsgType.moduleAck]: ModuleAckPayloadSchema,
+  [NetMsgType.moduleStatePush]: ModuleStatePushPayloadSchema
 }
 
 /* ============================================================
