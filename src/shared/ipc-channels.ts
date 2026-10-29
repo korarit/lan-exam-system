@@ -36,6 +36,8 @@ import {
   type RingSegmentMeta
 } from './screen-protocol'
 export type { RingSegmentMeta } from './screen-protocol'
+import type { FormResponsesSnapshot } from '@modules/dynamic-form/shared/form-responses-view'
+export type { FormResponsesSnapshot } from '@modules/dynamic-form/shared/form-responses-view'
 import {
   TriageOverviewEventSchema,
   StudentEvidenceResponseSchema,
@@ -438,6 +440,67 @@ export interface ListSavedFormsResponse {
   forms: SavedFormRecord[]
 }
 
+/* ---------- Dynamic Form — Responses / Grading / Export (Phase 7) ---------- */
+
+export interface FormZtformStateResponse {
+  ok: boolean
+  /** ห้องที่ระบุว่ารายการฟอร์มแนบอยู่ (roomId ณ รอบเปิด) */
+  roomId: string | null
+  roomName: string | null
+  formTitle: string | null
+  hasResponses: boolean
+  message?: string | undefined
+}
+export interface FormSaveResultsRequest {
+  encrypted: boolean
+  password?: string | undefined
+}
+export interface FormAttachRoomFormRequest {
+  formPayloadJson: string
+}
+export interface FormAttachRoomFormResponse {
+  ok: boolean
+  roomId?: string | undefined
+  formTitle?: string | undefined
+  reason?: string | undefined
+}
+export interface FormManualGradeRequest {
+  studentId: string
+  itemId: string
+  /** null = ล้างคะแนนที่ครูให้แล้ว (กลับไปใช้อัตโนมัติ) */
+  points: number | null
+}
+export interface FormManualGradeResponse {
+  ok: boolean
+  reason?: string | undefined
+}
+export interface FormRegradeResponse {
+  ok: boolean
+  students?: number | undefined
+  changedItems?: number | undefined
+  totalDeltaPoints?: number | undefined
+  reason?: string | undefined
+}
+export interface FormExportFileResponse {
+  ok: boolean
+  filePath?: string | undefined
+  reason?: string | undefined
+}
+export interface FormZtresultsManifestSummary {
+  formId: string
+  formTitle: string
+  roomId: string
+  roomName: string
+  createdAtMs: number
+  studentCount: number
+}
+export interface FormLoadZtresultsResponse {
+  ok: boolean
+  needPassword?: boolean | undefined
+  manifest?: FormZtresultsManifestSummary | undefined
+  message?: string | undefined
+}
+
 /* ---------- Channel maps (single source of truth for IPC surface) ---------- */
 
 /* ---------- Zod schemas สำหรับ payload ของ network channels ---------- */
@@ -574,6 +637,16 @@ export interface IpcInvokeMap {
   'form:save-ztform': { req: SaveZtformRequest; res: SaveZtformResponse }
   'form:load-ztform': { req: LoadZtformRequest; res: LoadZtformResponse }
   'host:list-saved-forms': { req: void; res: ListSavedFormsResponse }
+  /* ---------- Dynamic Form — Responses/Grading/Export (Phase 7) ---------- */
+  'form:ztform-state': { req: void; res: FormZtformStateResponse }
+  'form:attach-room-form': { req: FormAttachRoomFormRequest; res: FormAttachRoomFormResponse }
+  'form:responses-get': { req: void; res: FormResponsesSnapshot | null }
+  'form:manual-grade': { req: FormManualGradeRequest; res: FormManualGradeResponse }
+  'form:regrade-all': { req: { formPayloadJson?: string | undefined }; res: FormRegradeResponse }
+  'form:export-csv': { req: void; res: FormExportFileResponse }
+  'form:save-ztresults': { req: FormSaveResultsRequest; res: FormExportFileResponse }
+  'form:load-ztresults': { req: LoadZtformRequest; res: FormLoadZtresultsResponse }
+  'form:artifact-open': { req: { studentId: string; itemId: string; artifactId: string }; res: FormExportFileResponse }
 }
 
 /** Main -> Renderer (webContents.send) push event channels */
@@ -1000,6 +1073,127 @@ export const IpcInvokeSchemas: {
             })
             .strict()
         )
+      })
+      .strict()
+  },
+  /* ---------- Dynamic Form — Responses/Grading/Export (Phase 7) ---------- */
+  'form:ztform-state': {
+    request: z.void(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        roomId: z.string().max(64).nullable(),
+        roomName: z.string().max(120).nullable(),
+        formTitle: z.string().max(160).nullable(),
+        hasResponses: z.boolean(),
+        message: z.string().max(300).optional()
+      })
+      .strict()
+  },
+  'form:attach-room-form': {
+    request: z
+      .object({ formPayloadJson: z.string().min(2).max(20_000_000) })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        roomId: z.string().max(64).optional(),
+        formTitle: z.string().max(160).optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'form:responses-get': {
+    request: z.void(),
+    response: z.union([z.object({ kind: z.literal('none') }).strict(), z.any()])
+  },
+  'form:manual-grade': {
+    request: z
+      .object({
+        studentId: z.string().min(1).max(40),
+        itemId: z.string().min(1).max(64),
+        points: z.number().nonnegative().max(10000).nullable()
+      })
+      .strict(),
+    response: z
+      .object({ ok: z.boolean(), reason: z.string().max(200).optional() })
+      .strict()
+  },
+  'form:regrade-all': {
+    request: z
+      .object({ formPayloadJson: z.string().min(2).max(20_000_000).optional() })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        students: z.number().int().nonnegative().optional(),
+        changedItems: z.number().int().nonnegative().optional(),
+        totalDeltaPoints: z.number().optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'form:export-csv': {
+    request: z.void(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        filePath: z.string().max(1_000).optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'form:save-ztresults': {
+    request: z
+      .object({
+        encrypted: z.boolean(),
+        password: z.string().min(1).max(200).optional()
+      })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        filePath: z.string().max(1_000).optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'form:load-ztresults': {
+    request: z
+      .object({ password: z.string().min(1).max(200).optional() })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        needPassword: z.boolean().optional(),
+        manifest: z
+          .object({
+            formId: z.uuid(),
+            formTitle: z.string().max(120),
+            roomId: z.string().max(64),
+            roomName: z.string().max(120),
+            createdAtMs: z.number().int().nonnegative(),
+            studentCount: z.number().int().nonnegative()
+          })
+          .strict()
+          .optional(),
+        message: z.string().max(300).optional()
+      })
+      .strict()
+  },
+  'form:artifact-open': {
+    request: z
+      .object({
+        studentId: z.string().min(1).max(40),
+        itemId: z.string().min(1).max(64),
+        artifactId: z.string().min(1).max(64)
+      })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        filePath: z.string().max(1_000).optional(),
+        reason: z.string().max(200).optional()
       })
       .strict()
   }

@@ -1,5 +1,6 @@
 import { app, BrowserWindow } from 'electron'
 import path from 'node:path'
+import { pbkdf2Sync } from 'node:crypto'
 import { IpcEventSchemas, type IpcEventChannel } from '@shared/ipc-channels'
 import { NetMsgType } from '@shared/protocol-schema'
 import { parseRuntimeArgs } from './runtime-args'
@@ -17,6 +18,9 @@ import { registerScreenHandlers } from './ipc/screen-handlers'
 import { registerAttestationHandlers } from './ipc/attestation-handlers'
 import { registerModeHandlers } from './ipc/mode-handlers'
 import { registerDynamicFormHandlers } from './ipc/dynamic-form-handlers'
+import { registerFormResponseHandlers } from './ipc/form-response-handlers'
+import type { FormHostService } from '@modules/dynamic-form/main/form-host-service'
+import { FormHostService as FormHostServiceImpl } from '@modules/dynamic-form/main/form-host-service'
 import '@modules/register-modules'
 import { DocsViewController, type DocsPanelState } from './browser/docs-view'
 import { LocalConnectProxy } from './proxy/connect-proxy'
@@ -225,6 +229,23 @@ function ensureSessionManager(): CoreSessionManager {
 function ensureDomainAllowlist(): DomainAllowlistService {
   domainAllowlist ??= new DomainAllowlistService(ensureHostDatabase())
   return domainAllowlist
+}
+
+/** Phase 7: Backend ของโมดูล dynamic-form ฝังใน Electron Main ของเครื่องแม่ */
+let formHostService: FormHostService | null = null
+function ensureFormHostService(): FormHostService {
+  formHostService ??= new FormHostServiceImpl(
+    ensureHostDatabase(),
+    (roomId) => {
+      const row = ensureHostDatabase()
+        .db.prepare('SELECT crypto_salt FROM exam_sessions WHERE id = ?')
+        .get(roomId) as { crypto_salt: string } | undefined
+      const salt = row?.crypto_salt ?? roomId
+      return pbkdf2Sync(salt, roomId, 10_000, 32, 'sha256')
+    },
+    path.join(app.getPath('userData'), 'exam-vault')
+  )
+  return formHostService
 }
 
 /** Phase 3b: Audit hash chain + Triage engine ของเครื่องแม่ */
@@ -676,6 +697,16 @@ void app.whenReady().then(() => {
   // Phase 6: โมดูล dynamic-form — Save/Load ไฟล์ .ztform + ตาราง saved_forms
   registerDynamicFormHandlers(router, state, {
     getDatabase: ensureHostDatabase
+  })
+  // Phase 7: Backend ฟอร์ม (validator/vault/auto-grader/regrade/export)
+  registerFormResponseHandlers(router, state, {
+    getDatabase: ensureHostDatabase,
+    getFormService: ensureFormHostService,
+    getActiveRoom: () => {
+      const room = roomManager?.room
+      if (!room) return null
+      return { roomId: room.roomId, roomName: room.roomName }
+    }
   })
   studentEstablishedHandler = (studentId) => {
     // Phase 4: ท่อ handshake ใหม่ = ยิง challenge attestation ทันที (แล้วสุ่มเวลาตามปกติ)

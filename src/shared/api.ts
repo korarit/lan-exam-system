@@ -85,6 +85,16 @@ export interface ZtExamApi {
   saveZtform(req: IpcInvokeMap['form:save-ztform']['req']): Promise<IpcInvokeMap['form:save-ztform']['res']>
   loadZtform(req: IpcInvokeMap['form:load-ztform']['req']): Promise<IpcInvokeMap['form:load-ztform']['res']>
   listSavedForms(): Promise<IpcInvokeMap['host:list-saved-forms']['res']>
+  /* ---------- Dynamic Form — Responses/Grading/Export (Phase 7) ---------- */
+  getFormState(): Promise<IpcInvokeMap['form:ztform-state']['res']>
+  attachRoomForm(req: IpcInvokeMap['form:attach-room-form']['req']): Promise<IpcInvokeMap['form:attach-room-form']['res']>
+  getFormResponses(): Promise<IpcInvokeMap['form:responses-get']['res']>
+  formManualGrade(req: IpcInvokeMap['form:manual-grade']['req']): Promise<IpcInvokeMap['form:manual-grade']['res']>
+  formRegradeAll(req: IpcInvokeMap['form:regrade-all']['req']): Promise<IpcInvokeMap['form:regrade-all']['res']>
+  exportFormCsv(): Promise<IpcInvokeMap['form:export-csv']['res']>
+  saveZtresults(req: IpcInvokeMap['form:save-ztresults']['req']): Promise<IpcInvokeMap['form:save-ztresults']['res']>
+  loadZtresults(req: IpcInvokeMap['form:load-ztresults']['req']): Promise<IpcInvokeMap['form:load-ztresults']['res']>
+  openFormArtifact(req: IpcInvokeMap['form:artifact-open']['req']): Promise<IpcInvokeMap['form:artifact-open']['res']>
   /* ---------- Event subscribe (คืน unsubscribe() กัน memory leak ใน React) ---------- */
   onRoleChanged(listener: (event: RoleChangedEvent) => void): Unsubscribe
   onEvent<C extends IpcEventChannel>(

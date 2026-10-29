@@ -91,6 +91,17 @@ const api: ZtExamApi = {
   loadZtform: (req) => call('form:load-ztform', req),
   listSavedForms: () => call('host:list-saved-forms', undefined),
 
+  /* ---------- Dynamic Form — Responses/Grading/Export (Phase 7) ---------- */
+  getFormState: () => call('form:ztform-state', undefined),
+  attachRoomForm: (req) => call('form:attach-room-form', req),
+  getFormResponses: () => call('form:responses-get', undefined),
+  formManualGrade: (req) => call('form:manual-grade', req),
+  formRegradeAll: (req) => call('form:regrade-all', req),
+  exportFormCsv: () => call('form:export-csv', undefined),
+  saveZtresults: (req) => call('form:save-ztresults', req),
+  loadZtresults: (req) => call('form:load-ztresults', req),
+  openFormArtifact: (req) => call('form:artifact-open', req),
+
   onRoleChanged: (listener) => subscribe('app:role-changed', listener),
   onEvent: (channel, listener) => subscribe(channel, listener)
 }
