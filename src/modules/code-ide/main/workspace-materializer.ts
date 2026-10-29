@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { VirtualEntry } from '../shared/code-schema'
 import { assertPathInside, buildSandboxEnv } from './anti-delete-guard'
+import type { DepsCacheLayout } from './code-deps-cache'
 
 /* Phase 9 (9.3) — Workspace Materializer & Offline Library Linker
  * - เขียน VirtualProjectTree ลง Isolated Run Directory (os.tmpdir/ztcode-exec-<runId>)
@@ -14,6 +15,10 @@ export interface MaterializeResult {
   runDir: string
   writtenFiles: string[]
   env: NodeJS.ProcessEnv
+  /** env เสริมจาก offline libs (PYTHONPATH / NODE_PATH) — ผู้เรียก merge เข้า spawn env */
+  linkEnv: Record<string, string>
+  /** .jar จาก DependencyBundle — ผู้เรียกต่อท้าย -cp ตอน javac/java */
+  javaCpExtras: string[]
 }
 
 export function materializeExecutionSandbox(
@@ -22,11 +27,28 @@ export function materializeExecutionSandbox(
     runId?: string
     teacherOriginals?: readonly VirtualEntry[]
     extraEnv?: Record<string, string>
+    /** offline libs ที่แตกจาก blobs แล้ว (undefined = ไม่มี — รันด้วยโค้ดนักเรียนล้วน) */
+    depsCache?: DepsCacheLayout | undefined
   } = {}
 ): MaterializeResult {
   const runId = opts.runId ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const runDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ztcode-exec-')), runId)
   fs.mkdirSync(runDir, { recursive: true })
+  const linkEnv: Record<string, string> = {}
+  const javaCpExtras: string[] = []
+  if (opts.depsCache !== undefined) {
+    // node: junction เร็ว <5ms (+ NODE_PATH fallback กัน symlink ถูกบล็อก)
+    if (opts.depsCache.nodeModulesDir !== undefined) {
+      linkNodeModules(runDir, opts.depsCache.nodeModulesDir)
+      linkEnv.NODE_PATH = [opts.depsCache.nodeModulesDir, linkEnv.NODE_PATH ?? process.env.NODE_PATH ?? '']
+        .filter((s) => s !== '')
+        .join(path.delimiter)
+    }
+    if (opts.depsCache.sitePackagesDirs.length > 0) {
+      linkEnv.PYTHONPATH = pythonPathFor(runDir, opts.depsCache.sitePackagesDirs.join(path.delimiter))
+    }
+    javaCpExtras.push(...opts.depsCache.jarFiles)
+  }
 
   // รวม teacher originals (readOnly/hidden) ทับเสมอ — กันนักเรียนแก้ไฟล์ล็อกผ่านดิสก์
   const merged = new Map<string, VirtualEntry>()
@@ -53,7 +75,7 @@ export function materializeExecutionSandbox(
     }
     writtenFiles.push(e.path)
   }
-  return { runDir, writtenFiles, env: buildSandboxEnv(runDir, opts.extraEnv) }
+  return { runDir, writtenFiles, env: buildSandboxEnv(runDir, opts.extraEnv), linkEnv, javaCpExtras }
 }
 
 /** ล้าง runDir หลังรันเสร็จ (คืนพอร์ต/ดิสก์) — เรียกใน finally เสมอ */

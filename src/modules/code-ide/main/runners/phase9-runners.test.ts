@@ -35,6 +35,16 @@ describe('Phase 9.2 — Anti-Delete Guard', () => {
     ])
     expect(hits).toHaveLength(0)
   })
+  it('db.exec / PDO::exec (API ฐานข้อมูล) ไม่โดน flag แต่ exec() ลอย ๆ โดน', () => {
+    const legit = scanDestructiveCode([
+      { path: 'server.js', kind: 'file', content: 'db.prepare("INSERT INTO users(name) VALUES (?)").run(name); db.exec("CREATE TABLE t(a)");', encoding: 'utf8', readOnly: false, allowStudentCreateInside: true, hiddenFromStudent: false }
+    ])
+    expect(legit).toHaveLength(0)
+    const evil = scanDestructiveCode([
+      { path: 'evil.php', kind: 'file', content: '<?php exec("rm -rf /");', encoding: 'utf8', readOnly: false, allowStudentCreateInside: true, hiddenFromStudent: false }
+    ])
+    expect(evil.length).toBeGreaterThanOrEqual(1)
+  })
   it('กัน path traversal', () => {
     expect(() => assertPathInside('/tmp/base', '../../etc/passwd')).toThrow()
     expect(() => assertPathInside('/tmp/base', 'src/a.py')).not.toThrow()

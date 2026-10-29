@@ -11,7 +11,7 @@ export interface FrontendBundleResult {
 
 export async function bundleFrontend(
   entryPointAbs: string,
-  opts: { absWorkingDir: string; minify?: boolean } = { absWorkingDir: '' }
+  opts: { absWorkingDir?: string; minify?: boolean; nodePaths?: string[] } = {}
 ): Promise<FrontendBundleResult> {
   try {
     // dynamic resolve ผ่าน createRequire — ไม่ผูก static import (esbuild อาจยังไม่ถูก npm install ในบางเครื่อง)
@@ -28,6 +28,8 @@ export async function bundleFrontend(
       format: 'iife',
       platform: 'browser',
       absWorkingDir: opts.absWorkingDir || undefined,
+      // offline vendor libs ของครู (DependencyBundle) — resolve ได้โดยไม่ต่อเน็ต
+      ...(opts.nodePaths !== undefined && opts.nodePaths.length > 0 ? { nodePaths: opts.nodePaths } : {}),
       loader: { '.ts': 'ts', '.tsx': 'tsx', '.jsx': 'jsx', '.css': 'css' },
       logLevel: 'silent'
     })

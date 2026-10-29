@@ -59,17 +59,86 @@ export async function runSqliteTest(
   }
 }
 
+/** เปรียบเทียบผล SELECT กับ expected — ใช้ร่วมกับ grader ตรวจ verifyDb หลังยิง API */
+export function compareSqlResult(
+  expectedColumns: string[],
+  expectedRows: unknown[][],
+  checkColumnOrder: boolean,
+  checkRowOrder: boolean,
+  actualColumns: string[],
+  actualRows: unknown[][]
+): { passed: boolean; columnOk: boolean; rowOk: boolean } {
+  const colOk = checkColumnOrder
+    ? JSON.stringify(actualColumns) === JSON.stringify(expectedColumns)
+    : expectedColumns.every((c) => actualColumns.includes(c)) && actualColumns.length === expectedColumns.length
+  const norm = (r: unknown[][]): string =>
+    JSON.stringify(checkRowOrder ? r : [...r].map((x) => JSON.stringify(x)).sort())
+  const rowOk = norm(actualRows.map((r) => r.map(normalizeCell))) === norm(expectedRows as unknown[][])
+  return { passed: colOk && rowOk, columnOk: colOk, rowOk: rowOk }
+}
+
 function compare(test: SqlTestCase, cols: string[], rows: unknown[][], note: string): SqlRunResult {
-  const expCols = test.expectedColumns
-  const colOk = test.checkColumnOrder
-    ? JSON.stringify(cols) === JSON.stringify(expCols)
-    : expCols.every((c) => cols.includes(c)) && cols.length === expCols.length
-  const norm = (r: unknown[][]): string => JSON.stringify(test.checkRowOrder ? r : [...r].map((x) => JSON.stringify(x)).sort())
-  const rowOk = norm(rows.map((r) => r.map(normalizeCell))) === norm(test.expectedRows as unknown[][])
-  const passed = colOk && rowOk
+  const { passed, columnOk, rowOk } = compareSqlResult(
+    test.expectedColumns,
+    test.expectedRows as unknown[][],
+    test.checkColumnOrder,
+    test.checkRowOrder,
+    cols,
+    rows
+  )
   return {
     testId: test.testId, passed, actualColumns: cols, actualRows: rows,
-    note: passed ? `✅ ผ่าน — ${note}` : `❌ ไม่ตรง (คอลัมน์ ${colOk ? 'ถูก' : 'ผิด'} / แถว ${rowOk ? 'ถูก' : 'ผิด'})`
+    note: passed ? `✅ ผ่าน — ${note}` : `❌ ไม่ตรง (คอลัมน์ ${columnOk ? 'ถูก' : 'ผิด'} / แถว ${rowOk ? 'ถูก' : 'ผิด'})`
+  }
+}
+
+/**
+ * รัน SQL ตามใจครูบนฐานข้อมูลจำลอง (Inspector SQL Workbench):
+ * seed ใหม่ทุกครั้ง + รัน studentSql ของนักเรียนก่อน (ถ้ามี) แล้วรัน query ของครู
+ * คืนคอลัมน์/แถวจริง (cap 200 แถว) — ไม่ตรวจให้คะแนน
+ */
+export async function queryStudentDatabase(
+  seedSql: string,
+  studentSql: string,
+  teacherSql: string,
+  limit = 200
+): Promise<{ columns: string[]; rows: unknown[][]; note: string }> {
+  try {
+    const { default: Database } = await import('better-sqlite3')
+    const db = new Database(':memory:')
+    try {
+      db.exec('PRAGMA foreign_keys = ON')
+      db.exec(seedSql === '' ? 'CREATE TABLE IF NOT EXISTS _noop(id INTEGER);' : seedSql)
+      const trimmedStudent = studentSql.trim()
+      if (trimmedStudent !== '' && !/^\s*(SELECT|WITH)\b/i.test(trimmedStudent)) {
+        db.exec(trimmedStudent)
+      }
+      const trimmed = teacherSql.trim()
+      if (trimmed === '') return { columns: [], rows: [], note: 'พิมพ์ SQL แล้วกดรัน' }
+      if (/^\s*ATTACH\b/i.test(trimmed)) {
+        return { columns: [], rows: [], note: '⛔ บล็อก ATTACH — กระโดดออกนอก DB ไม่ได้' }
+      }
+      if (/^\s*(SELECT|WITH|PRAGMA|EXPLAIN)\b/i.test(trimmed)) {
+        const stmt = db.prepare(trimmed)
+        const cols = stmt.columns().map((c: { name: string }) => c.name)
+        const all = (stmt.all() as Array<Record<string, unknown>>).map((r) => cols.map((c) => normalizeCell(r[c])))
+        return {
+          columns: cols.slice(0, 64),
+          rows: all.slice(0, limit).map((r) => r.slice(0, 64)),
+          note: `✅ ${all.length} แถว${all.length > limit ? ` (แสดง ${limit} แรก)` : ''}`
+        }
+      }
+      db.exec(trimmed)
+      return { columns: [], rows: [], note: '✅ รันคำสั่งแก้ไขแล้ว — พิมพ์ SELECT ดูผล' }
+    } finally {
+      try {
+        db.close()
+      } catch {
+        /* noop */
+      }
+    }
+  } catch (err) {
+    return { columns: [], rows: [], note: `⛔ SQLite error: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown'}` }
   }
 }
 

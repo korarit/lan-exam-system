@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { materializeExecutionSandbox, teardownRunDir } from '../workspace-materializer'
 import { buildSandboxEnv, scanDestructiveCode } from '../anti-delete-guard'
+import type { DepsCacheLayout } from '../code-deps-cache'
 import { authorizedChildProcesses } from '../authorized-process-registry'
 import { typedInputsToStdin, type CliTestCase, type SupportedCodeLanguage, type VirtualEntry } from '../../shared/code-schema'
 
@@ -32,7 +33,7 @@ function stdinFor(t: CliTestCase): string {
 }
 
 function buildCommand(
-  language: SupportedCodeLanguage, runDir: string, entryPoint: string
+  language: SupportedCodeLanguage, runDir: string, entryPoint: string, extraCp: string[] = []
 ): { cmd: string; args: string[]; cwd: string } | { error: string } {
   const absEntry = path.join(runDir, entryPoint)
   switch (language) {
@@ -41,11 +42,12 @@ function buildCommand(
     case 'javascript': case 'node-backend':
       return { cmd: 'node', args: [absEntry], cwd: runDir }
     case 'typescript':
-      // ใช้ node + ts transpile หน้างานไม่ได้ — ต้อง bundle ด้วย esbuild ก่อน (frontend-runner)
-      return { error: 'TypeScript ต้อง bundle ด้วย esbuild ก่อนรัน (ดู frontend-runner) — หรือรันผ่าน tsx ถ้าติดตั้งในเครื่อง' }
+      // ใช้ node + ts transpile หน้างานไม่ได้ — ต้อง bundle ด้วย esbuild ก่อน (ดู frontend-runner)
+      return { error: 'TypeScript ต้อง bundle ด้วย esbuild ก่อนรัน — หรือรันผ่าน tsx ถ้าติดตั้งในเครื่อง' }
     case 'java': case 'java-backend': {
       // คอมไพล์แยกก่อนรัน — ผู้เรียกต้อง javac ก่อน (ทำแบบ sync ใน runCliTest ด้านล่าง)
-      return { cmd: 'java', args: ['-Dfile.encoding=UTF-8', '-cp', runDir, mainClassOf(entryPoint)], cwd: runDir }
+      const cp = [runDir, ...extraCp].join(path.delimiter)
+      return { cmd: 'java', args: ['-Dfile.encoding=UTF-8', '-cp', cp, mainClassOf(entryPoint)], cwd: runDir }
     }
     case 'php': case 'php-backend':
       return { cmd: 'php', args: [absEntry], cwd: runDir }
@@ -70,7 +72,12 @@ export async function runCliTest(
   language: SupportedCodeLanguage,
   entryPoint: string,
   test: CliTestCase,
-  opts: { teacherOriginals?: readonly VirtualEntry[]; extraPathDirs?: string[] | undefined } = {}
+  opts: {
+    teacherOriginals?: readonly VirtualEntry[]
+    extraPathDirs?: string[] | undefined
+    /** offline libs (junction + PYTHONPATH + jars) — undefined = ไม่มี */
+    depsCache?: DepsCacheLayout | undefined
+  } = {}
 ): Promise<CliRunResult> {
   // Guard: สแกนโค้ดลบไฟล์ก่อนรัน
   const hits = scanDestructiveCode(entries)
@@ -84,11 +91,13 @@ export async function runCliTest(
     }
   }
 
-  const { runDir } = materializeExecutionSandbox(entries, {
-    ...(opts.teacherOriginals !== undefined ? { teacherOriginals: opts.teacherOriginals } : {})
+  const mat = materializeExecutionSandbox(entries, {
+    ...(opts.teacherOriginals !== undefined ? { teacherOriginals: opts.teacherOriginals } : {}),
+    ...(opts.depsCache !== undefined ? { depsCache: opts.depsCache } : {})
   })
+  const { runDir } = mat
   try {
-    const built = buildCommand(language, runDir, entryPoint)
+    const built = buildCommand(language, runDir, entryPoint, mat.javaCpExtras)
     if ('error' in built) {
       return { testId: test.testId, passed: null, actualStdout: '', stderr: built.error, exitCode: null, timedOut: false, note: built.error }
     }
@@ -101,7 +110,8 @@ export async function runCliTest(
         : {}
     const result = await spawnWithTimeout(built.cmd, built.args, {
       cwd: built.cwd,
-      env: buildSandboxEnv(runDir, pathExtra),
+      // offline libs (PYTHONPATH/NODE_PATH) รวมเข้ากับ sandbox env ที่ล้างแล้ว
+      env: buildSandboxEnv(runDir, { ...pathExtra, ...mat.linkEnv }),
       stdin,
       timeoutMs: test.timeoutMs,
       reason: `cli-run:${language}`

@@ -262,19 +262,40 @@ export const CliTestCaseSchema = z.object({
 })
 export type CliTestCase = z.infer<typeof CliTestCaseSchema>
 
+/**
+ * Assertion API ใน HeadlessDomRunner (รันหลัง bundle + flush UI 300ms):
+ * - `document`, `window` — DOM จริงของหน้าที่เปิด (route)
+ * - `assert(cond, message?)` — ไม่ผ่านให้ throw ทันที
+ * - `click(selector)` — helper กด element แล้วรอ re-render 1 เฟรม
+ * - จบสคริปต์โดยไม่ throw = ผ่าน (รองรับ async: คืน Promise ได้)
+ * ข้อจำกัด: CSS คำนวณได้เฉพาะ inline style/attribute (jsdom ไม่วาง layout)
+ */
 export const DomTestCaseSchema = z.object({
   testId: z.string().min(1).max(64),
   kind: z.literal('dom-assertion'),
   title: z.string().min(1).max(300),
   /** หน้าที่จะเปิดตรวจ เช่น '/', '/index.html' หรือ Route ของ React */
   route: z.string().max(300).default('/'),
-  /** สคริปต์ assertion (รันใน Headless DOM Runner — Phase 9) */
+  /** สคริปต์ assertion — ดู API ด้านบน */
   assertionScript: z.string().min(1).max(50_000),
   visibility: TestVisibilitySchema,
   points: z.number().positive().max(10000),
   timeoutMs: z.number().int().positive().max(120_000).default(5000)
 })
 export type DomTestCase = z.infer<typeof DomTestCaseSchema>
+
+/** ตรวจสถานะฐานข้อมูลหลังยิง API (เช่น POST /api/users แล้ว SELECT ตรวจว่าแถวเข้าจริง) */
+export const HttpApiDbCheckSchema = z.object({
+  /** SELECT ตรวจสถานะ — รันบนไฟล์ .sqlite ที่เซิร์ฟเวอร์นักเรียนสร้างใน runDir */
+  query: z.string().min(1).max(100_000),
+  expectedColumns: z.array(z.string().min(1).max(128)).max(64),
+  expectedRows: z
+    .array(z.array(z.union([z.string(), z.number(), z.null()])).max(64))
+    .max(5000),
+  checkColumnOrder: z.boolean().default(true),
+  checkRowOrder: z.boolean().default(true)
+})
+export type HttpApiDbCheck = z.infer<typeof HttpApiDbCheckSchema>
 
 export const HttpApiTestCaseSchema = z.object({
   testId: z.string().min(1).max(64),
@@ -294,6 +315,8 @@ export const HttpApiTestCaseSchema = z.object({
     )
     .min(1)
     .max(20),
+  /** ไม่บังคับ — มีแล้ว grader จะหาฐานข้อมูล SQLite ของเซิร์ฟเวอร์ใน runDir มาตรวจเพิ่ม */
+  verifyDb: HttpApiDbCheckSchema.optional(),
   visibility: TestVisibilitySchema,
   points: z.number().positive().max(10000),
   timeoutMs: z.number().int().positive().max(120_000).default(5000)

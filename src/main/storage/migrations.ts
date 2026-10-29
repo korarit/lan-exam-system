@@ -210,5 +210,94 @@ export const MIGRATIONS: Migration[] = [
         summary_json TEXT NOT NULL DEFAULT '{}'
       );
     `
+  },
+  {
+    /** Phase 10: Backend ของโมดูล code-ide — autosave snapshots, ส่งงานโปรเจกต์, รายงานการตรวจ */
+    version: 7,
+    sql: `
+      -- Autosave snapshot ล่าสุดของโปรเจกต์นักเรียน (ทับค่าล่าสุดของคู่นี้เสมอ)
+      -- ciphertext = VirtualEntry[] ทั้งโปรเจกต์ (JSON) เข้ารหัส AES-256-GCM ต่อห้อง
+      CREATE TABLE IF NOT EXISTS code_draft_snapshots (
+        session_id     TEXT NOT NULL REFERENCES exam_sessions(id),
+        student_id     TEXT NOT NULL,
+        package_id     TEXT NOT NULL,
+        entries_count  INTEGER NOT NULL DEFAULT 0,
+        project_bytes  INTEGER NOT NULL DEFAULT 0,
+        ciphertext     TEXT NOT NULL,
+        iv             TEXT NOT NULL,
+        tag            TEXT NOT NULL,
+        hmac           TEXT NOT NULL,
+        updated_at_ms  INTEGER NOT NULL,
+        PRIMARY KEY (session_id, student_id, package_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_code_drafts_session
+        ON code_draft_snapshots(session_id, student_id);
+
+      -- งานโปรเจกต์ที่นักเรียนกดส่ง (ฉบับล่าสุดของคู่นี้)
+      -- สถานะการตรวจ + คะแนนเก็บแบบ plaintext เพื่อให้ Dashboard/Export เร็ว
+      CREATE TABLE IF NOT EXISTS code_submissions (
+        session_id     TEXT NOT NULL REFERENCES exam_sessions(id),
+        student_id     TEXT NOT NULL,
+        package_id     TEXT NOT NULL,
+        status         TEXT NOT NULL CHECK (status IN ('queued','grading','graded','blocked','error')) DEFAULT 'queued',
+        earned_points  REAL NOT NULL DEFAULT 0,
+        manual_points  REAL,
+        passed_count   INTEGER NOT NULL DEFAULT 0,
+        total_count    INTEGER NOT NULL DEFAULT 0,
+        file_count     INTEGER NOT NULL DEFAULT 0,
+        blocked_reason TEXT,
+        graded_at_ms   INTEGER,
+        ciphertext     TEXT NOT NULL,
+        iv             TEXT NOT NULL,
+        tag            TEXT NOT NULL,
+        hmac           TEXT NOT NULL,
+        submitted_at_ms INTEGER NOT NULL,
+        updated_at_ms  INTEGER NOT NULL,
+        PRIMARY KEY (session_id, student_id, package_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_code_submissions_session
+        ON code_submissions(session_id, student_id);
+
+      -- รายงานผลตรวจราย test case (JSON, ไม่เข้ารหัส — ไม่มีโค้ดนักเรียน มีแค่ผล)
+      CREATE TABLE IF NOT EXISTS code_grading_reports (
+        session_id     TEXT NOT NULL REFERENCES exam_sessions(id),
+        student_id     TEXT NOT NULL,
+        package_id     TEXT NOT NULL,
+        passed_count   INTEGER NOT NULL DEFAULT 0,
+        total_count    INTEGER NOT NULL DEFAULT 0,
+        earned_points  REAL NOT NULL DEFAULT 0,
+        total_points   REAL NOT NULL DEFAULT 0,
+        report_json    TEXT NOT NULL DEFAULT '[]',
+        graded_at_ms   INTEGER NOT NULL,
+        PRIMARY KEY (session_id, student_id, package_id)
+      );
+
+      -- ประวัติ "ตรวจใหม่ทั้งห้อง" ของ code-ide (Re-grade All)
+      CREATE TABLE IF NOT EXISTS code_regrade_history (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id   TEXT NOT NULL REFERENCES exam_sessions(id),
+        run_at_ms    INTEGER NOT NULL,
+        trigger_source TEXT NOT NULL DEFAULT 'teacher-ui',
+        package_sha256 TEXT NOT NULL,
+        summary_json TEXT NOT NULL DEFAULT '{}'
+      );
+    `
+  },
+  {
+    /** Phase 10 (ค้าง): คอมเมนต์รายไฟล์ของครูใน Mirror IDE Inspector */
+    version: 8,
+    sql: `
+      CREATE TABLE IF NOT EXISTS code_comments (
+        session_id     TEXT NOT NULL REFERENCES exam_sessions(id),
+        student_id     TEXT NOT NULL,
+        package_id     TEXT NOT NULL,
+        path           TEXT NOT NULL,
+        comment        TEXT NOT NULL,
+        updated_at_ms  INTEGER NOT NULL,
+        PRIMARY KEY (session_id, student_id, package_id, path)
+      );
+      CREATE INDEX IF NOT EXISTS idx_code_comments_student
+        ON code_comments(session_id, student_id, package_id);
+    `
   }
 ]
