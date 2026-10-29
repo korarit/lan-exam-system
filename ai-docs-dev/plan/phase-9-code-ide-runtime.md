@@ -8,7 +8,8 @@
 4. **Database / SQL Projects (`sql-sqlite` & Backend + DB)** ที่อนุญาตให้ใช้คำสั่งลบข้อมูล/ลบตาราง (`DELETE`, `DROP TABLE`, `TRUNCATE`, `UPDATE`) ได้อย่างอิสระ โดยระบบจะเก็บต้นฉบับ (`Master Seed`) ไว้และ **Spawn ฐานข้อมูล SQLite ตัวใหม่พร้อมข้อมูลตั้งต้นเดิม (Original Seed Data)** ให้ทุกครั้งที่กดรันหรือตรวจแต่ละ Test Case!
 
 ### สิ่งที่ต้องได้เมื่อจบ Phase 9
-- **ระบบตรวจสอบ Runtime แบบไม่ดาวน์โหลดแยก (`Runtime Detector & User-Installed Policy`):** ค้นหาและตรวจสอบความพร้อมของ `gcc`/`clang` (C), `g++`/`clang++` (C++), `rustc`/`cargo` (Rust), `go` (Golang), `php` (PHP), `java`/`javac` (Java), `python`/`python3` (Python), และ `node` (Node.js) ในเครื่อง **โดยแอปจะไม่ดาวน์โหลดหรือติดตั้ง Runtime แยกให้อัตโนมัติ** หากเครื่องของครูหรือนักเรียนยังไม่มี Runtime ของภาษาที่ใช้ ระบบจะแจ้งเตือนชัดเจนว่าขาดตัวไหนเพื่อให้ผู้ใช้ติดตั้งลงเครื่องเอง พร้อมปุ่มกดตรวจสอบซ้ำ (`Re-check`) หรือเลือกพาธเอง
+- **ฟอร์ม Input/Output สไตล์ LeetCode (`CliTypedInput` + `TestCaseEditor`):** ครูเพิ่ม input ทีละตัวพร้อมบอก type (`string` / `int` / `float` / `bool`) + ค่า ระบบรวมเป็น `stdin` อัตโนมัติ (`typedInputsToStdin`) และเทียบ `expectedStdout` แบบ exact-match — ปล่อยว่างได้ถ้าตั้งโจทย์เฉย ๆ ไม่ตรวจอัตโนมัติ
+- **ระบบตรวจสอบ Runtime แบบไม่ดาวน์โหลดแยก (`Runtime Detector & User-Installed Policy` → `runtime-locator.ts` ✅):** ค้นหาและตรวจสอบความพร้อมของ `gcc`/`clang` (C), `g++`/`clang++` (C++), `rustc`/`cargo` (Rust), `go` (Golang), `php` (PHP), `java`/`javac` (Java), `python`/`python3` (Python), และ `node` (Node.js) ในเครื่อง **โดยแอปจะไม่ดาวน์โหลดหรือติดตั้ง Runtime แยกให้อัตโนมัติ** หากเครื่องของครูหรือนักเรียนยังไม่มี Runtime ของภาษาที่ใช้ ระบบจะแจ้งเตือนชัดเจนว่าขาดตัวไหนเพื่อให้ผู้ใช้ติดตั้งลงเครื่องเอง พร้อมปุ่มกดตรวจสอบซ้ำ (`Re-check`) หรือเลือกพาธเอง
 - **ระบบป้องกันการลบไฟล์และทำลายไฟล์บนเครื่องครู (`Teacher & Student Runtime Anti-Delete File Guard` — สำคัญสูงสุด):** ป้องกันไม่ให้โค้ดของนักเรียนในทุกภาษาสั่งลบไฟล์งานในโฟลเดอร์ของครู (`<TeacherSelectedFolder>/<studentId>`) หรือลบไฟล์ระบบ (ส่วนในโจทย์ **SQL** อนุญาตให้ลบข้อมูล/ลบตารางในฐานข้อมูลจำลองได้เต็มที่ เพราะระบบจะ Spawn ฐานข้อมูลใหม่พร้อมข้อมูลเดิมจากต้นฉบับให้ทุกครั้ง)
 - ระบบ **Workspace Materializer & Offline Library Linker** ที่เขียนโครงสร้างโฟลเดอร์หลายระดับของนักเรียนลงใน `Isolated Run Directory` พร้อมเชื่อมโยงโฟลเดอร์ Libraries ทุกภาษา
 - ตัวรันเฉพาะทางสำหรับทั้ง **4 หมวดหมู่โจทย์ (CLI Runner, Frontend Bundler & DOM Runner, Backend Ephemeral Server & HTTP Tester, และ SQLite Respawning Sandbox Runner)** พร้อมระบบฆ่าโปรเซสทั้งตระกูล (Process Tree Kill)
@@ -28,12 +29,13 @@
    - **Java (`javac` & `java`):** ค้นหาจาก `JAVA_HOME`, System PATH, และโฟลเดอร์มาตรฐานบนเครื่อง พร้อมทดสอบรัน `javac -version` และ `java -version`
    - **Python (`python3` / `python`):** ค้นหาจาก System PATH และพาธมาตรฐาน พร้อมทดสอบรัน `python --version`
    - **Node.js (`node`):** ค้นหา `node` ในเครื่อง พร้อมทดสอบรัน `node --version` (ส่วน `esbuild` และ `better-sqlite3` สำหรับ SQL เป็นเอนจินภายในของตัวแอปอยู่แล้ว)
-2. **การแจ้งเตือนเมื่อไม่พบ Runtime (`MissingRuntimePrompt` ทั้งฝั่งครูและฝั่งนักเรียน):**
-   - **ฝั่งครู (ตอนสร้างโจทย์หรือเปิดห้องสอบ):** หากครูเลือกโจทย์ภาษาใด (เช่น C++, Rust, Go, PHP, Java, Python) แต่เครื่องครูยังไม่ได้ลง Compiler/Runtime ของภาษานั้น ระบบจะแสดงแบนเนอร์แจ้งเตือนทันที:
+2. **การแจ้งเตือนเมื่อไม่พบ Runtime (`MissingRuntimePrompt` ทั้งฝั่งครูและฝั่งนักเรียน — `renderer/MissingRuntimePrompt.tsx`):**
+   - **ฝั่งครู (ตอนสร้างโจทย์ใน `CodeExamBuilder`):** หากครูเลือกโจทย์ภาษาใด (เช่น C++, Rust, Go, PHP, Java, Python) แต่เครื่องครูยังไม่ได้ลง Compiler/Runtime ของภาษานั้น ระบบจะแสดงแบนเนอร์แจ้งเตือนทันที:
      - เช่น `⚠️ ไม่พบ C++ Compiler (g++) / Go / PHP ในเครื่องของคุณ กรุณาติดตั้งลงในเครื่องด้วยตนเองก่อนใช้งานโหมดรันทดสอบและตรวจข้อสอบภาษานี้`
-     - มีปุ่ม **`🔄 ตรวจสอบใหม่อีกครั้ง (Re-scan)`** (กดได้ทันทีหลังติดตั้งเสร็จโดยไม่ต้องปิดแอป) และปุ่ม **`📂 เลือกโฟลเดอร์ที่ติดตั้งไว้ด้วยตนเอง (Browse SDK Path)`**
-   - **ฝั่งนักเรียน (ในหน้า Lobby ก่อนเริ่มสอบ):** เครื่องนักเรียนจะตรวจสอบเฉพาะ Runtime ของภาษาที่ชุดข้อสอบนั้นใช้จริง:
-     - หากไม่พบ จะแจ้งเตือนบนหน้าจอนักเรียนและส่งสถานะ `🔴 เครื่องที่ 18: ยังไม่ได้ติดตั้ง g++ / Go (กรุณาติดตั้งลงเครื่องก่อนเริ่มสอบ)` ไปแสดงบนหน้าจอครูทันที เพื่อให้ครูหรือนักเรียนติดตั้งเองให้เรียบร้อยแล้วกด **`🔄 ตรวจสอบอีกครั้ง`**
+     - มีปุ่ม **`🔄 ตรวจสอบใหม่อีกครั้ง (Re-scan)`** (กดได้ทันทีหลังติดตั้งเสร็จโดยไม่ต้องปิดแอป) และปุ่ม **`📂 เลือกโฟลเดอร์เอง`** ต่อ runtime ที่ขาด — เลือกผ่าน dialog (`code-ide:browse-sdk-path`) แล้วลงทะเบียน (`code-ide:add-sdk-path`) ตรวจ binary ทันที มีผลทั้งตอนเช็คและตอน spawn รันจริง (เติมนำหน้า PATH ผ่าน `getRuntimePathEntries`)
+   - **ฝั่งนักเรียน (ในหน้า IDE ก่อนเริ่มสอบ — `StudentCodeIdeWorkspace`):** เครื่องนักเรียนจะตรวจสอบเฉพาะ Runtime ของภาษาที่ชุดข้อสอบนั้นใช้จริง (`pkg.language`):
+     - หากไม่พบ จะแจ้งเตือนบนหน้าจอนักเรียนพร้อมปุ่ม **`🔄 ตรวจสอบอีกครั้ง`** และปุ่ม Browse โฟลเดอร์เองเช่นเดียวกับฝั่งครู
+     - หมายเหตุ: การส่งสถานะรายเครื่อง (`🔴 เครื่องที่ 18: ยังไม่ได้ติดตั้ง...`) ไปขึ้นจอครูยังไม่ทำใน Phase นี้ (ต้องต่อ protocol + host dashboard — ติดตามใน Phase 10) — ฝั่งครูเห็นเฉพาะตอนรันตรวจแล้ว runtime ขาด (error จาก runner)
 
 ---
 
@@ -126,39 +128,48 @@
 4. **Guaranteed Server Teardown:**
    - ทันทีที่รันจบแต่ละชุดทดสอบ จะสั่งฆ่า Process Tree ของเซิร์ฟเวอร์นักเรียนทันที เพื่อคืนพอร์ตและล้างฐานข้อมูลชั่วคราว
 
-#### 9.4.4 หมวด Database / SQL Runner — ลบข้อมูล/ลบตารางได้เต็มที่ พร้อมระบบ Spawn DB ใหม่พร้อม Data เดิมอัตโนมัติ (`src/modules/code-ide/main/runners/sql-runner.ts`)
-สำหรับการสอบวิชา Database / SQL (`sql-sqlite`):
-1. **Master Seed Preservation & Fresh Database Spawning (`spawnFreshDatabaseWithOriginalData`):**
+#### 9.4.4 หมวด Database / SQL Runner — SQLite เท่านั้น (`src/modules/code-ide/main/runners/sql-runner.ts`)
+สำหรับสอบวิชา Database / SQL (`sql-sqlite`) — **runtime เป็น SQLite (better-sqlite3) ทั้งฝั่งครูและนักเรียน ไม่ต้องตั้งเซิร์ฟเวอร์** (เลิกใช้ MySQL ภายนอกแล้ว; โค้ด `mysql-connection.ts` / ฟอร์ม host-port เก็บไว้แค่ให้ไฟล์ `.ztcode` เก่าอ่านได้):
+1. **2 โหมดข้อสอบ (`database.sqlMode` — ครูเลือกตอนสร้างโจทย์):**
+   - **`query` (มี table + data ให้แล้ว):** ครูอัปโหลด `db/seed.sql` (`CREATE TABLE` + `INSERT` ข้อมูลตั้งต้น) นักเรียนเขียน `SELECT` (หรือ `DELETE/UPDATE`) แล้วระบบเทียบผลกับ `expectedColumns` / `expectedRows`
+   - **`create-table` (ให้สร้าง table เอง):** เริ่มจาก DB ว่าง นักเรียนเขียน DDL (`CREATE TABLE ...` + `INSERT`) แล้วระบบรัน `testCase.verificationQuery` ของอาจารย์ตรวจ (เช่น `SELECT name FROM students WHERE id = 1`)
+2. **Master Seed Preservation & Fresh Database Spawning (`spawnFreshDatabaseWithOriginalData`):**
    - เก็บสคริปต์สร้างตารางและข้อมูลตั้งต้นของอาจารย์ (`Master Seed`: `seed.sql` หรือ `master.sqlite` รวมถึง `setupSqlOverride` ของ Hidden Test Cases) ไว้เป็นต้นฉบับที่ห้ามแก้ไขในหน่วยความจำ/แคชของระบบ
    - **ทุกครั้งที่นักเรียนกดรัน หรือก่อนเริ่มรันแต่ละ Test Case:** ระบบจะ **Spawn (สร้าง) อินสแตนซ์ฐานข้อมูล SQLite ลูกใหม่เอี่ยม** แล้วโหลดโครงสร้างตารางและข้อมูลตั้งต้นเดิม (`Original Data`) เข้าไปใหม่ทุกครั้งภายในเวลา `< 3 ms` (ด้วย SQLite In-Memory / Backup API `masterDb.backup(ephemeralDb)`)!
-2. **Full Destructive SQL Allowance (`DELETE`, `DROP TABLE`, `TRUNCATE`, `ALTER`, `UPDATE`):**
-   - นักเรียนสามารถเขียนและรันคำสั่ง **`DELETE FROM ...`**, **`DROP TABLE ...`**, **`ALTER TABLE ...`**, **`UPDATE ...`**, หรือ **`INSERT INTO ...`** ได้อย่างอิสระ 100% โดยไม่ต้องกลัวว่าข้อมูลตั้งต้นของโจทย์จะพังหรือหายถาวร
-   - เพราะแม้คำสั่งของนักเรียนจะลบข้อมูลทิ้งทั้งหมด (`DELETE FROM users;`) หรือลบตารางทิ้ง (`DROP TABLE users;`) ในรอบนั้น ทันทีที่รัน Test Case ถัดไป หรือเมื่อนักเรียนกดรันใหม่อีกครั้ง ระบบก็จะ **Spawn ฐานข้อมูลลูกใหม่ที่มีข้อมูลตั้งต้นเดิมกลับมาให้ครบถ้วน 100% เสมอ!**
+3. **Full Destructive SQL Allowance (`DELETE`, `DROP TABLE`, `TRUNCATE`, `ALTER`, `UPDATE`):**
+   - นักเรียนสามารถเขียนและรันคำสั่ง **`DELETE FROM ...`**, **`DROP TABLE ...`**, **`ALTER TABLE ...`**, **`UPDATE ...`**, หรือ **`INSERT INTO ...`** ได้อย่างอิสระ 100% โดยไม่ต้องกลัวว่าข้อมูลตั้งต้นของโจทย์จะพังหรือหายถาวร — ทันทีที่รัน Test Case ถัดไป หรือกดรันใหม่ ระบบก็ **Spawn ฐานข้อมูลลูกใหม่ที่มีข้อมูลตั้งต้นเดิมกลับมาให้ครบถ้วน 100% เสมอ!**
    - ทั้งนี้ยังคงบล็อกเฉพาะคำสั่ง `ATTACH DATABASE` ผ่าน `db.setAuthorizer(...)` เพื่อไม่ให้คำสั่ง SQL กระโดดออกไปเปิดไฟล์อื่นบนดิสก์ของเครื่องครูหรือเครื่องนักเรียน
-3. **Query Execution & Result Comparison:**
+4. **Schema Viewer Mode (`database.exposeDbViewerToStudent` + `viewerRole`):**
+   - **ฝั่งครูดู schema ได้ตลอด** (Builder + พรีวิว `viewerRole="teacher"`) ไม่ว่าค่านี้จะเป็นอะไร
+   - **ฝั่งนักเรียนดูได้เฉพาะเมื่อครูเปิด** — ปิดแล้วแผง Schema จะแสดง `🔒 ครูปิด Schema Viewer ไว้` แทน นักเรียนยังเขียน SQL และดูผลตรวจได้ปกติ
+   - โหมด `create-table`: schema ในจอจะอัปเดตสดจาก DDL ที่นักเรียนกำลังเขียน (พิมพ์ `CREATE TABLE` แล้วเห็นตารางขึ้นทันที พร้อมป้าย `สร้างเอง`)
+5. **Query Execution & Result Comparison:**
    - รันไฟล์ `.sql` ของนักเรียนบนฐานข้อมูลที่เพิ่ง Spawn ขึ้นมาใหม่ (พร้อมจำกัดเวลาผ่าน `db.interrupt()` หากเขียน Cross Join ที่ค้างนานเกิน `timeoutMs`)
-   - กรณีโจทย์เป็นคำสั่ง `SELECT`: นำผลลัพธ์ `columns` และ `rows` ที่ได้มาเปรียบเทียบกับ `expectedColumns` และ `expectedRows`
-   - กรณีโจทย์เป็นคำสั่งแก้ไขหรือลบข้อมูล (`DELETE / UPDATE / INSERT / CREATE / DROP`): รันคำสั่งของนักเรียนก่อน แล้วรัน `testCase.verificationQuery` ของอาจารย์บนฐานข้อมูลลูกนั้นเพื่อตรวจว่าข้อมูลที่ถูกลบหรือถูกอัปเดตตรงตามโจทย์หรือไม่!
+   - กรณีโจทย์เป็นคำถาม `SELECT`: นำผลลัพธ์ `columns` และ `rows` ที่ได้มาเปรียบเทียบกับ `expectedColumns` และ `expectedRows`
+   - กรณีโจทย์เป็นคำสั่งแก้ไข/สร้าง (`DELETE / UPDATE / INSERT / CREATE / DROP`): รันคำสั่งของนักเรียนก่อน แล้วรัน `testCase.verificationQuery` ของอาจารย์บนฐานข้อมูลลูกนั้นเพื่อตรวจผล!
 
 ---
 
-### 9.5 การทำงานร่วมกับระบบตรวจจับการโกง (`Phase 3a Guard Integration`)
-1. **PID Registration with `ProcessInspector`:**
-   - ทุกโปรเซสที่เกิดจาก `ProcessSandbox` (ทั้ง CLI, Backend Server, และ Compiler) จะลงทะเบียน `pid` เข้าสู่ `AuthorizedChildProcessRegistry` ชั่วคราว
+### 9.5 การทำงานร่วมกับระบบตรวจจับการโกง (`Phase 3a Guard Integration` — ทำแล้ว ✅)
+1. **PID Registration with `ProcessInspector` (`main/authorized-process-registry.ts`):**
+   - ทุกโปรเซสที่เกิดจาก Sandbox (CLI run ใน `cli-runner.spawnWithTimeout`, Backend Server ใน `backend-api-runner.spawnServer`) จะลงทะเบียน `pid` เข้าสู่ `AuthorizedChildProcessRegistry` ชั่วคราว (มีวันหมดอายุ + ตัด pid ที่ตายแล้ว) และ unregister ทันทีที่โปรเซสจบ/ถูก kill
+   - `ProcessInspector` ข้ามการฟ้อง pid ที่อนุญาตทั้งหมด (กัน false positive เช่น `SUSPICIOUS_COMPUTE_SPIKE` ใส่ `python.exe` ที่กำลังรันโค้ดนักเรียน) — ส่งผ่าน `isAuthorizedPid` จาก `GuardEngine`
 2. **Loopback-Only Allowance สำหรับโหมด Backend API (`NetworkInspector` Rule):**
-   - สำหรับโจทย์หมวด `backend`: อนุญาตให้โปรเซสลูกของโค้ดนักเรียนเปิดพอร์ตฟังและรับส่งข้อมูลเฉพาะบน **`127.0.0.1` (Loopback) ตามพอร์ต `PORT` ที่ได้รับจัดสรรเท่านั้น**
-   - หากโค้ดของนักเรียนพยายามเชื่อมต่อออกไปหา IP ภายนอกหรือยิง API หา AI ข้างนอก (`0.0.0.0` / External IP / DNS Query): `NetworkInspector` จะบล็อกและยิงแจ้งเตือนสีแดง **`STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL` (`CRITICAL`)** ไปยังหน้าจออาจารย์ทันที!
+   - สำหรับโจทย์หมวด `backend`: โปรเซสลูกของโค้ดนักเรียนคุยได้เฉพาะบน **`127.0.0.1` (Loopback)** ตามปกติ (ของเดิมข้าม loopback อยู่แล้ว)
+   - หากโปรเซสลูกที่อนุญาตพยายามเชื่อมต่อออกไปหา IP ภายนอกหรือยิง API หา AI ข้างนอก (`0.0.0.0` / External IP): `NetworkInspector` ยิงแจ้งเตือนสีแดง **`STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL` (`CRITICAL`, score 60, category `network-tunnel`)** พร้อม `pid/processName/peer` ไปยังหน้าจออาจารย์ทันที (แทนรหัส generic `DIRECT_SOCKET_PROXY_BYPASS` เฉพาะ socket นั้น — โปรเซสอื่นยังใช้รหัสเดิม)
 
 ---
 
 ## 3. Checklist งานย่อย (Implementation Checklist)
 
-- [ ] **9.1.1** พัฒนา `RuntimeLocator` ตรวจหา `javac`/`java`, `python`, `node` ในเครื่อง **โดยไม่ดาวน์โหลดแยก** พร้อมหน้าจอแจ้งเตือนให้ครูหรือนักเรียนติดตั้งเองเมื่อไม่พบ และปุ่ม `Re-scan` / `Browse Path`
-- [ ] **9.2.1** สร้าง **`AntiDeleteRuntimeGuard`** ป้องกันการลบไฟล์และเขียนไฟล์นอกพื้นที่ทดสอบครบทุกภาษา (Python `sys.addaudithook`, Node.js Preload `fs` & `child_process` lockdown, Java `-javaagent` bytecode guard, และ SQLite Authorizer)
-- [ ] **9.2.2** สร้าง `DestructiveCodeScanner` สแกนโค้ดก่อนรันบนเครื่องครูเพื่อดักจับคำสั่งอันตรายที่พยายามลบไฟล์หรือเรียก Shell
-- [ ] **9.3.1** สร้าง `WorkspaceMaterializer` และ `OfflineLibraryLinker` โดยแยกโฟลเดอร์เก็บงานจริงของครู (`<TeacherSelectedFolder>/<studentId>`) ออกจากโฟลเดอร์รันชั่วคราว (`ztcode-exec-<runId>`) 100%
-- [ ] **9.4.1** พัฒนา `CliMultiFileRunner`, `FrontendProjectRunner`, `BackendApiRunner`, และ `SqlDatabaseRunner` ให้ทำงานภายใต้ `AntiDeleteRuntimeGuard`
-- [ ] **9.5.1** เชื่อมต่อ `AuthorizedChildProcessRegistry` และกฎ Loopback-only สำหรับ Backend Sandbox เข้ากับ `ProcessInspector` และ `NetworkInspector` (Phase 3a)
+- [x] **9.1.1** พัฒนา `RuntimeLocator` (`main/runtime-locator.ts`) ตรวจหา `gcc/g++, rustc, go, php, javac/java, python, node` ในเครื่อง **โดยไม่ดาวน์โหลดแยก** พร้อมหน้าจอแจ้งเตือนให้ครูหรือนักเรียนติดตั้งเองเมื่อไม่พบ และปุ่ม `Re-scan` / `Browse Path`
+- [x] **9.2.1** สร้าง **`AntiDeleteRuntimeGuard`** (`main/anti-delete-guard.ts`: `buildSandboxEnv` ล้าง env + `phpSandboxArgs`/`nodeSandboxArgs`/`javaSandboxArgs` + SQLite Authorizer) ป้องกันการลบไฟล์และเขียนไฟล์นอกพื้นที่ทดสอบ
+- [x] **9.2.2** สร้าง `DestructiveCodeScanner` (`scanDestructiveCode`) สแกนโค้ดก่อนรันบนเครื่องครูเพื่อดักจับคำสั่งอันตรายที่พยายามลบไฟล์หรือเรียก Shell
+- [x] **9.3.1** สร้าง `WorkspaceMaterializer` (`main/workspace-materializer.ts`) และ `OfflineLibraryLinker` (`linkNodeModules`/`pythonPathFor`) โดยแยกโฟลเดอร์เก็บงานจริงของครู (`<TeacherSelectedFolder>/<studentId>`) ออกจากโฟลเดอร์รันชั่วคราว (`ztcode-exec-<runId>`) 100% + กัน path traversal
+- [x] **9.4.1** พัฒนา `runners/cli-runner.ts` (spawn + timeout + kill tree + เทียบ output), `runners/frontend-runner.ts` (esbuild offline bundle), `runners/backend-api-runner.ts` (ephemeral port + readiness probe + HTTP tester + teardown), และ `runners/sql-runner.ts` (SQLite/better-sqlite3 spawn ใหม่ทุก test — รองรับทั้งโหมด `query` และ `create-table` + Schema Viewer ตามสิทธิ์) ให้ทำงานภายใต้ `AntiDeleteRuntimeGuard`
+- [x] **9.4.2** ต่อปุ่ม Run ฝั่งนักเรียนเข้า runtime จริง: IPC `code-ide:run-cli` / `code-ide:run-sql` / `code-ide:check-runtimes` (`shared/ipc-channels.ts` + `main/ipc/code-ide-handlers.ts` + `preload` + `shared/api.ts`) — `CliTestRunnerPanel` รัน sample/custom input จริงพร้อมป้ายสถานะ runtime, `DatabaseWorkbenchPanel` รัน query จริงทุก sample test พร้อมตาราง Actual (มี fallback ข้อความจำลองเมื่อไม่มี IPC)
+- [x] **9.5.1** เชื่อมต่อ `AuthorizedChildProcessRegistry` (`main/authorized-process-registry.ts` + ลงทะเบียนใน `cli-runner`/`backend-api-runner`) และกฎ Loopback-only สำหรับ Backend Sandbox เข้ากับ `ProcessInspector` (ข้าม pid ที่อนุญาต) และ `NetworkInspector` (ออกนอก loopback → `STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL` CRITICAL) ผ่าน `isAuthorizedPid` ใน `GuardEngine`
+- [x] **9.1.2** หน้าจอ `MissingRuntimePrompt` (`renderer/MissingRuntimePrompt.tsx` ใช้ร่วมครู+นักเรียน) — แบนเนอร์ + hint ติดตั้งเอง + ปุ่ม Re-scan และ Browse โฟลเดอร์เอง (`code-ide:browse-sdk-path` + `code-ide:add-sdk-path`, custom path มีผลถึงตอน spawn ผ่าน `getRuntimePathEntries`) — ครูเห็นใน `CodeExamBuilder`, นักเรียนเห็นใน `StudentCodeIdeWorkspace`
 
 ---
 

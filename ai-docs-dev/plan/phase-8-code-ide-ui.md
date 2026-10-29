@@ -103,15 +103,16 @@
      typeDefinitionsPath: z.string().optional() // ไฟล์ .d.ts สำหรับให้ Monaco Editor แสดง Auto-complete / IntelliSense
    })
 
-   export const DatabaseConfigSchema = z.object({
-     enabled: z.boolean().default(false),
-     engine: z.enum(['sqlite']).default('sqlite'),
-     seedSqlPath: z.string().optional(),      // เช่น 'db/seed.sql' สำหรับสร้างตารางและข้อมูลตั้งต้น (Master Seed)
-     prebuiltDbPath: z.string().optional(),   // หรือไฟล์ '.sqlite' ต้นฉบับที่อาจารย์อัปโหลดมาให้เลย
-     allowDestructiveQueries: z.boolean().default(true), // อนุญาตให้นักเรียนสั่ง DELETE, DROP, TRUNCATE, ALTER ใน DB จำลองได้เต็มที่
-     respawnFreshDbOnEveryRun: z.boolean().default(true), // สร้าง (Spawn) DB ใหม่พร้อม Data ตั้งต้นเดิมทุกครั้งที่กด Run หรือรันแต่ละ Test Case
-     exposeDbViewerToStudent: z.boolean().default(true) // ให้นักเรียนกดดู Schema / ตารางข้อมูลตั้งต้นใน IDE ได้
-   })
+    export const DatabaseConfigSchema = z.object({
+      enabled: z.boolean().default(false),
+      engine: z.enum(['sqlite']).default('sqlite'), // SQLite เท่านั้นทั้งครูและนักเรียน (ไม่ใช้ MySQL server)
+      sqlMode: z.enum(['query', 'create-table']).default('query'), // 'query' = มี table+data ให้แล้ว / 'create-table' = ให้สร้าง table เอง
+      seedSqlPath: z.string().optional(),      // เช่น 'db/seed.sql' สำหรับสร้างตารางและข้อมูลตั้งต้น (Master Seed)
+      prebuiltDbPath: z.string().optional(),   // หรือไฟล์ '.sqlite' ต้นฉบับที่อาจารย์อัปโหลดมาให้เลย
+      allowDestructiveQueries: z.boolean().default(true), // อนุญาตให้นักเรียนสั่ง DELETE, DROP, TRUNCATE, ALTER ใน DB จำลองได้เต็มที่
+      respawnFreshDbOnEveryRun: z.boolean().default(true), // สร้าง (Spawn) DB ใหม่พร้อม Data ตั้งต้นเดิมทุกครั้งที่กด Run หรือรันแต่ละ Test Case
+      exposeDbViewerToStudent: z.boolean().default(true) // โหมดดู schema: ครูเปิด/ปิดให้นักเรียนได้ (ฝั่งครูดูได้ตลอด)
+    })
    ```
 
 4. **โครงสร้างชุดทดสอบครอบคลุมทั้ง 4 หมวด (`CodeTestCaseSchema`):**
