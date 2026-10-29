@@ -9,6 +9,7 @@ import { gradeFormItem, type ItemGradeOutcome } from './form-grader'
 import { stripAnswerKeyForStudent } from '../shared/student-view'
 import { sha256Hex } from '@main/crypto/primitives'
 import type { HostDatabase } from '@main/storage/db'
+import type { StudentFormView } from '../shared/form-schema'
 
 /* ============================================================
  * Phase 7 — Embedded Form Backend Orchestrator (เครื่องแม่)
@@ -322,9 +323,104 @@ export class FormHostService {
   getVault(): FileVault {
     return this.vault
   }
+
+  /**
+   * ทางเข้าจากท่อ LAN (ModuleTransportHost): ตรวจสถานะห้องสอบก่อนรับทุกครั้ง
+   * (Host-authoritative — รับเฉพาะตอนห้อง status === 'running')
+   * action = { type:'dynamic-form.submit-item', submission } | { items:[...] }
+   * autosave = { items:[...] } หรือ submission เดี่ยว (เก็บแบบเดียวกับ submit —
+   * คำตอบฟอร์มตรวจอัตโนมัติทุกครั้งที่ ingest อยู่แล้ว)
+   */
+  ingestViaTransport(input: {
+    roomId: string
+    studentId: string
+    kind: 'action' | 'autosave'
+    payloadJson: string
+    serverTimestampMs: number
+  }): { ok: boolean; progressText?: string; reason?: string } {
+    const room = this.rooms.get(input.roomId)
+    if (!room) return { ok: false, reason: 'ROOM_FORM_NOT_LOADED' }
+    try {
+      const row = this.db.db
+        .prepare('SELECT status AS status FROM exam_sessions WHERE id = ?')
+        .get(input.roomId) as { status: string } | undefined
+      if (!row || row.status !== 'running') {
+        return { ok: false, reason: 'EXAM_NOT_RUNNING' }
+      }
+    } catch {
+      return { ok: false, reason: 'EXAM_STATE_UNKNOWN' }
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(input.payloadJson) as unknown
+    } catch {
+      return { ok: false, reason: 'PAYLOAD_NOT_JSON' }
+    }
+    const submissions = extractFormSubmissions(parsed)
+    if (!submissions) return { ok: false, reason: 'SUBMISSION_INVALID' }
+    // seed ต่อคน (shuffle/params ต้องตรงกับ view ที่ดันไปตอนเริ่มสอบ)
+    const seed = input.studentId
+    this.registerStudentSeed(input.roomId, input.studentId, seed)
+    let accepted = 0
+    for (const submission of submissions) {
+      const res = this.ingestItemSubmission({
+        roomId: input.roomId,
+        studentId: input.studentId,
+        studentSeed: seed,
+        submission,
+        serverTimestampMs: input.serverTimestampMs
+      })
+      if (res.accepted) accepted += 1
+    }
+    if (accepted === 0) return { ok: false, reason: 'ALL_ITEMS_REJECTED' }
+    return {
+      ok: true,
+      progressText: input.kind === 'autosave' ? 'form-autosave-ingested' : 'form-item-ingested'
+    }
+  }
+
+  /**
+   * มุมมองฟอร์มที่ตัดเฉลยแล้วรายคน (stripped view) — ดันผ่าน MODULE_STATE_PUSH
+   * ตอนเริ่มสอบ นักเรียนแต่ละคนได้ลำดับข้อ/ตัวเลือกของตัวเอง
+   */
+  studentViewFor(roomId: string, studentId: string): StudentFormView | null {
+    const room = this.rooms.get(roomId)
+    if (!room) return null
+    const seed = studentId
+    const { view, resolvedParameters } = stripAnswerKeyForStudent(room.container.form, seed)
+    room.resolvedParametersByStudent.set(studentId, resolvedParameters)
+    return view
+  }
+
+  /** จบสอบ: ปั๊ม endedAtMs ของห้อง (คำตอบรายข้อบันทึกครบแล้วตอน ingest) */
+  finalizeStudentSession(roomId: string): void {
+    const room = this.rooms.get(roomId)
+    if (!room) return
+    if (room.endedAtMs !== null) return
+    room.endedAtMs = Date.now()
+  }
 }
 
 /* ---------- Re-grade core (แยกให้ทดสอบได้โดยไม่ต้องต่อระบบเครือข่าย) ---------- */
+
+/** แกะ action/autosave payload จากท่อ LAN เป็นรายการ submission รายข้อ */
+export function extractFormSubmissions(payload: unknown): unknown[] | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const obj = payload as Record<string, unknown>
+  // { type:'dynamic-form.submit-item', submission } — ท่าหลักจาก StudentExamWorkspace
+  if (typeof obj.type === 'string' && obj.submission !== undefined) {
+    return [obj.submission]
+  }
+  // { items:[...] } — ส่งหลายข้อรวดเดียว (final flush ตอนหมดเวลา)
+  if (Array.isArray(obj.items)) {
+    return obj.items.length > 0 ? obj.items : null
+  }
+  // submission เดี่ยว { itemId, value, ... }
+  if (typeof obj.itemId === 'string') {
+    return [payload]
+  }
+  return null
+}
 
 export function runRegradeAllForRoom(
   roomId: string,
