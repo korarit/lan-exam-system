@@ -81,6 +81,10 @@ export interface ZtExamApi {
   screenInspect(req: IpcInvokeMap['host:screen-inspect']['req']): Promise<IpcInvokeMap['host:screen-inspect']['res']>
   fetchRingSegment(req: IpcInvokeMap['host:fetch-ring-segment']['req']): Promise<IpcInvokeMap['host:fetch-ring-segment']['res']>
   pinScreenBuffer(req: IpcInvokeMap['host:pin-screen-buffer']['req']): Promise<IpcInvokeMap['host:pin-screen-buffer']['res']>
+  /* ---------- Dynamic Form — .ztform (Phase 6) ---------- */
+  saveZtform(req: IpcInvokeMap['form:save-ztform']['req']): Promise<IpcInvokeMap['form:save-ztform']['res']>
+  loadZtform(req: IpcInvokeMap['form:load-ztform']['req']): Promise<IpcInvokeMap['form:load-ztform']['res']>
+  listSavedForms(): Promise<IpcInvokeMap['host:list-saved-forms']['res']>
   /* ---------- Event subscribe (คืน unsubscribe() กัน memory leak ใน React) ---------- */
   onRoleChanged(listener: (event: RoleChangedEvent) => void): Unsubscribe
   onEvent<C extends IpcEventChannel>(

@@ -86,6 +86,11 @@ const api: ZtExamApi = {
   fetchRingSegment: (req) => call('host:fetch-ring-segment', req),
   pinScreenBuffer: (req) => call('host:pin-screen-buffer', req),
 
+  /* ---------- Dynamic Form — .ztform (Phase 6) ---------- */
+  saveZtform: (req) => call('form:save-ztform', req),
+  loadZtform: (req) => call('form:load-ztform', req),
+  listSavedForms: () => call('host:list-saved-forms', undefined),
+
   onRoleChanged: (listener) => subscribe('app:role-changed', listener),
   onEvent: (channel, listener) => subscribe(channel, listener)
 }

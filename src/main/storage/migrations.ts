@@ -134,5 +134,24 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_audit_student
         ON audit_logs(session_id, student_id, seq_no);
     `
+  },
+  {
+    /** Phase 6: ฟอร์ม `.ztform` ที่เคยเปิดล่าสุดบนเครื่องแม่ (รายการล่าสุดของหน้า Builder) */
+    version: 5,
+    sql: `
+      CREATE TABLE IF NOT EXISTS saved_forms (
+        form_id          TEXT PRIMARY KEY,
+        title            TEXT NOT NULL,
+        file_path        TEXT NOT NULL,
+        sha256           TEXT NOT NULL,
+        total_questions  INTEGER NOT NULL,
+        total_points     REAL NOT NULL,
+        encrypted        INTEGER NOT NULL DEFAULT 0,
+        created_at_ms    INTEGER NOT NULL,
+        updated_at_ms    INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_saved_forms_updated
+        ON saved_forms(updated_at_ms DESC);
+    `
   }
 ]

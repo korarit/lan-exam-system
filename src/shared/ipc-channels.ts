@@ -394,6 +394,50 @@ export interface OpenVsCodeResponse {
   reason?: string | undefined
 }
 
+/* ---------- Dynamic Form — .ztform Save/Load (Phase 6) ---------- */
+
+export interface SaveZtformRequest {
+  /** JSON ของ { form + assets } ที่ renderer ประกอบ (ตรวจด้วย Zod ฝั่ง main) */
+  formPayloadJson: string
+  encrypted: boolean
+  password?: string | undefined
+}
+export interface SaveZtformResponse {
+  ok: boolean
+  filePath?: string | undefined
+  reason?: string | undefined
+}
+export interface LoadZtformRequest {
+  password?: string | undefined
+}
+export interface SavedFormRecord {
+  formId: string
+  title: string
+  filePath: string
+  totalQuestions: number
+  totalPoints: number
+  encrypted: boolean
+  savedAtMs: number
+}
+export interface LoadZtformResponse {
+  ok: boolean
+  filePath?: string | undefined
+  /** ต้องมีรหัสผ่าน (ไฟล์ถูกเข้ารหัส) — UI ต้องถามรหัสผ่านแล้วเรียกใหม่ */
+  needPassword?: boolean | undefined
+  manifest?: ZtformManifestSummary | undefined
+  formPayloadJson?: string | undefined
+  message?: string | undefined
+}
+export interface ZtformManifestSummary {
+  formId: string
+  title: string
+  totalQuestions: number
+  totalPoints: number
+}
+export interface ListSavedFormsResponse {
+  forms: SavedFormRecord[]
+}
+
 /* ---------- Channel maps (single source of truth for IPC surface) ---------- */
 
 /* ---------- Zod schemas สำหรับ payload ของ network channels ---------- */
@@ -526,6 +570,10 @@ export interface IpcInvokeMap {
   'host:screen-inspect': { req: HostScreenInspectRequest; res: OkResponse }
   'host:fetch-ring-segment': { req: HostFetchSegmentRequest; res: OkResponse }
   'host:pin-screen-buffer': { req: HostPinScreenRequest; res: OkResponse }
+  /* ---------- Dynamic Form — .ztform (Phase 6) ---------- */
+  'form:save-ztform': { req: SaveZtformRequest; res: SaveZtformResponse }
+  'form:load-ztform': { req: LoadZtformRequest; res: LoadZtformResponse }
+  'host:list-saved-forms': { req: void; res: ListSavedFormsResponse }
 }
 
 /** Main -> Renderer (webContents.send) push event channels */
@@ -893,6 +941,66 @@ export const IpcInvokeSchemas: {
       .strict(),
     response: z
       .object({ ok: z.boolean(), reason: z.string().max(200).optional() })
+      .strict()
+  },
+  /* ---------- Dynamic Form — .ztform (Phase 6) ---------- */
+  'form:save-ztform': {
+    request: z
+      .object({
+        formPayloadJson: z.string().min(2).max(10_000_000),
+        encrypted: z.boolean(),
+        password: z.string().min(1).max(200).optional()
+      })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        filePath: z.string().max(1_000).optional(),
+        reason: z.string().max(200).optional()
+      })
+      .strict()
+  },
+  'form:load-ztform': {
+    request: z
+      .object({ password: z.string().min(1).max(200).optional() })
+      .strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        filePath: z.string().max(1_000).optional(),
+        needPassword: z.boolean().optional(),
+        manifest: z
+          .object({
+            formId: z.uuid(),
+            title: z.string().max(120),
+            totalQuestions: z.number().int().nonnegative(),
+            totalPoints: z.number().nonnegative()
+          })
+          .strict()
+          .optional(),
+        formPayloadJson: z.string().min(2).max(10_000_000).optional(),
+        message: z.string().max(300).optional()
+      })
+      .strict()
+  },
+  'host:list-saved-forms': {
+    request: z.void(),
+    response: z
+      .object({
+        forms: z.array(
+          z
+            .object({
+              formId: z.uuid(),
+              title: z.string().max(120),
+              filePath: z.string().max(1_000),
+              totalQuestions: z.number().int().nonnegative(),
+              totalPoints: z.number().nonnegative(),
+              encrypted: z.boolean(),
+              savedAtMs: z.number().int().nonnegative()
+            })
+            .strict()
+        )
+      })
       .strict()
   }
 }

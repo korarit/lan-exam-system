@@ -16,6 +16,8 @@ import { registerAuditHandlers } from './ipc/audit-handlers'
 import { registerScreenHandlers } from './ipc/screen-handlers'
 import { registerAttestationHandlers } from './ipc/attestation-handlers'
 import { registerModeHandlers } from './ipc/mode-handlers'
+import { registerDynamicFormHandlers } from './ipc/dynamic-form-handlers'
+import '@modules/register-modules'
 import { DocsViewController, type DocsPanelState } from './browser/docs-view'
 import { LocalConnectProxy } from './proxy/connect-proxy'
 import { VsCodeController } from './guard/vscode-controller'
@@ -670,6 +672,10 @@ void app.whenReady().then(() => {
       }
       return false
     }
+  })
+  // Phase 6: โมดูล dynamic-form — Save/Load ไฟล์ .ztform + ตาราง saved_forms
+  registerDynamicFormHandlers(router, state, {
+    getDatabase: ensureHostDatabase
   })
   studentEstablishedHandler = (studentId) => {
     // Phase 4: ท่อ handshake ใหม่ = ยิง challenge attestation ทันที (แล้วสุ่มเวลาตามปกติ)
