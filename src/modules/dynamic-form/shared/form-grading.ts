@@ -125,7 +125,8 @@ function gradeNumericFormula(
 
 /**
  * ตัวคำนวณนิพจน์คณิตแบบปลอดภัย (ไม่ใช้ eval):
- * รองรับ ตัวเลข, ตัวแปร (a, b kabita...), + - * /, วงเล็บ, ^, และ %
+ * รองรับ ตัวเลข, ตัวแปร (a, b kabita...), + - * /, วงเล็บ, ^, %,
+ * และฟังก์ชัน sqrt / sin / cos / abs / round / ln เช่น "sqrt(a^2 + b^2)"
  */
 export function evaluateSafeArithmetic(
   expression: string,
@@ -168,7 +169,12 @@ class ArithmeticTokenizer {
       if (/[a-zA-Z_]/.test(ch)) {
         const startAt = this.i
         while (this.i < this.src.length && /[\w]/.test(this.src[this.i] ?? '')) this.i++
-        tokens.push({ kind: 'var', text: this.src.slice(startAt, this.i) })
+        const word = this.src.slice(startAt, this.i)
+        if (SAFE_FUNCTION_NAMES.has(word)) {
+          tokens.push({ kind: 'func', text: word })
+        } else {
+          tokens.push({ kind: 'var', text: word })
+        }
         continue
       }
       if ('+-*/^%()'.includes(ch)) {
@@ -183,9 +189,12 @@ class ArithmeticTokenizer {
 }
 
 interface Token {
-  kind: 'num' | 'var' | 'op' | 'paren'
+  kind: 'num' | 'var' | 'op' | 'paren' | 'func'
   text: string
 }
+
+/** ชุดฟังก์ชันคณิตที่อนุญาต (7.2.1 — ห้าม eval ทุกชื่ออื่น) */
+const SAFE_FUNCTION_NAMES = new Set(['sqrt', 'sin', 'cos', 'abs', 'round', 'ln'])
 
 class ArithmeticParser {
   readonly tokens: Token[]
@@ -252,6 +261,25 @@ class ArithmeticParser {
     if (t.kind === 'num') {
       this.pos++
       return Number(t.text)
+    }
+    if (t.kind === 'func') {
+      this.pos++
+      const open = this.peekToken()
+      if (open?.kind !== 'paren' || open.text !== '(') throw new Error('MISSING_FUNC_PAREN')
+      this.pos++
+      const inner = this.parseExpression()
+      const close = this.peekToken()
+      if (close?.kind !== 'paren' || close.text !== ')') throw new Error('MISSING_FUNC_PAREN')
+      this.pos++
+      switch (t.text) {
+        case 'sqrt': return inner < 0 ? NaN : Math.sqrt(inner)
+        case 'sin': return Math.sin(inner)
+        case 'cos': return Math.cos(inner)
+        case 'abs': return Math.abs(inner)
+        case 'round': return Math.round(inner)
+        case 'ln': return inner <= 0 ? NaN : Math.log(inner)
+      }
+      throw new Error(`UNKNOWN_FUNC:${t.text}`)
     }
     if (t.kind === 'var') {
       this.pos++

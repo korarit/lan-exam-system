@@ -18,3 +18,4 @@ artifacts/
 
 # Phase 4: native addon build output
 native/build/
+.vitest/

@@ -1,31 +1,35 @@
-import type {
-  ExamModuleId,
-  ExamModuleMetadata,
+﻿import type {
   HostExamModuleBackend,
   StudentSessionContext,
   StudentActionResult
 } from '@shared/module-contract'
 import { DynamicFormDefinitionSchema, type DynamicFormDefinition } from '../shared/form-schema'
+import { DYNAMIC_FORM_METADATA } from '../shared/module-metadata'
 import { stripAnswerKeyForStudent } from '../shared/student-view'
 
 /* ============================================================
- * Phase 6 — Embedded Backend ของโมดูล dynamic-form
- * (Dispatcher/Grader/Export เต็มรูปแบบจะต่อใน Phase 7 —
- *  ส่วนนี้ผูกสัญญา + ตัดเฉลยรายคนให้เรียบร้อยตั้งแต่ตอนนี้)
+ * Phase 6+7 — Embedded Backend ของโมดูล dynamic-form
+ * - ตัดเฉลยรายคน (stripAnswerKeyForStudent) ให้ฝั่งเครื่องนักเรียน
+ * - ช่องทาง ingest จริง (validate / vault / auto-grading / re-grade /
+ *   export CSV & .ztresults) อยู่ที่ FormHostService (form-host-service.ts)
+ * และถูก wire ผ่าน ipc/form-response-handlers.ts แล้วทั้งหมด
  * ============================================================ */
-
-export const DYNAMIC_FORM_METADATA: ExamModuleMetadata = {
-  moduleId: 'dynamic-form' as ExamModuleId,
-  displayName: 'Dynamic Form Builder',
-  description:
-    'ข้อสอบฟอร์มแบบสร้างเอง 12 ชนิด Input สลับลำดับรายคน บันทึกเป็นไฟล์ .ztform พร้อมเฉลยและรูปภาพ',
-  version: '1.0.0',
-  fileExtension: '.ztform',
-  supportedSecurityModes: ['closed', 'in-app-docs', 'external-tools']
-}
 
 export class DynamicFormModuleBackend implements HostExamModuleBackend<DynamicFormDefinition> {
   readonly metadata = DYNAMIC_FORM_METADATA
+
+  /** ตัวจัดการคำตอบ/ไฟล์แนบ/คะแนนของห้อง (ผูกตอน register modules บนเครื่องแม่) */
+  private ingestion: {
+    handleStudentAction?: (roomId: string, studentId: string, action: unknown, serverTimestampMs: number) => Promise<unknown>
+    handleAutosaveDraft?: (roomId: string, studentId: string, draftPayload: unknown, serverTimestampMs: number) => Promise<void>
+    finalizeStudentSession?: (roomId: string, studentId: string, seed: string, reason: 'submitted' | 'time-up') => Promise<void>
+    exportResultsCsv?: (roomId: string) => Promise<Uint8Array>
+  } = {}
+
+  /** ผูกบริการเครื่องแม่ (FormHostService) — เรียกครั้งเดียวตอน boot ของเครื่องแม่ */
+  attachIngestionBridge(bridge: typeof this.ingestion): void {
+    this.ingestion = bridge
+  }
 
   validatePackage(rawPackage: unknown): DynamicFormDefinition {
     const parsed = DynamicFormDefinitionSchema.safeParse(rawPackage)
@@ -41,7 +45,7 @@ export class DynamicFormModuleBackend implements HostExamModuleBackend<DynamicFo
     return form
   }
 
-  /** เตรียม state รายคน: ตัดเฉลย 100% + สลับข้อ/ตัวเลือกตาม seed (Phase 7 จะดำเนิน cursor ต่อ) */
+  /** เตรียม state รายคน: ตัดเฉลย 100% + สลับข้อ/ตัวเลือกตาม seed + resolve ตัวแปรรายคน */
   async initializeStudentSession(ctx: StudentSessionContext<DynamicFormDefinition>): Promise<{
     view: ReturnType<typeof stripAnswerKeyForStudent>['view']
     resolvedParameters: ReturnType<typeof stripAnswerKeyForStudent>['resolvedParameters']
@@ -50,19 +54,36 @@ export class DynamicFormModuleBackend implements HostExamModuleBackend<DynamicFo
     return stripAnswerKeyForStudent(form, ctx.studentSeed)
   }
 
-  async handleStudentAction(): Promise<StudentActionResult<never>> {
-    throw new Error('PHASE_7_DISPATCHER_PENDING')
+  /** คำตอบรายข้อ (SUBMIT_FORM_ITEM) → validator + instant auto-grade ของ FormHostService */
+  async handleStudentAction(ctx: {
+    roomId: string
+    studentId: string
+    action: unknown
+    serverTimestampMs: number
+  }): Promise<StudentActionResult<never>> {
+    if (this.ingestion.handleStudentAction !== undefined) {
+      await this.ingestion.handleStudentAction(ctx.roomId, ctx.studentId, ctx.action, ctx.serverTimestampMs)
+    }
+    return { progressText: 'item-ingested', isFinished: false }
   }
 
-  async handleAutosaveDraft(): Promise<void> {
-    // Phase 7 — เก็บฉบับร่างลง AES store
+  /** ฉบับร่าง (AUTOSAVE_FORM_ITEM) — คำตอบสุดท้ายจะถูกตรวจอีกครั้งตอน submit */
+  async handleAutosaveDraft(ctx: { roomId: string; studentId: string; draftPayload: unknown }): Promise<void> {
+    if (this.ingestion.handleAutosaveDraft !== undefined) {
+      await this.ingestion.handleAutosaveDraft(ctx.roomId, ctx.studentId, ctx.draftPayload, Date.now())
+    }
   }
 
-  async finalizeStudentSession(): Promise<void> {
-    // Phase 7 — เก็บคำตอบสุดท้าย + คิดคะแนนรวม
+  /** เก็บงานจบชุด (submitted / time-up) */
+  async finalizeStudentSession(ctx: { roomId: string; studentId: string; reason: 'submitted' | 'time-up' }): Promise<void> {
+    if (this.ingestion.finalizeStudentSession !== undefined) {
+      await this.ingestion.finalizeStudentSession(ctx.roomId, ctx.studentId, '', ctx.reason)
+    }
   }
 
-  async exportResultsCsv(): Promise<Uint8Array> {
-    throw new Error('PHASE_7_EXPORT_PENDING')
+  /** Export ผลเป็น CSV (UTF-8 BOM + คอลัมน์ Q1..QN = CsvResponseExporter) */
+  async exportResultsCsv(roomId: string): Promise<Uint8Array> {
+    if (this.ingestion.exportResultsCsv === undefined) throw new Error('PHASE_7_EXPORT_BRIDGE_NOT_ATTACHED')
+    return await this.ingestion.exportResultsCsv(roomId)
   }
 }

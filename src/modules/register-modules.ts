@@ -1,5 +1,6 @@
 import type { ExamModuleId } from '@shared/module-contract'
-import { DynamicFormModuleBackend, DYNAMIC_FORM_METADATA } from '@modules/dynamic-form/main/form-module-backend'
+import { DynamicFormModuleBackend } from '@modules/dynamic-form/main/form-module-backend'
+import { DYNAMIC_FORM_METADATA } from '@modules/dynamic-form/shared/module-metadata'
 import { registerExamModule } from './registry'
 
 /* ============================================================
