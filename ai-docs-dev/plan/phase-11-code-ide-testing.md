@@ -1,97 +1,100 @@
-# Phase 11: `code-ide` Module (Part 4) — End-to-End Testing, Stress & Security Verification
+# Phase 11: `code-ide` Module (Part 4) — Multi-Stack End-to-End Testing, Stress & Security Verification
 
 ## 1. เป้าหมายและขอบเขต (Objectives & Scope)
-ทดสอบโมดูล **`code-ide`** (จาก Phase 8, 9, และ 10) อย่างครบวงจร ทั้งในด้านความถูกต้องของการรันโค้ดทั้ง 6 ภาษา (**Java, Python, JavaScript, TypeScript, HTML/CSS, React**), ความทนทานต่อโค้ดที่เป็นอันตรายหรือเขียนผิดพลาด (Infinite Loops, Memory Bombs, Stdout Floods), การทำงานร่วมกับระบบตรวจจับการโกง (Phase 3a), และการจำลองสอบจริงแบบเปิดเครื่องแม่และเครื่องลูกบนคอมพิวเตอร์เครื่องเดียวกัน (`dev:pair`)
+ทดสอบโมดูล **`code-ide`** (จาก Phase 8, 9, และ 10) อย่างครบวงจร ทั้งในด้านการทำงานกับ **โปรเจกต์หลายไฟล์และหลายโฟลเดอร์ (Multi-File & Nested Folders)**, การเรียกใช้งาน **Offline Libraries / Packages**, การตรวจให้คะแนนครบทั้ง **4 หมวดหมู่โจทย์ (CLI / Algorithm, Frontend UI, Backend API, และ Database / SQL)**, ความทนทานต่อโค้ดที่เป็นอันตราย, การทำงานร่วมกับระบบตรวจจับการโกง (Phase 3a), และการจำลองสอบจริงแบบเปิดเครื่องแม่และเครื่องลูกบนคอมพิวเตอร์เครื่องเดียวกัน (`dev:pair`)
 
 ### สิ่งที่ต้องได้เมื่อจบ Phase 11
-- ชุดทดสอบอัตโนมัติ (`tests/modules/code-ide/`) ครอบคลุมทั้ง 6 ภาษาและกรณีขอบเขต (Edge Cases) ทั้งหมด
-- ผ่านการทดสอบ Stress Test เมื่อรันโค้ดที่ค้างหรือกินทรัพยากรหนักโดยไม่ทำให้หน้าจอ IDE หรือเครื่องแม่ค้าง
-- ผ่านการทดสอบ End-to-End ตั้งแต่สร้างไฟล์ `.ztcode` -> เปิดห้องสอบ -> นักเรียนเขียนโค้ดกด Run Sample -> ส่งคำตอบ -> เครื่องแม่รันตรวจ Hidden Test Cases -> ส่งออก CSV และซอร์สโค้ด
+- ชุดทดสอบอัตโนมัติ (`tests/modules/code-ide/`) ครอบคลุมการรันโปรเจกต์หลายไฟล์/หลายโฟลเดอร์พร้อม Libraries ในทุกหมวดหมู่โจทย์
+- ผ่านการทดสอบ Stress Test (Infinite Loops, Server Port Conflicts, SQL Cross-Join Bombs, Memory/Stdout Floods) โดยไม่ทำให้หน้าจอ IDE หรือเครื่องแม่ค้าง
+- ผ่านการทดสอบ End-to-End ตั้งแต่การที่อาจารย์อัปโหลดโปรเจกต์ตั้งต้น + เลือก Libraries -> เปิดห้องสอบ -> นักเรียนสร้างไฟล์/โฟลเดอร์เพิ่มและเขียนโค้ดกด Run -> ส่งงาน -> อาจารย์เปิดดูโครงสร้างโฟลเดอร์ของนักเรียนใน Mirror IDE Inspector -> ส่งออก CSV และโฟลเดอร์โปรเจกต์
 
 ---
 
 ## 2. การแบ่งงานย่อย (Detailed Sub-phases)
 
-### 11.1 Multi-Language Execution & Grading Test Suite (`tests/code-ide/languages.spec.ts`)
-สร้างชุดโจทย์และโค้ดทดสอบมาตรฐานสำหรับทั้ง **6 ภาษา/เทคโนโลยี** โดยทดสอบครบทั้ง 4 กรณีต่อภาษา (`1. โค้ดที่ถูก 100%`, `2. โค้ดที่ตอบผิดบางเคส`, `3. โค้ดที่มี Syntax/Compile Error`, `4. โค้ดที่เกิด Runtime Exception`):
+### 11.1 Multi-File, Multi-Folder & Multi-Stack Execution Test Suite (`tests/code-ide/multi-stack.spec.ts`)
+สร้างชุดโจทย์โปรเจกต์ทดสอบมาตรฐานที่ครอบคลุมทั้ง **4 หมวดหมู่โจทย์และทุกภาษาที่รองรับ** โดยใช้โครงสร้างหลายไฟล์/หลายโฟลเดอร์และเรียกใช้ Offline Libraries จริง:
 
-1. **Java (`javac` + `java`):**
-   - ทดสอบโจทย์แบบคลาสเดียว (`Main.java`) และหลายคลาส (`Main.java` + `Helper.java`)
-   - ทดสอบการรับค่าภาษาไทยและ UTF-8 ผ่าน `Scanner(System.in)` และ `System.out.println`
-   - ทดสอบกรณีเกิด `NullPointerException`, `ArrayIndexOutOfBoundsException`, และ Compile Error ว่าดึงเลขบรรทัดมาแสดงใน Monaco Editor ได้ตรงจุด
-2. **Python (`python3`):**
-   - ทดสอบการรับค่า `sys.stdin.read()` / `input()` และการคำนวณทั้งตัวเลขและข้อความ
-   - ทดสอบกรณี `SyntaxError`, `IndentationError`, และ `ZeroDivisionError`
-3. **JavaScript & TypeScript (`node` + `esbuild`):**
-   - ทดสอบโค้ดที่ใช้ TypeScript Interfaces / Generics ว่าถูกแปลงด้วย `esbuild` และรันผ่าน Node.js ได้ผลลัพธ์ถูกต้อง
-   - ทดสอบการแจ้งเตือน Type/Syntax Error พร้อมตำแหน่งบรรทัดที่ถูกต้องจาก Source Map
-4. **HTML + CSS (`HeadlessDomRunner`):**
-   - ทดสอบโจทย์สร้างหน้าเว็บที่มีการตรวจด้วย `DomTestCase`:
-     - ตรวจโครงสร้าง DOM (`document.querySelectorAll('.card').length === 3`)
-     - ตรวจ Computed CSS Styles (`getComputedStyle(el).display === 'flex'`, `flexDirection`, สี, ขนาด)
-     - ตรวจการทำงานของ Vanilla JS Event (`button.click()` แล้วข้อความใน DOM เปลี่ยนตามที่กำหนด)
-5. **React (`JSX / TSX` + Offline React Bundle + `HeadlessDomRunner`):**
-   - ทดสอบโจทย์ React ที่มีหลาย Component (`App.tsx` import `Counter.tsx` และ `styles.css`)
-   - ทดสอบการใช้งาน React Hooks (`useState`, `useEffect`, `useMemo`) แบบออฟไลน์ 100%
-   - ทดสอบการจำลองคลิกปุ่มและกรอกฟอร์มใน React Component แล้วตรวจว่า DOM อัปเดตตรงตาม Hidden DOM Test Cases
+1. **หมวด CLI / Systems / OOP Multi-File + Libraries (`c`, `cpp`, `rust`, `go`, `java`, `python`, `javascript`, `typescript`, `php`):**
+   - **C (`gcc`) & C++ (`g++`):** ทดสอบโปรเจกต์ที่มี `main.c`/`main.cpp`, `include/calc.h`, `src/calc.c` พร้อมทดสอบการดักจับ Compile Error และ Runtime Crash (`Segmentation fault` / Division by zero)
+   - **Rust (`rustc` / `cargo`):** ทดสอบโปรเจกต์หลายโมดูล (`src/main.rs`, `src/utils.rs`)
+   - **Go (`go`):** ทดสอบโปรเจกต์หลายไฟล์ (`main.go`, `pkg/mathutil/sum.go`)
+   - **PHP (`php`):** ทดสอบโปรเจกต์หลายไฟล์ที่มีการ `require_once` ข้ามโฟลเดอร์
+   - **Java (`javac` + `java`):** ทดสอบโปรเจกต์ที่มีโฟลเดอร์แพ็กเกจ (`src/Main.java`, `src/models/User.java`) และเรียกใช้ไฟล์ `.jar` เสริม (เช่น `gson.jar`)
+   - **Python (`python3`) & JS/TS (`node` + `esbuild`):** ทดสอบโปรเจกต์หลายโมดูลพร้อมการโหลด Offline library
+2. **หมวด Frontend Multi-File & Component Folders (`html-css-js`, `react`):**
+   - **HTML/CSS/JS:** ทดสอบโปรเจกต์ที่มี `index.html`, `styles/layout.css`, `scripts/app.js`
+   - **React (`.tsx`):** ทดสอบโปรเจกต์ที่มี `src/App.tsx`, `src/components/Navbar.tsx`, `src/hooks/useFilter.ts` และเรียกใช้ Offline UI Library แล้วรันตรวจด้วย `DomTestCase`
+3. **หมวด Backend REST API + Database (`node-backend`, `python-backend`, `go-backend`, `php-backend`):**
+   - ทดสอบโปรเจกต์ Backend ที่มีโครงสร้างโฟลเดอร์ `routes/`, `db/` เชื่อมต่อกับฐานข้อมูล SQLite ตั้งต้น (`db/seed.sql`)
+   - ทดสอบยิงชุดทดสอบ `HttpApiTestCase` ครบทั้ง `GET`, `POST`, `PUT`, `DELETE` พร้อมตรวจทั้ง HTTP Status Code, JSON Response, และตรวจว่าข้อมูลถูกบันทึกลงตาราง SQLite จริง
+4. **หมวด Database / SQL — ทดสอบการลบข้อมูล/ลบตารางและการ Spawn DB ใหม่พร้อม Data เดิม (`sql-sqlite`):**
+   - ทดสอบโจทย์ SQL ที่มีฐานข้อมูลตั้งต้น 3 ตาราง (`students`, `courses`, `enrollments`)
+   - **ทดสอบคำสั่งลบ (`DELETE FROM`, `DROP TABLE`):** รันคำสั่ง SQL ของนักเรียนที่สั่ง `DELETE FROM enrollments WHERE score < 50;` หรือสั่ง `DROP TABLE courses;` ในรอบแรก -> ระบบต้องอนุญาตให้ลบได้และตรวจผลลัพธ์ถูกต้อง จากนั้นเมื่อรัน Test Case ถัดไปหรือกดรันใหม่ ระบบต้อง **Spawn ฐานข้อมูลใหม่ที่มีตาราง `courses` และข้อมูล `enrollments` ตั้งต้นเดิมกลับมาครบ 100%**!
 
 ---
 
 ### 11.2 Hostile Code, Resource Limit & Sandbox Stress Tests (`tests/code-ide/sandbox-stress.spec.ts`)
-จำลองสถานการณ์ที่โค้ดของนักเรียนทำงานผิดปกติหรือจงใจทำให้ระบบค้าง:
+จำลองสถานการณ์ที่โค้ดโปรเจกต์ของนักเรียนทำงานผิดปกติหรือจงใจโจมตีระบบ:
 
-1. **Infinite Loop & Child Process Tree Termination Test:**
-   - รันโค้ดที่มี `while (true) {}` ใน Java, Python, JS/TS, และใน React Render loop
-   - รันโค้ดที่พยายามสร้างโปรเซสลูกซ้อนขึ้นมาอีกที (Subprocess spawning)
-   - **เกณฑ์ผ่าน:** ตัวรันต้องตัดจบการทำงานภายใน `timeoutMs + 300ms` คืนสถานะ `TIME_LIMIT_EXCEEDED` และตรวจสอบด้วย `systeminformation.processes()` ว่าไม่มีโปรเซส `java`, `python`, หรือ `node` ค้างอยู่ในเครื่องเลยแม้แต่ตัวเดียว
-2. **Stdout / Stderr Flood Protection Test:**
-   - รันโค้ดที่สั่งพิมพ์ข้อมูลขนาดใหญ่ไม่หยุด เช่น `while True: print("X" * 100000)`
-   - **เกณฑ์ผ่าน:** ตัวรันต้องตัดข้อมูลที่ `256 KB` สั่งหยุดโปรเซสทันที และคืนสถานะ `OUTPUT_LIMIT_EXCEEDED` โดยที่หน่วยความจำของ Electron Main Process ไม่พุ่งสูงขึ้น
-3. **Memory Limit Enforcement Test:**
-   - รันโค้ดที่พยายามจอง Array ขนาดใหญ่เกินพิกัด (เช่น จองแรม > 512 MB)
-   - **เกณฑ์ผ่าน:** JVM (`-Xmx256m`) และ Node (`--max-old-space-size=256`) ต้องตัดการทำงานด้วย Out-Of-Memory Error อย่างปลอดภัยโดยไม่กระทบตัวแอปสอบ
-4. **Filesystem Isolation Check:**
-   - ทดสอบตรวจสอบว่าโฟลเดอร์ชั่วคราว `ztcode-exec-<runId>` ถูกลบทิ้งสะอาดทุกครั้งหลังรันเสร็จ ทั้งในกรณีรันผ่านปกติและกรณีเกิด Timeout / Error
+1. **Infinite Loop, Hanging Backend Server & Child Process Tree Kill Test:**
+   - รันโค้ดที่มี `while (true) {}` ใน CLI, Frontend Render Loop, และใน Route Handler ของ Backend API
+   - **เกณฑ์ผ่าน:** ตัวรันต้องตัดจบการทำงานภายใน `timeoutMs + 300ms` คืนสถานะ `TIME_LIMIT_EXCEEDED`, คืนพอร์ต Localhost ทันที, และไม่มีโปรเซส `java`, `python`, หรือ `node` ค้างอยู่ใน OS
+2. **SQL Heavy Query / Cartesian Join Interruption Test:**
+   - รันคำสั่ง SQL ที่ทำ Recursive CTE ไม่รู้จบหรือ Cross Join ตารางขนาดใหญ่เกินเวลา `timeoutMs`
+   - **เกณฑ์ผ่าน:** `SqlDatabaseRunner` ต้องสั่ง `interrupt()` และตัดจบภายในเวลาที่กำหนดโดยไม่ทำให้โปรเซสหลักค้าง
+3. **Teacher Runtime Anti-File-Deletion & Read-Only Tampering Protection Test (เน้นหลักสำคัญที่สุด):**
+   - จำลองให้นักเรียนส่งโค้ดที่มีคำสั่งลบไฟล์และโฟลเดอร์บนระบบไฟล์จริงในทุกภาษาขึ้นมารันตรวจบนเครื่องครู:
+     - C / C++: `remove("...")`, `unlink("...")`, `std::filesystem::remove_all("..")`, `system("del ...")`
+     - Rust / Go: `std::fs::remove_dir_all("..")`, `os.RemoveAll("..")`, `exec.Command(...)`
+     - PHP: `unlink("...")`, `rmdir("..")`, `shell_exec("...")`
+     - Python: `os.remove(...)`, `shutil.rmtree("..")`, `os.system("rmdir /s /q ...")`
+     - Node/TS: `fs.rmSync("..", { recursive: true })`, `fs.unlinkSync(...)`, `child_process.execSync("del /f /s /q ...")`
+     - Java: `Files.delete(...)`, `new File("...").delete()`, `Runtime.getRuntime().exec(...)`
+   - จำลองการส่ง `VirtualProjectTree` จากฝั่งนักเรียนที่พยายามใส่พาธ `../../evil.sh` หรือแอบแก้ไฟล์ `readOnly: true`
+   - **เกณฑ์ผ่าน:** `AntiDeleteRuntimeGuard` และ `WorkspaceMaterializer` ต้องบล็อกคำสั่งลบไฟล์บนดิสก์ทั้งหมดทันที คืนสถานะ Error/Security Violation โดยที่ไฟล์ในโฟลเดอร์ `<TeacherSelectedFolder>/<studentId>/` ของครูและไฟล์ระบบอยู่ครบ 100% ไม่ถูกลบแม้แต่ไบต์เดียว! (ขณะที่คำสั่ง SQL `DELETE` / `DROP TABLE` ในโจทย์ SQL ยังสามารถลบข้อมูลในฐานข้อมูลจำลองได้ตามปกติและ Spawn ใหม่ได้ทุกครั้ง)
+4. **Missing Runtime Detection (No Auto-Download) Test:**
+   - จำลองสภาพแวดล้อมที่ไม่พบ `javac` หรือ `python` -> ระบบต้องแสดงข้อความแจ้งให้ครูหรือนักเรียนติดตั้งเองอย่างชัดเจน (ไม่มีการพยายามดาวน์โหลด Runtime แยกจากอินเทอร์เน็ต) และเมื่อผู้ใช้ระบุพาธที่ติดตั้งแล้วกด `Re-scan` ระบบต้องพร้อมใช้งานทันที
+5. **Stdout Flood & Memory Limit Enforcement Test:**
+   - ทดสอบโค้ดที่พิมพ์ข้อมูลเกิน `256 KB` หรือจองหน่วยความจำเกิน `256 MB` -> ต้องถูกตัดจบอย่างปลอดภัยและลบโฟลเดอร์ชั่วคราว `ztcode-exec-<runId>` สะอาดทุกครั้ง
 
 ---
 
 ### 11.3 Security & Anti-Cheat Integration Tests (`tests/code-ide/security-integration.spec.ts`)
-ทดสอบการทำงานร่วมกันระหว่างโมดูล `code-ide` กับระบบตรวจจับการโกง (Phase 3a):
-
-1. **No False-Positive on Legitimate Code Execution:**
-   - เมื่อนักเรียนกดปุ่ม `▶ Run Sample Tests` ใน IDE ของแอป โปรเซส `javac`, `java`, `python`, `node` ที่ถูกสร้างโดย `ProcessSandbox` ของเราต้อง **ไม่** ถูก `ProcessInspector` แจ้งเตือนว่าเป็นโปรเซสแปลกปลอม
+1. **Legitimate Execution & Loopback Backend Allowance:**
+   - เมื่อนักเรียนกดรันโปรเจกต์หลายไฟล์ หรือรัน Backend API บน `127.0.0.1:<assignedPort>` ใน Sandbox ระบบ `ProcessInspector` และ `NetworkInspector` ต้องไม่แจ้งเตือนผิดพลาด (Zero False-Positive)
 2. **True-Positive Detection on Student Code Calling External Network / AI APIs:**
-   - จำลองให้นักเรียนเขียนโค้ด Python ในช่อง Editor ของแอป:
-     ```python
-     import urllib.request
-     urllib.request.urlopen("https://api.openai.com/v1/models", timeout=1)
-     ```
-     แล้วกด `Run`:
-   - **เกณฑ์ผ่าน:** `NetworkInspector` / `DNS Cache Diff` ต้องตรวจจับได้ทันทีว่าโปรเซสลูกของการรันโค้ดพยายามเรียกโดเมน AI ภายนอก และส่ง Event **`STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL` (`CRITICAL`)** ไปยังเครื่องแม่ ทำให้การ์ดนักเรียนขึ้นสีแดงบน Dashboard ทันที!
-3. **Hidden Test Cases Zero-Leakage Audit:**
-   - ดักจับทุก Packet ที่วิ่งผ่านท่อ TLS และทุกข้อความใน IPC ของฝั่งนักเรียน ตรวจสอบว่าไม่มีข้อมูลของ `hidden` test cases (`stdin`, `expectedStdout`, `assertionScript`) หรือ `referenceSolutionFiles` ปรากฏในฝั่งเครื่องนักเรียนเลย 100%
+   - จำลองให้นักเรียนเขียนโค้ดในไฟล์ย่อย `src/utils/helper.py` หรือใน Backend Route เพื่อแอบยิงออกไปหา `https://api.openai.com/...` หรือ IP ภายนอกนอกเหนือจาก `127.0.0.1`:
+   - **เกณฑ์ผ่าน:** `NetworkInspector` / `DNS Cache Diff` ต้องตรวจจับได้ทันทีและส่ง Event **`STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL` (`CRITICAL`)** ไปยังเครื่องแม่พร้อมแนบไฟล์โค้ดของนักเรียน!
+3. **Hidden Test Cases & Hidden Seed Data Zero-Leakage Audit:**
+   - ตรวจสอบทุกข้อมูลที่ส่งไปยังเครื่องนักเรียนว่าไม่มี `hidden` test cases, `setupSqlOverride`, `hiddenFromStudent` files, หรือ `referenceSolutionEntries` รั่วไหลไปที่เครื่องนักเรียนแม้แต่ไบต์เดียว
 
 ---
 
 ### 11.4 Same-Machine End-to-End Simulation (`tests/code-ide/e2e-exam-flow.spec.ts`)
-ทดสอบจำลองการสอบจริงครบวงจรในเครื่องเดียว (`1 Host + 2 Student Instances`):
-1. **ขั้นที่ 1 (Host Builder):** สร้างชุดข้อสอบ `.ztcode` ที่มี 3 ข้อ (ข้อ 1: Python, ข้อ 2: Java, ข้อ 3: React) พร้อม Sample และ Hidden Test Cases
-2. **ขั้นที่ 2 (Lobby & Toolchain Check):** เปิดห้องสอบ -> นักเรียนทั้ง 2 เครื่องเชื่อมต่อเข้ามา -> หน้าจอครูแสดงสถานะความพร้อมของ Runtime (`Java ✅ | Python ✅ | Node/React ✅`)
-3. **ขั้นที่ 3 (Live Coding & Sample Run):**
-   - นักเรียนคนที่ 1 เขียนโค้ดถูกต้องครบทั้ง 3 ข้อ กด `Run Sample` ผ่านทั้งหมด และกด `Submit`
-   - นักเรียนคนที่ 2 เขียนข้อ 1 ผ่านครึ่งเดียว, ข้อ 2 ติด Infinite Loop (`TLE`), และข้อ 3 ทำถูกต้อง
-4. **ขั้นที่ 4 (Auto-Grading & Export):**
-   - `GradingWorkerQueue` ที่เครื่องแม่ตรวจให้คะแนนทั้งสองคนเสร็จสมบูรณ์
-   - ทดสอบเปิดหน้า `StudentCodeInspectorModal` ดูผลรายเคส, เลื่อนดู Code Playback Timeline, ทดสอบกด `Re-grade All`, และกด Export เป็นไฟล์ CSV + โฟลเดอร์ซอร์สโค้ด
+จำลองการสอบจริงครบวงจรในเครื่องเดียว (`1 Host + 2 Student Instances`):
+1. **ขั้นที่ 1 (Teacher Project Builder & Root Folder Selection):**
+   - ครูเลือกโฟลเดอร์เก็บงานหลักของห้องสอบ (`<TeacherWorkspaceFolder>`) และสร้างชุดข้อสอบ `.ztcode` ที่มี 4 ข้อครบทั้ง 4 หมวด:
+     - ข้อ 1 (`CLI - Java`): โปรเจกต์หลายคลาส + `gson.jar`
+     - ข้อ 2 (`Frontend - React`): โปรเจกต์หลายโฟลเดอร์ (`components/`, `styles/`)
+     - ข้อ 3 (`Backend - Node/TS Express + SQLite`): โปรเจกต์สร้าง REST API เชื่อมฐานข้อมูล
+     - ข้อ 4 (`Database - SQL`): โจทย์เขียนคำสั่ง SQL Query บนตารางตั้งต้น
+2. **ขั้นที่ 2 (Lobby, Student Folder Selection & Dependency Sync):**
+   - นักเรียนทั้ง 2 เครื่อง (`65010001` และ `65010002`) เลือกโฟลเดอร์เก็บงานบนเครื่องตัวเอง (`<StudentWorkspaceFolder>`), รับซิงก์ `DependencyBundle`, และรายงานความพร้อม `🟢 พร้อมสอบครบทุกสแต็ก`
+3. **ขั้นที่ 3 (Student Multi-File Coding & Submission):**
+   - นักเรียนสร้างไฟล์และโฟลเดอร์ใหม่ใน IDE (ตรวจสอบว่าไฟล์ถูกเขียนลงใน `<StudentWorkspaceFolder>` จริง), ทดสอบกด `Run Sample` ในทั้ง 4 หมวด, แล้วกดส่งงานขึ้นเครื่องแม่
+4. **ขั้นที่ 4 (Teacher `<studentId>` Subfolder Verification & Mirror IDE Inspection):**
+   - ตรวจสอบบนดิสก์เครื่องครูว่ามี Subfolder **`<TeacherWorkspaceFolder>/65010001/`** และ **`<TeacherWorkspaceFolder>/65010002/`** ถูกสร้างขึ้นอัตโนมัติพร้อมโครงสร้างไฟล์และโฟลเดอร์ครบทุกข้อตรงกับของนักเรียน
+   - เครื่องแม่ตรวจให้คะแนนทั้ง 4 ข้อผ่าน `GradingWorkerQueue` และอาจารย์เปิด `StudentProjectInspectorModal` เห็นโครงสร้างโฟลเดอร์และไฟล์เหมือนที่นักเรียนเขียนทุกประการ
 
 ---
 
 ## 3. Checklist งานย่อย (Implementation Checklist)
 
-- [ ] **11.1.1** เขียนชุดทดสอบอัตโนมัติสำหรับการรันและตรวจคำตอบภาษา **Java** และ **Python**
-- [ ] **11.1.2** เขียนชุดทดสอบอัตโนมัติสำหรับการรันและตรวจคำตอบภาษา **JavaScript** และ **TypeScript**
-- [ ] **11.1.3** เขียนชุดทดสอบอัตโนมัติสำหรับการ Bundling และรัน DOM Assertions ของ **HTML/CSS** และ **React (`.jsx`/`.tsx`)**
-- [ ] **11.2.1** เขียนชุดทดสอบ Stress Test สำหรับ Infinite Loop, Process Tree Kill, Stdout Flood, และ Memory Limit
-- [ ] **11.3.1** เขียนชุดทดสอบการทำงานร่วมกับ `ProcessInspector` และ `NetworkInspector` (ตรวจจับโค้ดที่แอบต่อเน็ตนอก และตรวจว่า Hidden Test Cases ไม่รั่วไหล)
-- [ ] **11.4.1** สร้างสคริปต์และชุดทดสอบ End-to-End จำลองการสอบเขียนโปรแกรมครบวงจรด้วยโหมดรันคู่ในเครื่องเดียว (`dev:pair`)
-
+- [ ] **11.1.1** เขียนชุดทดสอบอัตโนมัติสำหรับโปรเจกต์หลายไฟล์/หลายโฟลเดอร์ + Offline Libraries ในหมวด **CLI (`Java`, `Python`, `JS/TS`)**
+- [ ] **11.1.2** เขียนชุดทดสอบอัตโนมัติสำหรับโปรเจกต์หลายโฟลเดอร์ในหมวด **Frontend (`HTML/CSS/JS`, `React`)**
+- [ ] **11.1.3** เขียนชุดทดสอบอัตโนมัติสำหรับหมวด **Backend REST API (`Node/TS`, `Python`)** และการตรวจด้วย `HttpApiTestCase`
+- [ ] **11.1.4** เขียนชุดทดสอบอัตโนมัติสำหรับหมวด **Database / SQL (`SQLite`)** และการตรวจด้วย `SqlTestCase`
+- [ ] **11.2.1** เขียนชุดทดสอบ Stress & Tampering Test (Infinite Loop, Hanging Server, SQL Timeout, Path Traversal, และ Read-Only File Protection)
+- [ ] **11.3.1** เขียนชุดทดสอบการทำงานร่วมกับ `ProcessInspector` และ `NetworkInspector` (อนุญาต Loopback เฉพาะพอร์ต Backend Sandbox แต่จับกุมการต่อเน็ตนอกทันที)
+- [ ] **11.4.1** สร้างสคริปต์และชุดทดสอบ End-to-End จำลองการสอบทั้ง 4 หมวดด้วยโหมดรันคู่ในเครื่องเดียว (`dev:pair`)
