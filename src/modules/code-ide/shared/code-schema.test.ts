@@ -27,12 +27,12 @@ describe('Phase 8.1.1 — ProjectCategory & SupportedLanguage', () => {
     ])
   })
 
-  it('รองรับภาษาครบ 17 สแต็ก', () => {
+  it('รองรับภาษาครบ 18 สแต็ก (รวม sql-mysql)', () => {
     expect(SupportedCodeLanguageSchema.options).toEqual([
       'c', 'cpp', 'rust', 'go', 'java', 'python', 'javascript', 'typescript', 'php',
       'html-css-js', 'react',
       'node-backend', 'python-backend', 'go-backend', 'php-backend', 'java-backend',
-      'sql-sqlite'
+      'sql-sqlite', 'sql-mysql'
     ])
   })
 

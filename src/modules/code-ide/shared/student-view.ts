@@ -31,7 +31,8 @@ export function stripCodePackageForStudent(pkg: CodeExamPackage): StudentCodePac
       ecosystem: d.ecosystem,
       packages: d.packages.map((p) => ({ ...p }))
     })),
-    database: { ...pkg.database },
+    // Host-authoritative: ห้ามส่งรหัสผ่าน MySQL ของครูให้นักเรียน — นักเรียนกรอกเองที่เครื่องตัวเอง
+    database: { ...pkg.database, dbPassword: '' },
     sampleTests: sampleTests.map((t) => ({ ...t }) as StudentCodePackageView['sampleTests'][number]),
     totalSamplePoints: countCodePoints(sampleTests)
   }

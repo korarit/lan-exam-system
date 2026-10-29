@@ -51,7 +51,8 @@ export const SupportedCodeLanguageSchema = z.enum([
   'php-backend',
   'java-backend',
   // Database
-  'sql-sqlite'
+  'sql-sqlite',
+  'sql-mysql'
 ])
 export type SupportedCodeLanguage = z.infer<typeof SupportedCodeLanguageSchema>
 
@@ -72,7 +73,8 @@ export const SUPPORTED_LANGUAGE_LABELS: Record<SupportedCodeLanguage, string> = 
   'go-backend': 'Go Backend (net/http/Gin/Fiber)',
   'php-backend': 'PHP Backend (php -S / REST)',
   'java-backend': 'Java Backend (HTTP/REST)',
-  'sql-sqlite': 'SQL (SQLite)'
+  'sql-sqlite': 'SQL (SQLite — ไฟล์ในเครื่อง)',
+  'sql-mysql': 'SQL (MySQL — เลิกใช้, ไฟล์เก่าอ่านได้อย่างเดียว)'
 }
 
 /** ภาษาเริ่มต้นที่อนุญาตต่อหมวด (ใช้ใน Builder เป็นค่าแนะนำ) */
@@ -186,25 +188,62 @@ export const DependencyBundleSchema = z.object({
 })
 export type DependencyBundle = z.infer<typeof DependencyBundleSchema>
 
+export const MYSQL_DEFAULT_PORT = 3303
+export const MYSQL_DEFAULT_HOST = 'localhost'
+export const MYSQL_DEFAULT_USER = 'root'
+
 export const DatabaseConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  engine: z.enum(['sqlite']).default('sqlite'),
+  /* SQLite เท่านั้น (เลิกใช้ MySQL server ภายนอก — ค่า 'mysql' เก็บไว้แค่ให้ไฟล์ .ztcode เก่าอ่านได้) */
+  engine: z.enum(['sqlite', 'mysql']).default('sqlite'),
+  /** โหมดข้อสอบ SQL: 'query' = มี table+data ให้มาแล้วให้เขียน query / 'create-table' = ให้นักเรียนสร้าง table เอง */
+  sqlMode: z.enum(['query', 'create-table']).default('query'),
   /** เช่น 'db/seed.sql' — สคริปต์สร้างตาราง + ข้อมูลตั้งต้น (Master Seed) */
   seedSqlPath: z.string().min(1).max(500).optional(),
-  /** หรือไฟล์ '.sqlite' ต้นฉบับที่อาจารย์อัปโหลดมา */
+  /** หรือไฟล์ '.sqlite' ต้นฉบับที่อาจารย์อัปโหลดมาให้เลย (เฉพาะ engine sqlite) */
   prebuiltDbPath: z.string().min(1).max(500).optional(),
   /** อนุญาต DELETE/DROP/TRUNCATE/ALTER ใน DB จำลองได้เต็มที่ */
   allowDestructiveQueries: z.boolean().default(true),
   /** Spawn DB ใหม่พร้อมข้อมูลเดิมทุกครั้งที่กด Run / เริ่ม Test Case ใหม่ */
   respawnFreshDbOnEveryRun: z.boolean().default(true),
-  /** ให้นักเรียนดู Schema / ข้อมูลตั้งต้นใน IDE ได้ */
-  exposeDbViewerToStudent: z.boolean().default(true)
+  /** โหมดดู schema: ครูเปิด/ปิดให้นักเรียนได้ (ฝั่งครูดูได้ตลอดไม่ว่าตั้งค่านี้เป็นอะไร) */
+  exposeDbViewerToStudent: z.boolean().default(true),
+  /* ---------- MySQL/MariaDB external server (engine === 'mysql') ---------- */
+  /** โฮสต์ของ MySQL server — default 'localhost', ครูแก้ได้ */
+  host: z.string().min(1).max(255).default(MYSQL_DEFAULT_HOST),
+  /** พอร์ตของ MySQL server — default 3303 (เช็ค TCP reachability ก่อนรัน) */
+  port: z.number().int().min(1).max(65535).default(MYSQL_DEFAULT_PORT),
+  /** ชื่อผู้ใช้ — default 'root', ครูแก้ได้ */
+  dbUser: z.string().max(128).default(MYSQL_DEFAULT_USER),
+  /** รหัสผ่าน — เก็บใน package เฉพาะฝั่งครู ห้ามส่งให้นักเรียนแบบ plaintext (strip ก่อนส่ง) */
+  dbPassword: z.string().max(256).default(''),
+  /** ชื่อฐานข้อมูล (database/schema) — ไม่ใช่ชื่อตาราง! เช่น 'exam_db' ไม่ใช่ 'users' */
+  databaseName: z.string().max(128).default('')
 })
 export type DatabaseConfig = z.infer<typeof DatabaseConfigSchema>
 
 /* ---------- 8.1.4 ชุดทดสอบ 4 หมวด ---------- */
 
 const TestVisibilitySchema = z.enum(['sample', 'hidden'])
+
+/* LeetCode-style typed inputs — ครูกำหนด input ทีละตัวพร้อม type แล้วระบบรวมเป็น stdin ให้อัตโนมัติ */
+export const CliInputTypeSchema = z.enum(['string', 'int', 'float', 'bool'])
+export type CliInputType = z.infer<typeof CliInputTypeSchema>
+
+export const CliTypedInputSchema = z.object({
+  name: z.string().min(1).max(64),
+  type: CliInputTypeSchema,
+  /** ค่าที่กรอก (เก็บเป็น string แล้วแปลงตาม type ตอนรัน เช่น int "5", float "3.14", bool "true") */
+  value: z.string().max(10_000)
+})
+export type CliTypedInput = z.infer<typeof CliTypedInputSchema>
+
+export const CLI_INPUT_TYPES: CliInputType[] = ['string', 'int', 'float', 'bool']
+
+/** รวม typed inputs เป็น stdin หนึ่งบรรทัดต่อหนึ่ง input (เว้น string ที่มีช่องว่างให้คงเดิม) */
+export function typedInputsToStdin(inputs: readonly CliTypedInput[]): string {
+  return inputs.map((i) => i.value).join('\n')
+}
 
 export const CliTestCaseSchema = z.object({
   testId: z.string().min(1).max(64),
@@ -213,6 +252,8 @@ export const CliTestCaseSchema = z.object({
   /** kind 'stdio': ข้อความป้อนทาง stdin (unit-harness: อาร์กิวเมนต์/ชื่อเทสต์) */
   stdin: z.string().max(100_000).default(''),
   expectedStdout: z.string().max(500_000).default(''),
+  /** ฟอร์ม input แบบ LeetCode — ถ้ามีจะใช้ประกอบ/แทน stdin (ดู typedInputsToStdin) */
+  inputs: z.array(CliTypedInputSchema).max(32).default([]),
   /** เช่น 'tests/test_main.py::test_sum' หรือคลาส JUnit — ใช้กับ unit-harness */
   harnessTarget: z.string().max(500).optional(),
   visibility: TestVisibilitySchema,
@@ -313,9 +354,15 @@ export const CodeExamPackageSchema = z.object({
   database: DatabaseConfigSchema.default(() => ({
     enabled: false,
     engine: 'sqlite' as const,
+    sqlMode: 'query' as const,
     allowDestructiveQueries: true,
     respawnFreshDbOnEveryRun: true,
-    exposeDbViewerToStudent: true
+    exposeDbViewerToStudent: true,
+    host: MYSQL_DEFAULT_HOST,
+    port: MYSQL_DEFAULT_PORT,
+    dbUser: MYSQL_DEFAULT_USER,
+    dbPassword: '',
+    databaseName: ''
   })),
   testCases: z.array(CodeTestCaseSchema).max(200).default([]),
   /** ไฟล์แนบไบนารี (key = archiveRelativePath / seed/prebuilt path) */

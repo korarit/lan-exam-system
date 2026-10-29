@@ -1,0 +1,87 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import type { VirtualEntry } from '../shared/code-schema'
+import { assertPathInside, buildSandboxEnv } from './anti-delete-guard'
+
+/* Phase 9 (9.3) — Workspace Materializer & Offline Library Linker
+ * - เขียน VirtualProjectTree ลง Isolated Run Directory (os.tmpdir/ztcode-exec-<runId>)
+ * - กัน path traversal ทุก entry
+ * - เชื่อม offline libs: node (symlink/junction), python (PYTHONPATH), java (classpath)
+ */
+
+export interface MaterializeResult {
+  runDir: string
+  writtenFiles: string[]
+  env: NodeJS.ProcessEnv
+}
+
+export function materializeExecutionSandbox(
+  entries: readonly VirtualEntry[],
+  opts: {
+    runId?: string
+    teacherOriginals?: readonly VirtualEntry[]
+    extraEnv?: Record<string, string>
+  } = {}
+): MaterializeResult {
+  const runId = opts.runId ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const runDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ztcode-exec-')), runId)
+  fs.mkdirSync(runDir, { recursive: true })
+
+  // รวม teacher originals (readOnly/hidden) ทับเสมอ — กันนักเรียนแก้ไฟล์ล็อกผ่านดิสก์
+  const merged = new Map<string, VirtualEntry>()
+  for (const e of entries) merged.set(e.path, e)
+  if (opts.teacherOriginals !== undefined) {
+    for (const t of opts.teacherOriginals) {
+      if (t.readOnly === true || t.hiddenFromStudent === true) merged.set(t.path, t)
+    }
+  }
+
+  const writtenFiles: string[] = []
+  for (const e of merged.values()) {
+    assertPathInside(runDir, e.path)
+    const abs = path.join(runDir, e.path)
+    if (e.kind === 'folder') {
+      fs.mkdirSync(abs, { recursive: true })
+      continue
+    }
+    fs.mkdirSync(path.dirname(abs), { recursive: true })
+    if (e.encoding === 'base64') {
+      fs.writeFileSync(abs, Buffer.from(e.content ?? '', 'base64'))
+    } else {
+      fs.writeFileSync(abs, e.content ?? '', 'utf8')
+    }
+    writtenFiles.push(e.path)
+  }
+  return { runDir, writtenFiles, env: buildSandboxEnv(runDir, opts.extraEnv) }
+}
+
+/** ล้าง runDir หลังรันเสร็จ (คืนพอร์ต/ดิสก์) — เรียกใน finally เสมอ */
+export function teardownRunDir(runDir: string): void {
+  try {
+    fs.rmSync(runDir, { recursive: true, force: true })
+  } catch {
+    // ลบไม่ได่ไม่ถือว่าพัง (OS ล็อกชั่วคราว) — tmp จะถูก GC โดย OS
+  }
+}
+
+/** เชื่อม node_modules แบบ offline: symlink/junction ไปยัง deps cache (เร็ว < 5ms) */
+export function linkNodeModules(runDir: string, depsCacheDir: string): void {
+  try {
+    const target = path.join(runDir, 'node_modules')
+    if (fs.existsSync(target)) return
+    const stat = fs.statSync(depsCacheDir)
+    if (!stat.isDirectory()) return
+    const type = process.platform === 'win32' ? 'junction' : 'dir'
+    fs.symlinkSync(depsCacheDir, target, type)
+  } catch {
+    // ลิงก์ไม่ได้ให้ fallback เป็น NODE_PATH (ผู้เรียกตั้ง env เพิ่ม)
+  }
+}
+
+/** PYTHONPATH สำหรับ import ข้ามโฟลเดอร์ + offline wheels */
+export function pythonPathFor(runDir: string, offlineSitePackages?: string): string {
+  return offlineSitePackages !== undefined && offlineSitePackages !== ''
+    ? `${runDir}${path.delimiter}${offlineSitePackages}`
+    : runDir
+}
