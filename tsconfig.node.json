@@ -19,15 +19,20 @@
     "noEmit": true,
     "paths": {
       "@shared/*": ["./src/shared/*"],
-      "@main/*": ["./src/main/*"]
+      "@main/*": ["./src/main/*"],
+      "@modules/*": ["./src/modules/*"]
     }
   },
   "include": [
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
     "src/shared/**/*.ts",
+    "src/modules/**/*.ts",
     "electron.vite.config.ts",
     "vitest.config.ts"
   ],
-  "exclude": ["src/preload/index.d.ts"]
+  "exclude": [
+    "src/preload/index.d.ts",
+    "src/modules/dynamic-form/renderer/**"
+  ]
 }

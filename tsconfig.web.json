@@ -21,13 +21,15 @@
     "useDefineForClassFields": true,
     "paths": {
       "@shared/*": ["./src/shared/*"],
-      "@renderer/*": ["./src/renderer/src/*"]
+      "@renderer/*": ["./src/renderer/src/*"],
+      "@modules/*": ["./src/modules/*"]
     }
   },
   "include": [
     "src/renderer/src/**/*",
     "src/renderer/src/**/*.tsx",
     "src/shared/**/*.ts",
+    "src/modules/**/*",
     "src/preload/index.d.ts"
   ]
 }
