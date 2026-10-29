@@ -8,8 +8,49 @@ import { useStudentExamStore } from '../store/exam-store'
 import { useStudentNetworkStore } from '../store/network-store'
 import { useDocsStore } from '../store/docs-store'
 import { CODE_IDE_RENDERER_UI } from '@modules/code-ide/renderer/index'
+import { DYNAMIC_FORM_RENDERER_UI } from '@modules/dynamic-form/renderer/index'
 
 let subscribed = false
+
+/** ฉบับร่างล่าสุดของแต่ละ module (กัน time-up มาก่อน autosave รอบถัดไป) */
+const lastModuleDrafts = new Map<string, unknown>()
+
+function stashModuleDraft(moduleId: string, draft: unknown): void {
+  lastModuleDrafts.set(moduleId, draft)
+}
+
+/** หมดเวลา: ยิง draft ล่าสุดของทุก module ขึ้นเครื่องแม่ครั้งสุดท้าย (F-2) */
+async function flushModuleDrafts(): Promise<void> {
+  const jobs: Array<{ moduleId: 'code-ide' | 'dynamic-form'; kind: 'action' | 'autosave'; payloadJson: string }> = []
+  for (const [moduleId, draft] of lastModuleDrafts) {
+    try {
+      if (moduleId === 'code-ide') {
+        jobs.push({ moduleId, kind: 'autosave', payloadJson: JSON.stringify(draft) })
+      } else if (moduleId === 'dynamic-form') {
+        const items =
+          typeof draft === 'object' && draft !== null && 'items' in draft
+            ? (draft as { items: unknown }).items
+            : null
+        if (!Array.isArray(items) || items.length === 0) continue
+        jobs.push({
+          moduleId,
+          kind: 'action',
+          payloadJson: JSON.stringify({ type: 'dynamic-form.submit-all', items })
+        })
+      }
+    } catch {
+      /* draft แปลงไม่ได้ — ข้าม */
+    }
+  }
+  lastModuleDrafts.clear()
+  for (const job of jobs) {
+    try {
+      await window.ztExam.moduleSend(job)
+    } catch {
+      /* สายหลุดระหว่าง flush — host finalize จะเลื่อน draft เดิมใน DB ให้ */
+    }
+  }
+}
 
 /** subscribe exam events ครั้งเดียวระดับโมดูล (กัน duplicate ตอน React strict) */
 function useExamEventSubscription(): void {
@@ -76,8 +117,38 @@ function CodeIdeExamSlot(props: { studentId: string }): React.JSX.Element {
         }
       }}
       onAutosaveDraft={(draft) => {
+        stashModuleDraft('code-ide', draft)
         void window.ztExam
           .moduleSend({ moduleId: 'code-ide', kind: 'autosave', payloadJson: JSON.stringify(draft) })
+          .catch(() => undefined)
+      }}
+    />
+  )
+}
+
+function DynamicFormExamSlot(props: { studentId: string }): React.JSX.Element {
+  const moduleState = useStudentExamStore((s) => s.moduleStates['dynamic-form'])
+  if (moduleState === undefined || moduleState === null) return <></>
+  const { StudentExamWorkspace } = DYNAMIC_FORM_RENDERER_UI
+  return (
+    <StudentExamWorkspace
+      moduleState={moduleState}
+      studentId={props.studentId}
+      onDispatchAction={async (action) => {
+        try {
+          await window.ztExam.moduleSend({
+            moduleId: 'dynamic-form',
+            kind: 'action',
+            payloadJson: JSON.stringify(action)
+          })
+        } catch {
+          /* สายหลุด — draft ล่าสุดยังอยู่ฝั่งนักเรียน, กดส่งใหม่หลัง reconnect */
+        }
+      }}
+      onAutosaveDraft={(draft) => {
+        stashModuleDraft('dynamic-form', draft)
+        void window.ztExam
+          .moduleSend({ moduleId: 'dynamic-form', kind: 'autosave', payloadJson: JSON.stringify(draft) })
           .catch(() => undefined)
       }}
     />
@@ -102,6 +173,7 @@ export default function ExamView(): React.JSX.Element | null {
   const remaining = useStudentExamStore((s) => s.remainingSeconds)
   const finishReason = useStudentExamStore((s) => s.finishReason)
   const hasCodeIdeModule = useStudentExamStore((s) => s.moduleStates['code-ide'] !== undefined && s.moduleStates['code-ide'] !== null)
+  const hasFormModule = useStudentExamStore((s) => s.moduleStates['dynamic-form'] !== undefined && s.moduleStates['dynamic-form'] !== null)
   useExamEventSubscription()
 
   // เข้าโหมด kiosk ทันทีที่เริ่ม/กู้คืนการสอบ (main process ล็อกจอระดับ OS)
@@ -124,13 +196,16 @@ export default function ExamView(): React.JSX.Element | null {
     if (phase !== 'timeup') return
     const store = useStudentExamStore.getState()
     const question = store.question
-    if (!question) return
-    void window.ztExam.submitAnswer({
-      questionId: question.questionId,
-      cursorIndex: question.cursorIndex,
-      answer: { type: 'text', content: store.draft?.type === 'text' ? store.draft.content : '' },
-      timeSpentMs: 0
-    })
+    if (question) {
+      void window.ztExam.submitAnswer({
+        questionId: question.questionId,
+        cursorIndex: question.cursorIndex,
+        answer: { type: 'text', content: store.draft?.type === 'text' ? store.draft.content : '' },
+        timeSpentMs: 0
+      })
+    }
+    // F-2: ยิง draft ล่าสุดของทุก module (code-ide/dynamic-form) ขึ้นเครื่องแม่ครั้งสุดท้าย
+    void flushModuleDrafts()
   }, [phase])
 
   if (phase === 'idle' || phase === 'waiting' || !identity) return null
@@ -188,6 +263,10 @@ export default function ExamView(): React.JSX.Element | null {
           {hasCodeIdeModule ? (
             <div className="w-full h-full overflow-hidden p-2">
               <CodeIdeExamSlot studentId={identity.studentId} />
+            </div>
+          ) : hasFormModule ? (
+            <div className="w-full h-full overflow-hidden p-2">
+              <DynamicFormExamSlot studentId={identity.studentId} />
             </div>
           ) : examMode === 'in-app-docs' ? (
             <>
