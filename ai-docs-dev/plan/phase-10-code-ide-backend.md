@@ -127,12 +127,14 @@
 
 ## 3. Checklist งานย่อย (Implementation Checklist)
 
-- [ ] **10.1.1** สร้าง `CodeIdeModuleBackend` และ `TeacherWorkspaceDirectoryManager` รองรับการเลือกโฟลเดอร์หลักฝั่งครู การสร้าง Subfolder ตามรหัสนักเรียน (`<TeacherSelectedFolder>/<studentId>/`) และการกระจาย `DependencyBundle` ไปยังเครื่องนักเรียนผ่าน LAN
-- [ ] **10.1.2** สร้างระบบรับการส่งงานทั้งโปรเจกต์ (`VirtualProjectTree` upload & validation) ที่บันทึกทั้งลง SQLite และเขียนลงโฟลเดอร์ `<studentId>` บนเครื่องครูโดยอัตโนมัติ
-- [ ] **10.2.1** อัปเกรด `GradingWorkerQueue` ให้ตรวจให้คะแนนครบทั้ง 4 หมวด (`cli-algorithm`, `frontend`, `backend`, `database`) พร้อมระบบจัดสรรพอร์ตไม่ให้ชนกันสำหรับโจทย์ Backend
-- [ ] **10.3.1** สร้าง `StudentProjectInspectorModal.tsx` ที่แสดง Folder Tree + Multi-tab Monaco Editor เหมือนฝั่งนักเรียนทุกประการ พร้อมโหมดเทียบ Diff รายไฟล์และ Code Playback Timeline
-- [ ] **10.3.2** สร้างฟีเจอร์ `Re-grade All Submissions` เมื่ออาจารย์ปรับแก้ Test Cases
-- [ ] **10.4.1** สร้าง `CodeExporter` ที่ส่งออกทั้งไฟล์ CSV สรุปคะแนน และโฟลเดอร์โปรเจกต์ของนักเรียนทุกคนโดยรักษาลำดับชั้นของโฟลเดอร์ย่อยไว้ครบถ้วน
+- [x] **10.1.1** สร้าง `CodeIdeModuleBackend` และ `TeacherWorkspaceDirectoryManager` รองรับการเลือกโฟลเดอร์หลักฝั่งครู การสร้าง Subfolder ตามรหัสนักเรียน (`<TeacherSelectedFolder>/<studentId>/`) และการกระจาย `DependencyBundle` ไปยังเครื่องนักเรียนผ่าน LAN
+- [x] **10.1.2** สร้างระบบรับการส่งงานทั้งโปรเจกต์ (`VirtualProjectTree` upload & validation) ที่บันทึกทั้งลง SQLite และเขียนลงโฟลเดอร์ `<studentId>` บนเครื่องครูโดยอัตโนมัติ
+- [x] **10.2.1** อัปเกรด `GradingWorkerQueue` ให้ตรวจให้คะแนนครบทั้ง 4 หมวด (`cli-algorithm`, `frontend`, `backend`, `database`) พร้อมระบบจัดสรรพอร์ตไม่ให้ชนกันสำหรับโจทย์ Backend
+- [x] **10.3.1** สร้าง `StudentProjectInspectorModal.tsx` ที่แสดง Folder Tree + Multi-tab Monaco Editor เหมือนฝั่งนักเรียนทุกประการ พร้อมโหมดเทียบ Diff รายไฟล์และ Code Playback Timeline
+- [x] **10.3.2** สร้างฟีเจอร์ `Re-grade All Submissions` เมื่ออาจารย์ปรับแก้ Test Cases
+- [x] **10.4.1** สร้าง `CodeExporter` ที่ส่งออกทั้งไฟล์ CSV สรุปคะแนน และโฟลเดอร์โปรเจกต์ของนักเรียนทุกคนโดยรักษาลำดับชั้นของโฟลเดอร์ย่อยไว้ครบถ้วน
+- [x] **10.5 (งานค้างที่เก็บแล้ว)** แยก dispatch ตาม kind ของ test (fullstack/mixed ตรวจครบ), `HeadlessDomRunner` ด้วย jsdom + vm timeout (เจอและแก้บั๊ก cross-realm Promise/`instanceof` แล้ว), ตรวจสถานะ DB หลังยิง API (`verifyDb`), wire offline libs (แตก .zip/.whl/.jar จาก blobs → link node/python/java), Inspector เพิ่มแท็บ Live Preview / API Probe / SQL Workbench / Comments (ตาราง `code_comments`, migration v8), Builder แนบไฟล์ lib จริง + แก้ไข HTTP requests ใน TestCaseEditor, ปรับ scanner ไม่ flag `db.exec` (method call) แต่ยังบล็อก `exec()` ลอย ๆ
+- [x] **10.6 ท่อ LAN สำหรับส่งงาน (สเปค Phase 2 มี แต่ไม่เคยมีโค้ด — ทำตอนนี้)** `MODULE_ACTION/MODULE_CHUNK/MODULE_ACK/MODULE_STATE_PUSH` ใน protocol-schema (อาศัย NetEnvelope HMAC+seq อยู่แล้ว), `ModuleTransportHost` (ประกอบ chunks สูงสุด 12MB, ส่ง ack, ไม่ throw), `ingestViaTransport` (รับเฉพาะห้อง status running + ส่งคิวตรวจ), `student:module-send` IPC (หั่น chunks อัตโนมัติ), host ดัน stripped package view ให้ทุกคนตอนเริ่มสอบ, นักเรียน render IDE ใน ExamView + ack banner, workspace ส่งผ่าน LAN เป็นหลัก (ลบ direct IPC ที่ซ้ำซ้อนออก)
 
 ---
 
@@ -143,3 +145,19 @@
    - **Concurrent Backend & SQL Grading Test:** จำลองการส่งงานโจทย์ Backend API และ Database SQL จากนักเรียน 20 คนพร้อมกันเข้า `GradingWorkerQueue` -> แต่ละ Worker ต้องได้พอร์ตและอินสแตนซ์ฐานข้อมูลแยกกัน ตรวจให้คะแนนถูกต้องโดยไม่มีพอร์ตชนกัน (`EADDRINUSE`)
 2. **Manual Verification:**
    - นักเรียนสร้างโฟลเดอร์และไฟล์ใหม่ใน IDE แล้วกดส่งงาน -> อาจารย์เปิดดูใน `StudentProjectInspectorModal` เห็นโฟลเดอร์และไฟล์ทั้งหมดตรงกับฝั่งนักเรียนเป๊ะ เปิดดู Diff และกด Export ออกมาเป็นโฟลเดอร์จริงบนดิสก์ได้ครบถ้วน
+
+---
+
+## 5. งานค้าง / Follow-up (ยังไม่ทำ — ย้ายไป Phase ถัดไป)
+
+> สถานะ: Phase 10 (รวม 10.5–10.6) ปิดแล้ว รายการด้านล่างคืองานที่เหลือจริง ณ 2026-10-30
+
+- [ ] **F-1 `dynamic-form` เสียบท่อ LAN (`MODULE_ACTION/CHUNK`)** — ท่อกลาง (`module-transport.ts`, `student:module-send`, ack/state events) พร้อมใช้แล้ว เหลือฝั่ง `dynamic-form` 3 จุดตาม pattern เดียวกับ code-ide:
+  1. Host: `FormHostService.ingestViaTransport()` (ตรวจ `exam_sessions.status === 'running'` + แยก action/autosave แล้วเรียก `ingestItemSubmission`/`ingestArtifactChunk` เดิม)
+  2. Host: ดัน stripped form view ผ่าน `MODULE_STATE_PUSH` ตอนเริ่มสอบ (ต่อจาก `pushCodeIdePackageToStudents` ใน `main/index.ts`)
+  3. Student: render `DynamicFormRenderer_UI.StudentExamWorkspace` ใน `ExamView` เมื่อมี `moduleStates['dynamic-form']` (copy slot `CodeIdeExamSlot`)
+- [ ] **F-2 Finalize / Time-up flush ของ module** — ปัจจุบันพึ่ง autosave ล่าสุด + คิวตรวจฝั่ง host ที่ปิดเอง ที่ควรมี:
+  1. นักเรียน: เมื่อได้ `exam:time-up` / `exam:completed` ให้ยิง `module-send` action ส่งงานฉบับสุดท้าย 1 ครั้ง (กติกาเดียวกับ `FINAL_DRAFT_FLUSH` ของ stepping-runner)
+  2. Host: เมื่อจบสอบ (`onExamEnded`) ให้ `finalizeStudentSession` ของโมดูลที่ผูกไว้ (ปิดคิว + ปั๊มสถานะ submission ค้างเป็น `graded`/`error`)
+- [ ] **F-3 กระจาย `DependencyBundle` blobs ลงเครื่องนักเรียน** — ตอนนี้ blobs ถูก strip ออกจาก student view (LAN มีแค่ท่อส่งขึ้น) นักเรียนที่ต้องใช้ lib จริงยังรันไม่ได้ถ้าเครื่องตัวเองไม่มี ต้องมี `MODULE_BUNDLE_PUSH` (host → student, chunked) + เขียนลง deps cache ฝั่งนักเรียนก่อนเริ่มสอบ (ใช้ `materializeDependencyCache` ฝั่ง student + `linkNodeModules`/`PYTHONPATH` เดิม)
+- [ ] **F-4 (docs)** checklist Phase 2 ใน `00-overview.md` ยังเป็น Pending ทั้งที่ core (`cac17e8`) + ท่อ modules (10.6) ทำแล้ว — รอเจ้าของงาน flip พร้อม Phase 2 ทั้งก้อน

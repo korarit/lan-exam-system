@@ -26,6 +26,7 @@
 | Unit & Integration Test | **Vitest** | `^5.0.5` | ทดสอบความถูกต้องของโปรโตคอล, Crypto, และ Sandbox |
 | Code Editor (code-ide) | **monaco-editor** | `^0.57.0` | Editor ออฟไลน์สำหรับโมดูลเขียนโค้ด (Phase 8) |
 | Offline Fast Bundler | **esbuild** | `^0.28.2` | แปลง TS/React JSX/TSX ออฟไลน์ความเร็วสูง (Phase 9) |
+| Headless DOM Runner | **jsdom** | `^29.1.1` | รัน bundle + assertionScript ตรวจ DOM อัตโนมัติใน Main (Phase 10 ค้าง — ไม่ต้องใช้ BrowserWindow) |
 | Math Rendering | **katex** | `^0.19.1` | เรนเดอร์สมการคณิตศาสตร์ LaTeX ออฟไลน์ (Phase 12) |
 | System Built-ins | **Node.js `dgram`, `tls`, `net`, `crypto`** | Built-in | UDP discovery, TLS 1.3 socket, Ed25519, AES-256-GCM |
 
