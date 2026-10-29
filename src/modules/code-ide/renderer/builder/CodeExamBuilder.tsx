@@ -86,6 +86,8 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
   const [templateView, setTemplateView] = useState<TemplateView>('starter')
   const [bundles, setBundles] = useState<DependencyBundle[]>([])
   const [libFiles, setLibFiles] = useState<LibFileAttachment[]>([])
+  /** ครู opt-in: อนุญาตให้นักเรียน pip/npm install เองจาก registry ทางการ (default ปิด) */
+  const [allowStudentInstall, setAllowStudentInstall] = useState(false)
   const [entryPoint, setEntryPoint] = useState('src/Main.java')
   const [tests, setTests] = useState<CodeTestCase[]>([])
   const [teacherFolder, setTeacherFolder] = useState(() => defaultTeacherWorkspace('CS202_Final'))
@@ -156,7 +158,6 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
       seedSqlPath: dbConfig.seedSqlPath ?? 'db/seed.sql'
     }
   }
-
   /** blobs ของไฟล์ lib จริงที่ครูแนบ (key = archiveRelativePath — host แตกเข้า deps cache) */
   function buildBlobs(): Record<string, { encoding: 'base64'; dataBase64: string }> {
     const blobs: Record<string, { encoding: 'base64'; dataBase64: string }> = {}
@@ -164,6 +165,15 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
       blobs[f.blobPath] = { encoding: 'base64', dataBase64: f.dataBase64 }
     }
     return blobs
+  }
+
+  /** นโยบายติดตั้งเองฝั่งนักเรียน — เปิดเฉพาะ npm/pip ที่มีใน bundles (exact name@version ที่ครูติ๊กไว้เท่านั้น) */
+  function buildInstallPolicy(): { enabled: boolean; ecosystems: Array<'npm' | 'pip'> } {
+    if (!allowStudentInstall) return { enabled: false, ecosystems: [] }
+    const ecosystems: Array<'npm' | 'pip'> = []
+    if (bundles.some((b) => b.ecosystem === 'npm' || b.ecosystem === 'frontend-vendor')) ecosystems.push('npm')
+    if (bundles.some((b) => b.ecosystem === 'pip')) ecosystems.push('pip')
+    return { enabled: ecosystems.length > 0, ecosystems }
   }
 
   async function saveZtcode(): Promise<void> {
@@ -181,6 +191,7 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
         referenceSolution: reference,
         policy: { entryPointPath: entryPoint },
         dependencies: bundles,
+        installPolicy: buildInstallPolicy(),
         database: buildDatabase(),
         testCases: tests,
         blobs: buildBlobs()
@@ -235,6 +246,7 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
         referenceSolution: reference,
         policy: { entryPointPath: entryPoint },
         dependencies: bundles,
+        installPolicy: buildInstallPolicy(),
         database: buildDatabase(),
         testCases: tests,
         blobs: buildBlobs()
@@ -243,7 +255,7 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
       return null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, instructions, category, language, starter, reference, entryPoint, bundles, enableDatabase, dbConfig, tests])
+  }, [title, instructions, category, language, starter, reference, entryPoint, bundles, allowStudentInstall, enableDatabase, dbConfig, tests])
 
   async function attachToRoom(): Promise<void> {
     setAttaching(true)
@@ -260,6 +272,7 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
         referenceSolution: reference,
         policy: { entryPointPath: entryPoint },
         dependencies: bundles,
+        installPolicy: buildInstallPolicy(),
         database: buildDatabase(),
         testCases: tests,
         blobs: buildBlobs()
@@ -395,6 +408,22 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
       <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
         <h4 className="mb-2 text-sm font-semibold">📦 Offline Libraries</h4>
         <OfflineDependencyManager bundles={bundles} onChange={setBundles} files={libFiles} onChangeFiles={setLibFiles} />
+        <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-amber-800/50 bg-amber-950/20 px-2.5 py-2 text-[13px] text-slate-200">
+          <input
+            type="checkbox"
+            checked={allowStudentInstall}
+            onChange={(e) => setAllowStudentInstall(e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-amber-500"
+          />
+          <span>
+            🌐 อนุญาตให้นักเรียนติดตั้งไลบรารีเอง (`pip install` / `npm install`)
+            <span className="block text-[11px] text-slate-400">
+              ติดตั้งได้เฉพาะชื่อ+เวอร์ชันที่ติ๊กไว้ด้านบนเท่านั้น (exact name@version) จาก registry ทางการ
+              (registry.npmjs.org / pypi.org) — ห้องแล็บต้องเปิดเน็ตถึง registry ดังกล่าว
+              ปิดไว้ = ออฟไลน์ 100% (นักเรียนใช้ได้แค่ runtime + blob ที่ครูแนบ)
+            </span>
+          </span>
+        </label>
       </div>
 
       <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">

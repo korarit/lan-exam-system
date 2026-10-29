@@ -18,6 +18,11 @@ interface Props {
   runSignal?: number | undefined
   /** 'teacher' ดู schema ได้ตลอด / 'student' ดูได้เฉพาะเมื่อครูเปิด exposeDbViewerToStudent */
   viewerRole?: 'teacher' | 'student'
+  /** F-3: packageId ใช้ผูก offline libs ที่แคชไว้ตอนรัน CLI sample */
+  packageId?: string | undefined
+  /** F-3b: นโยบายติดตั้งเอง (ครู opt-in) + รายชื่อ exact ที่ครูอนุมัติ */
+  installPolicy?: { enabled: boolean; ecosystems: Array<'npm' | 'pip'> } | undefined
+  installPackages?: Array<{ ecosystem: 'npm' | 'pip'; name: string; version: string }> | undefined
 }
 
 export default function AdaptiveExecutionPanel(props: Props): React.JSX.Element {
@@ -31,7 +36,7 @@ export default function AdaptiveExecutionPanel(props: Props): React.JSX.Element 
     const sql = props.sampleTests.filter((t): t is SqlTestCase => t.kind === 'sql-query')
     return (
       <div className="divide-y divide-slate-800">
-        <section><SectionLabel text="CLI" /><CliTestRunnerPanel tests={cli} entries={props.entries} language={props.language} entryPointPath={props.entryPointPath} runSignal={props.runSignal} /></section>
+        <section><SectionLabel text="CLI" /><CliTestRunnerPanel tests={cli} entries={props.entries} language={props.language} entryPointPath={props.entryPointPath} runSignal={props.runSignal} packageId={props.packageId} installPolicy={props.installPolicy} installPackages={props.installPackages} /></section>
         <section><SectionLabel text="Web Preview" /><WebReactPreviewPanel entries={props.entries} language={props.language} tests={dom} /></section>
         <section><SectionLabel text="API" /><BackendApiTesterPanel tests={api} /></section>
         <section><SectionLabel text="Database" /><DatabaseWorkbenchPanel database={props.database} seedSql={props.seedSql} tests={sql} runSignal={props.runSignal} viewerRole={viewerRole} /></section>
@@ -40,7 +45,7 @@ export default function AdaptiveExecutionPanel(props: Props): React.JSX.Element 
   }
 
   if (tabs === 'cli') {
-    return <CliTestRunnerPanel tests={props.sampleTests.filter((t): t is CliTestCase => t.kind === 'stdio' || t.kind === 'unit-harness')} entries={props.entries} language={props.language} entryPointPath={props.entryPointPath} runSignal={props.runSignal} />
+    return <CliTestRunnerPanel tests={props.sampleTests.filter((t): t is CliTestCase => t.kind === 'stdio' || t.kind === 'unit-harness')} entries={props.entries} language={props.language} entryPointPath={props.entryPointPath} runSignal={props.runSignal} packageId={props.packageId} installPolicy={props.installPolicy} installPackages={props.installPackages} />
   }
   if (tabs === 'web') {
     return <WebReactPreviewPanel entries={props.entries} language={props.language} tests={props.sampleTests.filter((t): t is DomTestCase => t.kind === 'dom-assertion')} />

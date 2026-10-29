@@ -101,6 +101,18 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
     [pkg]
   )
   const libraries = useMemo(() => pkg.dependencies, [pkg])
+  /** F-3b: รายชื่อ exact ที่ครูอนุมัติให้ติดตั้งเอง (npm/pip เท่านั้น) */
+  const installPackages = useMemo(
+    () =>
+      (pkg.installPolicy.enabled
+        ? pkg.dependencies.flatMap((d) =>
+          d.ecosystem === 'npm' || d.ecosystem === 'pip'
+            ? d.packages.map((p) => ({ ecosystem: d.ecosystem as 'npm' | 'pip', name: p.name, version: p.version }))
+            : []
+        )
+        : []),
+    [pkg]
+  )
   const readOnlyPaths = useMemo(() => {
     const locked = new Set<string>()
     for (const e of entries) {
@@ -209,6 +221,11 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
                   ))}
                 </ul>
               )}
+              {pkg.installPolicy.enabled && (
+                <p className="mt-1 text-[11px] text-sky-300/80">
+                  🌐 ครูอนุญาตให้ติดตั้งเองได้ (pip/npm) — กด “ติดตั้งไลบรารี” ในแผงทดสอบ
+                </p>
+              )}
             </div>
             <button
               type="button"
@@ -304,6 +321,9 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
               seedSql={seedSqlOf(pkg, entries)}
               runSignal={runSignal}
               viewerRole={props.viewerRole ?? 'student'}
+              packageId={pkg.packageId}
+              installPolicy={pkg.installPolicy}
+              installPackages={installPackages}
             />
           </div>
         </div>

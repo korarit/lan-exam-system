@@ -150,14 +150,25 @@
 
 ## 5. งานค้าง / Follow-up (ยังไม่ทำ — ย้ายไป Phase ถัดไป)
 
-> สถานะ: Phase 10 (รวม 10.5–10.6) ปิดแล้ว รายการด้านล่างคืองานที่เหลือจริง ณ 2026-10-30
+> สถานะ ณ 2026-10-30: F-1–F-3 ปิดแล้ว (ดูบันทึกด้านล่าง) เหลืองานเอกสาร F-4 ข้อเดียว
 
-- [ ] **F-1 `dynamic-form` เสียบท่อ LAN (`MODULE_ACTION/CHUNK`)** — ท่อกลาง (`module-transport.ts`, `student:module-send`, ack/state events) พร้อมใช้แล้ว เหลือฝั่ง `dynamic-form` 3 จุดตาม pattern เดียวกับ code-ide:
-  1. Host: `FormHostService.ingestViaTransport()` (ตรวจ `exam_sessions.status === 'running'` + แยก action/autosave แล้วเรียก `ingestItemSubmission`/`ingestArtifactChunk` เดิม)
-  2. Host: ดัน stripped form view ผ่าน `MODULE_STATE_PUSH` ตอนเริ่มสอบ (ต่อจาก `pushCodeIdePackageToStudents` ใน `main/index.ts`)
-  3. Student: render `DynamicFormRenderer_UI.StudentExamWorkspace` ใน `ExamView` เมื่อมี `moduleStates['dynamic-form']` (copy slot `CodeIdeExamSlot`)
-- [ ] **F-2 Finalize / Time-up flush ของ module** — ปัจจุบันพึ่ง autosave ล่าสุด + คิวตรวจฝั่ง host ที่ปิดเอง ที่ควรมี:
-  1. นักเรียน: เมื่อได้ `exam:time-up` / `exam:completed` ให้ยิง `module-send` action ส่งงานฉบับสุดท้าย 1 ครั้ง (กติกาเดียวกับ `FINAL_DRAFT_FLUSH` ของ stepping-runner)
-  2. Host: เมื่อจบสอบ (`onExamEnded`) ให้ `finalizeStudentSession` ของโมดูลที่ผูกไว้ (ปิดคิว + ปั๊มสถานะ submission ค้างเป็น `graded`/`error`)
-- [ ] **F-3 กระจาย `DependencyBundle` blobs ลงเครื่องนักเรียน** — ตอนนี้ blobs ถูก strip ออกจาก student view (LAN มีแค่ท่อส่งขึ้น) นักเรียนที่ต้องใช้ lib จริงยังรันไม่ได้ถ้าเครื่องตัวเองไม่มี ต้องมี `MODULE_BUNDLE_PUSH` (host → student, chunked) + เขียนลง deps cache ฝั่งนักเรียนก่อนเริ่มสอบ (ใช้ `materializeDependencyCache` ฝั่ง student + `linkNodeModules`/`PYTHONPATH` เดิม)
-- [ ] **F-4 (docs)** checklist Phase 2 ใน `00-overview.md` ยังเป็น Pending ทั้งที่ core (`cac17e8`) + ท่อ modules (10.6) ทำแล้ว — รอเจ้าของงาน flip พร้อม Phase 2 ทั้งก้อน
+- [x] **F-1 `dynamic-form` เสียบท่อ LAN (`MODULE_ACTION/CHUNK`)** — ทำแล้ว:
+  1. Host: `FormHostService.ingestViaTransport()` (ตรวจ `exam_sessions.status === 'running'` + แยก action/autosave แล้วเรียก `ingestItemSubmission` เดิม) ✅
+  2. Host: ดัน stripped form view รายคนผ่าน `MODULE_STATE_PUSH` ตอนเริ่มสอบ (`pushFormViewToStudents` ต่อจาก `pushCodeIdePackageToStudents` ใน `main/index.ts`) ✅
+  3. Student: render `DynamicFormStudentWorkspace` ตัวจริงใน `ExamView` เมื่อมี `moduleStates['dynamic-form']` (แทน placeholder เดิม) ✅
+- [x] **F-2 Finalize / Time-up flush ของ module** — ทำแล้ว:
+  1. นักเรียน: เมื่อได้ `exam:time-up` ให้ flush draft ล่าสุดของทุก module ผ่าน `module-send` 1 ครั้ง (code-ide = autosave สุดท้าย, dynamic-form = action `submit-all`) — กติกาเดียวกับ `FINAL_DRAFT_FLUSH` ของ stepping-runner ✅
+  2. Host: เมื่อจบสอบ (`onExamEnded`) ให้ `finalizeModuleSessions` — code-ide เลื่อน draft ค้างเป็น submission + เข้าคิวตรวจ, dynamic-form ปั๊ม `endedAtMs` ✅
+- [x] **F-3 กระจาย `DependencyBundle` blobs ลงเครื่องนักเรียน** — ทำแล้ว (แบบจำกัดงบ ไม่ใช่ `MODULE_BUNDLE_PUSH` เต็มรูป):
+  1. Host คัด blobs ไฟล์เล็ก (`pickStudentBlobs`: รายไฟล์ ≤3MB รวม ≤5MB) แนบใน stripped student view ผ่าน `MODULE_STATE_PUSH` เดิม (stateJson ≤8MB) ✅
+  2. Student แคชผ่าน IPC `code-ide:cache-student-bundles` (ตรวจ sha256 ก่อนแตก → `materializeDependencyCache` ลงโฟลเดอร์ `ztcode-student-deps-cache` แยกจาก cache ครู) + `run-cli` ผูก deps ที่แคชไว้ผ่าน `packageId` ✅
+  3. **แก้บั๊กแฝงที่เจอระหว่างทำ:** `CodeIdeStudentEntry` เดิม parse ด้วย `CodeExamPackageSchema` ทำให้ `sampleTests` หลุด + `dependencies` ไม่ผ่าน → เพิ่ม `StudentCodePackageViewSchema` โดยเฉพาะ ✅
+  4. คงเหลือ (ไม่ทำในรอบนี้): ไฟล์ lib ก้อนใหญ่ (>งบ) ยังอยู่ฝั่งแม่เท่านั้น, `frontend`/`backend`/`database` panels ฝั่งนักเรียนยังรันด้วย runtime ตัวเองล้วน
+- [x] **F-3b นักเรียน `pip/npm install` เอง (ครู opt-in — แทนการส่ง blob ก้อนใหญ่)** — ทำแล้ว ณ 2026-10-30:
+  1. Schema: `StudentInstallPolicy { enabled, ecosystems: ['npm'|'pip'] }` ใน `CodeExamPackage` (default ปิด) + ผ่าน stripped view (ไม่ลับ) + pin registry ทางการ (`registry.npmjs.org`, `pypi.org`) ห้าม override
+  2. Builder: ครูติ๊ก “อนุญาตให้นักเรียนติดตั้งไลบรารีเอง” ต่อข้อสอบ (เปิดเฉพาะ ecosystem ที่มีใน bundles) — exact name@version ที่ติ๊กไว้เท่านั้น
+  3. Student (`student-deps-installer.ts` + IPC `code-ide:student-deps-status` / `code-ide:install-student-deps`): ติดตั้ง isolated ใต้ `ztcode-student-deps-cache/<packageId>/installed` (`npm --prefix` / `pip --target site-packages`, timeout 180s, validate ชื่อ/เวอร์ชันกัน URL·git·path traversal·shell metachars, ไม่แตะ system site-packages/global node_modules)
+  4. Renderer: แผง CLI เช็กสถานะ → ปุ่ม “📥 ติดตั้งเลย” (หรือ auto ก่อนรันครั้งแรก) → รายงาน manifest กลับ host ผ่าน `code-ide.deps-installed`
+  5. Host: `ingestViaTransport` รับ manifest (ไม่นับเป็นงานส่ง) → เก็บ `installManifests` → แนบ `studentInstalledPackages` ลง `grading-report.json` ให้ครูตรวจเทียบกับ bundles ที่อนุมัติ
+  6. เงื่อนไขห้องแล็บ: ต้องเปิดเน็ตถึง registry ดังกล่าว + มี node/python บนเครื่องนักเรียน (ตรวจผ่าน MissingRuntimePrompt เดิม)
+- [ ] **F-4 (docs)** checklist Phase 2 ใน `00-overview.md` ยังเป็น Pending ทั้งที่ core (`cac17e8`) + ท่อ modules (10.6 + F-1) ทำแล้ว — รอเจ้าของงาน flip พร้อม Phase 2 ทั้งก้อน

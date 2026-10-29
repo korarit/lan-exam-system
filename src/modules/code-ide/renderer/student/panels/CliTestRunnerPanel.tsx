@@ -22,6 +22,18 @@ interface Props {
   language: SupportedCodeLanguage
   entryPointPath: string
   runSignal?: number | undefined
+  /** F-3: packageId ใช้ผูก offline libs ที่แคชไว้ (undefined = รันด้วย runtime เครื่องล้วน) */
+  packageId?: string | undefined
+  /** F-3b: นโยบายติดตั้งเอง (ครู opt-in) + รายชื่อ exact ที่ครูอนุมัติ */
+  installPolicy?: { enabled: boolean; ecosystems: Array<'npm' | 'pip'> } | undefined
+  installPackages?: Array<{ ecosystem: 'npm' | 'pip'; name: string; version: string }> | undefined
+}
+
+/** ecosystem ที่ภาษานี้ติดตั้งเองได้ (นอกนั้นต้องใช้ blob ออฟไลน์) */
+function installEcosystemFor(language: SupportedCodeLanguage): 'npm' | 'pip' | null {
+  if (['javascript', 'typescript', 'node-backend', 'react', 'html-css-js'].includes(language)) return 'npm'
+  if (['python', 'python-backend'].includes(language)) return 'pip'
+  return null
 }
 
 function api(): Window['ztExam'] | null {
@@ -39,7 +51,57 @@ export default function CliTestRunnerPanel(props: Props): React.JSX.Element {
   const [customOutput, setCustomOutput] = useState<string | null>(null)
   const [customRunning, setCustomRunning] = useState(false)
   const [runtimeNote, setRuntimeNote] = useState<string | null>(null)
+  const [installNote, setInstallNote] = useState<string | null>(null)
+  const [installing, setInstalling] = useState(false)
   const firstSignal = useRef(true)
+
+  const wantedEco = installEcosystemFor(props.language)
+  const approvedForEco = (props.installPackages ?? []).filter((p) => wantedEco !== null && p.ecosystem === wantedEco)
+  const canSelfInstall =
+    props.installPolicy?.enabled === true &&
+    wantedEco !== null &&
+    props.installPolicy.ecosystems.includes(wantedEco) &&
+    approvedForEco.length > 0 &&
+    props.packageId !== undefined
+
+  /** F-3b: ติดตั้งไลบรารีที่ครูอนุมัติ (ครั้งเดียวต่อโจทย์) แล้วรายงาน manifest กลับ host */
+  async function ensureInstalled(): Promise<boolean> {
+    const zt = api()
+    if (zt === null || props.packageId === undefined) return false
+    if (!canSelfInstall) return true // ไม่ต้องติดตั้ง — รันด้วย runtime เครื่องล้วน
+    try {
+      const st = await zt.studentDepsStatus({ packageId: props.packageId })
+      if (st.cached) return true
+    } catch {
+      return false
+    }
+    setInstalling(true)
+    setInstallNote('📥 กำลังติดตั้งไลบรารีที่ครูอนุมัติ… (ครั้งแรกครั้งเดียว)')
+    try {
+      const r = await zt.installStudentDeps({ packageId: props.packageId, packages: approvedForEco })
+      if (!r.ok) {
+        setInstallNote(`⛔ ติดตั้งไม่สำเร็จ (${r.reason ?? 'unknown'}) — รันด้วย runtime เครื่องตัวเองล้วน`)
+        return false
+      }
+      setInstallNote(`✅ ติดตั้งแล้ว: ${r.installed.join(', ')}`)
+      // รายงาน manifest กลับ host (host เก็บลง grading report ให้ครูตรวจเทียบ)
+      try {
+        await window.ztExam.moduleSend({
+          moduleId: 'code-ide',
+          kind: 'action',
+          payloadJson: JSON.stringify({ type: 'code-ide.deps-installed', packages: r.installed })
+        })
+      } catch {
+        /* สายหลุด — manifest รอบนี้หาย แต่ deps ในเครื่องยังใช้รันได้ */
+      }
+      return true
+    } catch {
+      setInstallNote('⛔ ติดตั้งไม่สำเร็จ — รันด้วย runtime เครื่องตัวเองล้วน')
+      return false
+    } finally {
+      setInstalling(false)
+    }
+  }
 
   // เช็ค runtime ของภาษาที่ใช้ครั้งเดียวตอนเปิดแผง
   useEffect(() => {
@@ -77,11 +139,13 @@ export default function CliTestRunnerPanel(props: Props): React.JSX.Element {
     }
     setRunning((prev) => ({ ...prev, [t.testId]: true }))
     try {
+      await ensureInstalled()
       const r = await zt.runCliTest({
         language: props.language,
         entryPointPath: props.entryPointPath,
         entries: [...props.entries],
-        test: t
+        test: t,
+        ...(props.packageId !== undefined ? { packageId: props.packageId } : {})
       })
       const extra = [
         r.timedOut ? '⏱ หมดเวลา (ถูกตัดจบ)' : '',
@@ -121,6 +185,7 @@ export default function CliTestRunnerPanel(props: Props): React.JSX.Element {
     setCustomRunning(true)
     setCustomOutput(null)
     try {
+      await ensureInstalled()
       const r = await zt.runCliTest({
         language: props.language,
         entryPointPath: props.entryPointPath,
@@ -135,7 +200,8 @@ export default function CliTestRunnerPanel(props: Props): React.JSX.Element {
           visibility: 'sample' as const,
           points: 1,
           timeoutMs: 5000
-        }
+        },
+        ...(props.packageId !== undefined ? { packageId: props.packageId } : {})
       })
       setCustomOutput(
         [`▶ output:\n${r.actualStdout || '(ว่าง)'}`, r.stderr.trim() !== '' ? `stderr:\n${r.stderr.slice(0, 1000)}` : '', r.note]
@@ -167,6 +233,20 @@ export default function CliTestRunnerPanel(props: Props): React.JSX.Element {
       <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Sample Test Cases ({props.tests.length})</h3>
       {runtimeNote !== null && (
         <p className="rounded-lg border border-amber-800/60 bg-amber-950/30 px-2.5 py-2 text-[11px] leading-5 text-amber-200">{runtimeNote}</p>
+      )}
+      {canSelfInstall && (
+        <div className="rounded-lg border border-sky-800/60 bg-sky-950/30 px-2.5 py-2 text-[11px] leading-5 text-sky-200">
+          🌐 ครูอนุญาตให้ติดตั้งไลบรารีเอง: <span className="font-mono">{approvedForEco.map((p) => `${p.name}@${p.version}`).join(', ')}</span>
+          <button
+            type="button"
+            onClick={() => void ensureInstalled()}
+            disabled={installing}
+            className="ml-2 rounded bg-sky-700 px-2 py-0.5 text-[11px] font-medium hover:bg-sky-600 disabled:opacity-40"
+          >
+            {installing ? 'กำลังติดตั้ง…' : '📥 ติดตั้งเลย'}
+          </button>
+          {installNote !== null && <p className="mt-1 text-sky-300/90">{installNote}</p>}
+        </div>
       )}
       {props.tests.length === 0 && <p className="text-xs text-slate-500">ข้อนี้ไม่มี sample test — กดรันด้วย Custom Input ด้านล่าง</p>}
       {props.tests.map((t) => {
