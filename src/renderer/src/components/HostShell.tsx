@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { MonitorCog, Activity, ClipboardList, PenTool } from 'lucide-react'
+import { MonitorCog, Activity, ClipboardList, PenTool, Rows3 } from 'lucide-react'
 import HostPanel from './HostPanel'
 import FormBuilderWorkspace from '@modules/dynamic-form/renderer/builder/FormBuilderWorkspace'
+import ResponsesDashboard from '@modules/dynamic-form/renderer/responses/ResponsesDashboard'
 import { useAppStore } from '../store/app-store'
 
-type HostTab = 'room' | 'form-builder'
+type HostTab = 'room' | 'form-builder' | 'form-responses'
 
 export default function HostShell(): React.JSX.Element {
   const connectionState = useAppStore((s) => s.connectionState)
@@ -12,7 +13,8 @@ export default function HostShell(): React.JSX.Element {
 
   const tabs: Array<{ id: HostTab; label: string; icon: React.ReactNode }> = [
     { id: 'room', label: 'ห้องสอบ & ผู้คุม', icon: <ClipboardList size={14} /> },
-    { id: 'form-builder', label: 'Dynamic Form Builder', icon: <PenTool size={14} /> }
+    { id: 'form-builder', label: 'Dynamic Form Builder', icon: <PenTool size={14} /> },
+    { id: 'form-responses', label: 'ผลตอบฟอร์ม (ตรวจ/ส่งออก)', icon: <Rows3 size={14} /> }
   ]
 
   return (
@@ -46,7 +48,7 @@ export default function HostShell(): React.JSX.Element {
         ))}
       </nav>
       <main className="flex-1 overflow-y-auto p-6">
-        {tab === 'room' ? <HostPanel /> : <FormBuilderWorkspace />}
+        {tab === 'room' ? <HostPanel /> : tab === 'form-builder' ? <FormBuilderWorkspace /> : <ResponsesDashboard />}
       </main>
     </div>
   )
