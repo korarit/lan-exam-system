@@ -20,6 +20,176 @@ function normalizeCell(v: unknown): unknown {
   return String(v)
 }
 
+/* ============================================================
+ * Phase 11 (11.2.2) — SQL Heavy Query Timeout Guard
+ * better-sqlite3 เป็น synchronous API และไม่มี db.interrupt()
+ * ในเวอร์ชันที่ใช้ จึงรัน query ใน worker thread แยกแล้ว terminate
+ * เมื่อเกิน timeoutMs — กัน Recursive CTE ไม่รู้จบ / Cross Join
+ * ยักษ์ค้างโปรเซสหลักของเครื่องแม่/เครื่องนักเรียน
+ * (return type เดิม SqlRunResult — แทน runSqliteTest ได้ทันที)
+ * ============================================================ */
+
+interface SqlWorkerOut {
+  mode: 'select' | 'verified' | 'none' | 'timeout'
+  cols: string[]
+  rows: unknown[][]
+}
+
+/* หมายเหตุการออกแบบ (Phase 11.2.2):
+ * - better-sqlite3 ไม่มี db.interrupt() และ stmt.all()/db.exec() ที่ไม่รู้จบ
+ *   คือ synchronous native call — worker.terminate() จากข้างนอกค้างตามได้
+ *   เพราะ V8 แทรก termination ไม่ได้กลาง native call
+ * - ทางออก: worker อ่านทีละแถวด้วย stmt.iterate() แล้วเช็ค deadline
+ *   เองระหว่างแถว (JS ได้รันทุกแถว) — เจอ query ไม่รู้จบก็ post timeout
+ *   แล้วจบตัวเองสะอาด ไม่ต้องพึ่ง terminate
+ * - timer ฝั่ง main + terminate (แบบ race ไม่รอค้าง) เป็น backstop สำหรับ
+ *   เคส exec หนักที่เป็น native call เดียว (เช่น DML พ่วง CTE ไม่รู้จบ)
+ */
+const SQL_WORKER_CODE = `
+const { parentPort, workerData } = require('worker_threads');
+(function main() {
+  try {
+    const D = require(workerData.bindingPath);
+    const deadline = Date.now() + workerData.timeoutMs;
+    const db = new D(':memory:');
+    const timedOut = () => Date.now() > deadline;
+    function collect(stmt, cols) {
+      const rows = [];
+      for (const r of stmt.iterate()) {
+        rows.push(cols.map((c) => (r[c] === undefined ? null : r[c])));
+        if (rows.length >= 5000) break;
+        if (timedOut()) return { timeout: true, rows };
+      }
+      return { timeout: false, rows };
+    }
+    try {
+      db.exec('PRAGMA foreign_keys = ON');
+      db.exec(workerData.seedSql === '' ? 'CREATE TABLE IF NOT EXISTS _noop(id INTEGER);' : workerData.seedSql);
+      if (workerData.setupSqlOverride.trim() !== '') db.exec(workerData.setupSqlOverride);
+      const trimmed = workerData.studentSql.trim();
+      if (trimmed !== '' && /^\\s*(SELECT|WITH)\\b/i.test(trimmed)) {
+        const stmt = db.prepare(trimmed);
+        const cols = stmt.columns().map((c) => c.name);
+        const got = collect(stmt, cols);
+        if (got.timeout) parentPort.postMessage({ mode: 'timeout', cols, rows: [] });
+        else parentPort.postMessage({ mode: 'select', cols, rows: got.rows });
+      } else {
+        if (trimmed !== '') db.exec(trimmed);
+        if (workerData.verificationQuery.trim() !== '') {
+          const stmt = db.prepare(workerData.verificationQuery);
+          const cols = stmt.columns().map((c) => c.name);
+          const got = collect(stmt, cols);
+          if (got.timeout) parentPort.postMessage({ mode: 'timeout', cols, rows: [] });
+          else parentPort.postMessage({ mode: 'verified', cols, rows: got.rows });
+        } else {
+          parentPort.postMessage({ mode: 'none', cols: [], rows: [] });
+        }
+      }
+    } finally {
+      try { db.close(); } catch (_) { /* noop */ }
+    }
+  } catch (err) {
+    parentPort.postMessage({ error: err instanceof Error ? err.message : 'worker failed' });
+  }
+})();
+`;
+
+export async function runSqliteTestWithTimeout(
+  seedSql: string,
+  studentSql: string,
+  test: SqlTestCase
+): Promise<SqlRunResult> {
+  // กัน ATTACH กระโดดออกนอก DB (เดิมมีแค่ใน workbench — รวมไว้ที่นี่ด้วย)
+  if (/^\s*ATTACH\b/i.test(studentSql.trim())) {
+    return { testId: test.testId, passed: false, actualColumns: [], actualRows: [], note: '⛔ บล็อก ATTACH — กระโดดออกนอก DB ไม่ได้' }
+  }
+  let bindingPath: string
+  try {
+    // หมายเหตุ: ไฟล์นี้ถูก vite transform เป็น ESM — ใช้ createRequire แทน require ตรง ๆ
+    const { createRequire } = await import('node:module')
+    const req = createRequire(import.meta.url)
+    bindingPath = req.resolve('better-sqlite3') as string
+  } catch {
+    return runSqliteTest(seedSql, studentSql, test)
+  }
+  let WorkerCtor: typeof import('node:worker_threads').Worker
+  try {
+    const { createRequire } = await import('node:module')
+    const req = createRequire(import.meta.url)
+    WorkerCtor = (req('node:worker_threads') as typeof import('node:worker_threads')).Worker
+  } catch {
+    return runSqliteTest(seedSql, studentSql, test)
+  }
+  let worker: import('node:worker_threads').Worker
+  try {
+    worker = new WorkerCtor(SQL_WORKER_CODE, {
+      eval: true,
+      workerData: {
+        bindingPath,
+        seedSql,
+        setupSqlOverride: test.setupSqlOverride ?? '',
+        studentSql,
+        verificationQuery: test.verificationQuery ?? '',
+        timeoutMs: Math.max(100, Math.min(test.timeoutMs, 60_000))
+      }
+    })
+  } catch {
+    return runSqliteTest(seedSql, studentSql, test)
+  }
+  const timeoutMs = Math.max(100, Math.min(test.timeoutMs, 60_000))
+  try {
+    const out = await new Promise<SqlWorkerOut>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error('SQL_TIMEOUT'))
+      }, timeoutMs + 2000)
+      // กัน timer ค้าง event loop หลัง worker จบ
+      if (typeof (timer as unknown as { unref?: () => void }).unref === 'function') {
+        ;(timer as unknown as { unref: () => void }).unref()
+      }
+      worker.once('message', (msg: unknown) => {
+        clearTimeout(timer)
+        if (typeof msg === 'object' && msg !== null && 'error' in msg) {
+          reject(new Error(String((msg as { error: unknown }).error).slice(0, 300)))
+          return
+        }
+        resolve(msg as SqlWorkerOut)
+      })
+      worker.once('error', (err: Error) => {
+        clearTimeout(timer)
+        reject(err)
+      })
+      worker.once('exit', (code: number) => {
+        clearTimeout(timer)
+        if (code !== 0) reject(new Error(`SQL_WORKER_EXIT_${code}`))
+      })
+    })
+    if (out.mode === 'timeout') {
+      return { testId: test.testId, passed: false, actualColumns: [], actualRows: [], note: `⏱️ หมดเวลา ${timeoutMs}ms (ตัดจบ query แล้ว — สงสัย Recursive CTE / Cross Join ยักษ์)` }
+    }
+    if (out.mode === 'select') return compare(test, out.cols, out.rows, 'รัน SELECT ของนักเรียน')
+    if (out.mode === 'verified') {
+      return compare(test, out.cols, out.rows, 'รันคำสั่งนักเรียนแล้วตรวจด้วย verificationQuery')
+    }
+    return { testId: test.testId, passed: null, actualColumns: [], actualRows: [], note: 'ไม่มี SELECT/verificationQuery — ตั้งโจทย์เฉย ๆ ไม่ตรวจ' }
+  } catch (err) {
+    if (err instanceof Error && err.message === 'SQL_TIMEOUT') {
+      return { testId: test.testId, passed: false, actualColumns: [], actualRows: [], note: `⏱️ หมดเวลา ${timeoutMs}ms (ตัดจบ query แล้ว — สงสัย Recursive CTE / Cross Join ยักษ์)` }
+    }
+    return { testId: test.testId, passed: false, actualColumns: [], actualRows: [], note: `⛔ SQLite error: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown'}` }
+  } finally {
+    try {
+      // terminate อาจค้างถ้า worker ติดใน native call เดียวที่ไม่รู้จบ —
+      // รอแบบ race แล้วปล่อย (worker กรณี SELECT ออกเองทาง deadline อยู่แล้ว)
+      await Promise.race([
+        worker.terminate(),
+        new Promise((resolve) => setTimeout(resolve, 3000))
+      ])
+    } catch {
+      /* ปิดไม่ได้ — GC จัดการ */
+    }
+  }
+}
+
 export async function runSqliteTest(
   seedSql: string,
   studentSql: string,
