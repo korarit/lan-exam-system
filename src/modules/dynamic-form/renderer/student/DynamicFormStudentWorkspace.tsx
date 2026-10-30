@@ -65,8 +65,10 @@ export default function DynamicFormStudentWorkspace(
 ): React.JSX.Element {
   const { view } = props
   const questions = useMemo(() => view.items.filter(isQuestion), [view])
+  const hasFileUpload = useMemo(() => questions.some((q) => q.inputType === 'file_upload'), [questions])
   const [answers, setAnswers] = useState<Record<string, FormAnswerValue>>({})
   const [notice, setNotice] = useState<string | null>(null)
+  const [lastAutosaveAtMs, setLastAutosaveAtMs] = useState<number | null>(null)
   const answersRef = useRef(answers)
   const lastAutosaveRef = useRef(0)
 
@@ -78,6 +80,7 @@ export default function DynamicFormStudentWorkspace(
       .filter((q) => next[q.itemId] !== undefined)
       .map((q) => buildSubmission(q, next[q.itemId]!))
     if (items.length === 0) return
+    setLastAutosaveAtMs(Date.now())
     props.onAutosaveDraft({ items })
   }
 
@@ -143,6 +146,24 @@ export default function DynamicFormStudentWorkspace(
           {view.instructions}
         </p>
       )}
+      {hasFileUpload && (
+        <div
+          title="ข้อจำกัด F-1: ท่อ LAN ยังไม่ส่งไบนารีไฟล์แนบ ระบบส่งเฉพาะชื่อไฟล์/สถานะ ครูจะเก็บไฟล์จริงผ่านช่องทางอื่นที่นัดไว้"
+          className="border-b border-amber-800/60 bg-amber-950/40 px-4 py-2 text-xs text-amber-200"
+        >
+          📎 <b>ข้อสอบนี้มีข้ออัปโหลดไฟล์ — ไฟล์แนบยังไม่ส่งผ่านเครือข่าย (F-1)</b>
+          <span className="mt-0.5 block text-amber-200/80">
+            ระบบส่งเฉพาะชื่อไฟล์/สถานะให้เครื่องแม่ ครูจะเก็บไฟล์จริงผ่านช่องทางอื่นที่นัดไว้ — อย่าเข้าใจว่าอัปโหลดแล้วไฟล์ถึงครูทันที
+          </span>
+        </div>
+      )}
+      <div className="flex items-center gap-2 border-b border-slate-800 bg-slate-900/40 px-4 py-1 text-[11px] text-slate-500">
+        <span title="draft เก็บในเครื่องทุกครั้งที่พิมพ์ + ส่ง host ทุก ≥5 วินาที (throttle) ดูยืนยันจากแถบ ack ด้านบน">
+          {lastAutosaveAtMs === null
+            ? '💾 ยังไม่มี autosave — พิมพ์คำตอบแล้วระบบจะบันทึก draft อัตโนมัติ'
+            : `💾 draft ล่าสุด ${new Date(lastAutosaveAtMs).toLocaleTimeString('th-TH')} — เก็บในเครื่องแล้ว + ส่ง host แล้ว (รอยืนยัน ack)`}
+        </span>
+      </div>
       {notice !== null && (
         <div className="flex items-center gap-2 border-b border-slate-800 bg-slate-900/70 px-4 py-1.5 text-xs text-amber-200">
           <span className="flex-1">{notice}</span>
@@ -167,8 +188,11 @@ export default function DynamicFormStudentWorkspace(
               assets={{}}
             />
             {item.inputType === 'file_upload' && (
-              <p className="mt-2 text-[11px] text-amber-300/80">
-                📎 F-1: ไฟล์แนบยังไม่ส่งผ่านเครือข่าย — ครูจะเก็บไฟล์ข้อนี้ด้วยวิธีอื่น
+              <p
+                title="F-1: ท่อ LAN ยังไม่ส่งไบนารีไฟล์แนบ ระบบส่งเฉพาะชื่อไฟล์/สถานะ ไฟล์จริงครูเก็บผ่านช่องทางอื่น — กันเข้าใจผิดว่าส่งไฟล์แล้ว"
+                className="mt-2 rounded-lg border border-amber-800/60 bg-amber-950/30 px-2.5 py-1.5 text-[11px] text-amber-200"
+              >
+                📎 <b>ไฟล์แนบยังไม่ส่งผ่านเครือข่าย (F-1)</b> — ระบบบันทึกเฉพาะชื่อไฟล์/สถานะ ครูจะเก็บไฟล์ข้อนี้ด้วยช่องทางอื่นที่แจ้งไว้
               </p>
             )}
             <div className="mt-3 flex justify-end">

@@ -67,6 +67,7 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
   const [activePath, setActivePath] = useState<string | null>(pkg.policy.entryPointPath)
   const [folder, setFolder] = useState(() => defaultWorkspaceFolder(examId, studentId))
   const [notice, setNotice] = useState<string | null>(null)
+  const [lastAutosaveAtMs, setLastAutosaveAtMs] = useState<number | null>(null)
   const [panelTab, setPanelTab] = useState<'result' | 'tests'>('result')
   const [runSignal, setRunSignal] = useState(0)
   const [showProblem, setShowProblem] = useState(true)
@@ -83,6 +84,7 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
     const now = Date.now()
     if (now - lastAutosaveRef.current < 5000) return
     lastAutosaveRef.current = now
+    setLastAutosaveAtMs(now)
     props.onAutosave?.(next)
   }
 
@@ -329,6 +331,16 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
         </div>
       </div>
 
+      <div
+        title="draft เก็บในโฟลเดอร์เครื่อง + ส่ง host ทุก ≥5 วินาที ดูยืนยันจากแถบ ack ด้านบน เน็ตหลุด draft ไม่หาย"
+        className="border-t border-slate-800 bg-slate-900/40 px-3 py-1 text-[11px] text-slate-500"
+      >
+        {isTeacherPreview
+          ? '👁️ โหมดพรีวิวครู — ไม่ส่งงานจริง'
+          : lastAutosaveAtMs === null
+            ? '💾 ยังไม่มี autosave — แก้โค้ดแล้วระบบจะบันทึก draft อัตโนมัติ (เก็บในเครื่อง + ส่ง host)'
+            : `💾 draft ล่าสุด ${new Date(lastAutosaveAtMs).toLocaleTimeString('th-TH')} — เก็บในเครื่องแล้ว + ส่ง host แล้ว (รอยืนยัน ack)`}
+      </div>
       {/* แถบล่าง */}
       <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 px-3 py-2">
         <StudentWorkspaceFolderPicker examId={examId} studentId={studentId} value={folder} onPick={setFolder} />

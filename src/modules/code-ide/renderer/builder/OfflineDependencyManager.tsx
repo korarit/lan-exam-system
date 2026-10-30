@@ -179,19 +179,36 @@ export default function OfflineDependencyManager(props: Props): React.JSX.Elemen
         <p className="mt-1 text-[11px] text-slate-600">ไฟล์ binary จริงจะถูกฝังเป็น base64 blob ใน .ztcode ตอนกดบันทึก (Phase 8 เก็บ metadata + path; เนื้อหาไฟล์แนบตอน Save)</p>
       </div>
 
-      {props.files.length > 0 && (
-        <div className="mt-2 rounded-lg border border-emerald-900/50 bg-emerald-950/20 p-2">
-          <h5 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-300/80">
-            ไฟล์จริงที่แนบ ({props.files.length}) — ฝังใน .ztcode แล้ว
-          </h5>
-          {props.files.map((f) => (
-            <div key={f.blobPath} className="flex items-center gap-2 py-0.5 font-mono text-[11px] text-slate-200">
-              <Paperclip size={11} className="text-emerald-400" />
-              <span className="flex-1 truncate">{f.fileName} ({(f.sizeBytes / 1024).toFixed(0)} KB → {f.blobPath})</span>
-            </div>
-          ))}
-        </div>
-      )}
+      {props.files.length > 0 && (() => {
+        const totalBytes = props.files.reduce((s, f) => s + f.sizeBytes, 0)
+        const totalMb = totalBytes / 1048576
+        const over = totalMb * 1.37 > 25
+        const near = !over && totalMb * 1.37 > 18
+        return (
+          <div className={`mt-2 rounded-lg border p-2 ${over ? 'border-red-800/60 bg-red-950/20' : near ? 'border-amber-800/60 bg-amber-950/20' : 'border-emerald-900/50 bg-emerald-950/20'}`}>
+            <h5 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-300/80">
+              ไฟล์จริงที่แนบ ({props.files.length} ไฟล์ · รวม {totalMb.toFixed(1)}MB → ประเมิน ~{(totalMb * 1.37).toFixed(1)}MB ใน .ztcode)
+            </h5>
+            {props.files
+              .slice()
+              .sort((a, b) => b.sizeBytes - a.sizeBytes)
+              .map((f) => (
+                <div key={f.blobPath} className="flex items-center gap-2 py-0.5 font-mono text-[11px] text-slate-200">
+                  <Paperclip size={11} className="text-emerald-400" />
+                  <span className="flex-1 truncate" title={`${f.fileName} — ${(f.sizeBytes / 1048576).toFixed(2)}MB`}>
+                    {f.fileName} ({(f.sizeBytes / 1024).toFixed(0)} KB → {f.blobPath})
+                  </span>
+                </div>
+              ))}
+            {(over || near) && (
+              <p className={`mt-1 text-[11px] font-medium ${over ? 'text-red-200' : 'text-amber-200'}`}>
+                {over ? '⛔ เกินขีดจำกัด ~25MB — ผูกห้องจะไม่ผ่าน' : '⚠️ ใกล้ขีดจำกัด ~25MB — ผูกห้องเสี่ยงไม่ผ่าน'}
+                {' '}วิธีลด: เอาไฟล์ใหญ่สุดออกก่อน (เรียงตามขนาดแล้วด้านบน), ลบ .jar/.whl ซ้ำ, แยก .zip หลายส่วน หรือใช้ห้อง lab ที่ลง lib ไว้แล้ว
+              </p>
+            )}
+          </div>
+        )
+      })()}
 
       {props.bundles.length > 0 && (
         <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
@@ -300,7 +317,7 @@ function AttachRealFile(props: {
           className="hidden"
           onChange={(e) => void onPick(e.target.files)}
         />
-        <span className="text-[11px] text-slate-600">สูงสุดไฟล์ละ 24MB · ฝังใน .ztcode สอบออฟไลน์ได้เลย</span>
+        <span title="รวมทุกไฟล์ + base64 (~1.37×) ต้องไม่เกิน ~25MB ไม่งั้นปุ่มผูกห้องจะไม่ผ่าน" className="text-[11px] text-slate-600">สูงสุดไฟล์ละ 24MB · รวมทุกไฟล์ต้องไม่เกิน ~25MB (ดูยอดรวมด้านล่าง) · ฝังใน .ztcode สอบออฟไลน์ได้เลย</span>
       </div>
       {error !== null && <p className="mt-1 text-[11px] text-amber-300">{error}</p>}
       {props.files.map((f) => (

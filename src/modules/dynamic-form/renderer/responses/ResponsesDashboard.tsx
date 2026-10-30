@@ -76,7 +76,8 @@ export default function ResponsesDashboard(): React.JSX.Element {
   const exportCsv = async (): Promise<void> => {
     try {
       const res = await api.exportFormCsv()
-      setNotice(res.ok && res.filePath !== undefined ? `บันทึก CSV แล้ว: ${res.filePath}` : `Export CSV ไม่สำเร็จ: ${res.reason ?? '?'}`)
+      const suffix = hasFileUpload ? ' — หมายเหตุ: คอลัมน์ file_upload เป็นชื่อไฟล์/สถานะเท่านั้น ไม่มีไบนารี (F-1 เก็บไฟล์จริงช่องทางอื่น)' : ''
+      setNotice(res.ok && res.filePath !== undefined ? `บันทึก CSV แล้ว: ${res.filePath}${suffix}` : `Export CSV ไม่สำเร็จ: ${res.reason ?? '?'}`)
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Export CSV ไม่สำเร็จ')
     }
@@ -134,6 +135,10 @@ export default function ResponsesDashboard(): React.JSX.Element {
       })),
     [questions]
   )
+  const hasFileUpload = useMemo(
+    () => questions.some((q) => q.inputType === 'file_upload'),
+    [questions]
+  )
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -171,6 +176,18 @@ export default function ResponsesDashboard(): React.JSX.Element {
           </button>
         </div>
       </header>
+
+      {hasFileUpload && snapshot !== null && (
+        <div
+          title="F-1: ท่อ LAN ยังไม่ส่งไบนารีไฟล์แนบ ตาราง/Export โชว์เฉพาะชื่อไฟล์/สถานะ ไฟล์จริงเก็บผ่านช่องทางอื่น — กันครูเข้าใจผิด"
+          className="rounded-xl border border-amber-800/60 bg-amber-950/30 px-4 py-2 text-xs text-amber-200"
+        >
+          📎 <b>ฟอร์มนี้มีข้อ file_upload — ไฟล์แนบยังไม่ส่งผ่านเครือข่าย (F-1)</b>
+          <span className="mt-0.5 block text-amber-200/80">
+            ตาราง/Export แสดงเฉพาะชื่อไฟล์/สถานะ ไม่มีไบนารี — เก็บไฟล์จริงผ่านช่องทางอื่นที่นัดกับนักเรียนไว้ อย่าตีความว่า “ไม่ส่ง = ทุจริต/ได้ 0 เพราะไฟล์หาย”
+          </span>
+        </div>
+      )}
 
       {notice !== null && notice.length > 0 && (
         <div className="rounded-xl border border-emerald-800/60 bg-emerald-950/40 px-4 py-2 text-xs text-emerald-200">{notice}</div>
@@ -387,6 +404,8 @@ function GradingRow({
     if (e.key === 'Enter') void handIn()
   }
   const needManual = view.status === 'needs-manual'
+  const formItem = snapshot.form.items.find((i) => i.itemId === view.itemId)
+  const isFileUpload = formItem !== undefined && isFormItemQuestion(formItem) && formItem.inputType === 'file_upload'
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
       <div className="flex items-center justify-between gap-3">
@@ -401,12 +420,21 @@ function GradingRow({
         </span>
       </div>
       <p className="mt-2 whitespace-pre-wrap text-sm text-slate-200">{view.displayValue.length > 0 ? view.displayValue : '(ไม่ตอบ)'}</p>
+      {isFileUpload && (
+        <p
+          title="F-1: LAN ยังไม่ส่งไบนารีไฟล์แนบ — รายการนี้เป็น descriptor/ชื่อไฟล์เท่านั้น"
+          className="mt-2 rounded-lg border border-amber-800/60 bg-amber-950/30 px-2.5 py-1.5 text-[11px] text-amber-200"
+        >
+          📎 ข้อนี้เป็น file_upload (F-1) — ยังไม่มีไบนารีผ่าน LAN{view.artifacts.length === 0 ? ' (ไม่มีไฟล์แนบมาถึง — เก็บไฟล์จริงช่องทางอื่น)' : ' (รายการด้านล่างเป็น descriptor/ลิงก์เท่านั้น)'}
+        </p>
+      )}
       {view.artifacts.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {view.artifacts.map((a) => (
             <button
               key={a.artifactId}
               type="button"
+              title="F-1: เปิดได้เฉพาะ descriptor/ไฟล์ที่ครูนำเข้าช่องทางอื่นแล้ว — ไม่ใช่ไบนารีที่นักเรียนอัปโหลดผ่าน LAN"
               onClick={() => void window.ztExam.openFormArtifact({ studentId: student.studentId, itemId: view.itemId, artifactId: a.artifactId })}
               className="flex items-center gap-1 rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:border-emerald-600"
             >

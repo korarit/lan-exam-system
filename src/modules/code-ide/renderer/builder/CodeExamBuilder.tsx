@@ -135,15 +135,15 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
   }
 
   function testReferenceSolution(): void {
-    // Phase 8: ตรวจโครง (reference ครบ + tests ครบ) — รันจริงผูก Runtime/Grader Phase 9/10
+    // C-BUILD-04 COND-PASS: ตรวจโครงเท่านั้น (reference ครบ + tests ครบ) — ยังไม่รันโค้ดจริง รันจริงผูก Runtime/Grader Phase 9
     const issues: string[] = []
     if (reference.length === 0) issues.push('ยังไม่มี Reference Solution (อัปโหลดโฟลเดอร์เฉลยหรือเขียนเอง)')
     if (tests.length === 0) issues.push('ยังไม่มี Test Case')
     if (issues.length > 0) {
-      setReport(`⚠️ ยังไม่พร้อม: ${issues.join('; ')}`)
+      setReport(`⚠️ ตรวจโครงไม่ผ่าน: ${issues.join('; ')} (นี่คือเช็กโครงเท่านั้น ยังไม่รันจริง)`)
       return
     }
-    setReport(`✅ โครงเฉลยพร้อม — Reference ${reference.length} entries × ${tests.length} tests (${countCodePoints(tests)} คะแนน) — การรันจริงผูก Runtime Phase 9`)
+    setReport(`✅ ตรวจโครงผ่านเท่านั้น — Reference ${reference.length} entries × ${tests.length} tests (${countCodePoints(tests)} คะแนน) — ยังไม่รันโค้ดจริง การรันจริงผูก Runtime/Grader Phase 9 อย่าตีความว่าผ่าน=โค้ดรันถูก`)
   }
 
   function buildDatabase(): DatabaseConfig {
@@ -233,6 +233,18 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
     }
   }
 
+  /** ประเมินขนาด package ก่อนกดผูกห้อง (base64 ขยาย ~1.37×) — กัน attach ไม่ผ่านที่ ~25MB ผ่าน IPC */
+  const sizeEstimate = useMemo(() => {
+    try {
+      const textBytes = JSON.stringify({ starter, reference, tests, bundles }).length
+      const blobBytes = libFiles.reduce((sum, f) => sum + f.sizeBytes, 0)
+      const approxBytes = Math.round(textBytes + blobBytes * 1.37)
+      return { approxBytes, blobBytes, textBytes, approxMb: approxBytes / 1048576 }
+    } catch {
+      return { approxBytes: 0, blobBytes: 0, textBytes: 0, approxMb: 0 }
+    }
+  }, [starter, reference, tests, bundles, libFiles])
+
   const previewPkg = useMemo(() => {
     try {
       return CodeExamPackageSchema.parse({
@@ -279,7 +291,10 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
       })
       const approxBytes = JSON.stringify(pkg).length
       if (approxBytes > 25 * 1024 * 1024) {
-        setReport(`⛔ package ใหญ่เกิน ~${(approxBytes / 1048576).toFixed(1)}MB (แนบ libs เยอะไป) — ลบไฟล์แนบออกบ้างแล้วผูกใหม่ (ขีดจำกัดส่งผ่าน IPC ~25MB)`)
+        const blobMb = libFiles.reduce((s, f) => s + f.sizeBytes, 0) / 1048576
+        setReport(
+          `⛔ package ใหญ่เกิน ~${(approxBytes / 1048576).toFixed(1)}MB (ขีดจำกัดส่งผ่าน IPC ~25MB) — วิธีลด: เอา lib หนักออก (แนบ libs รวม ~${blobMb.toFixed(1)}MB, เอา .jar/.whl ใหญ่หรือซ้ำออกก่อน), ลบ reference/ไฟล์ที่ไม่ใช้, แยก .zip หลายส่วน หรือใช้ห้อง lab ที่ลง lib ไว้แล้ว แล้วกดผูกใหม่`
+        )
         return
       }
       const res = await window.ztExam.attachCodeRoomPackage({ packageJson: JSON.stringify(pkg) })
@@ -451,12 +466,38 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
         <p className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-[13px] text-slate-200">{report}</p>
       )}
 
+      <div
+        title="ขนาดประเมินรวม base64 (~1.37×) ก่อนส่งผ่าน IPC ถ้าเกิน ~25MB จะผูกห้องไม่ผ่าน ให้เอา lib หนักออกก่อนกดผูก"
+        className={`rounded-xl border px-3 py-2 text-xs ${sizeEstimate.approxBytes > 25 * 1024 * 1024 ? 'border-red-800/60 bg-red-950/30 text-red-200' : sizeEstimate.approxBytes > 20 * 1024 * 1024 ? 'border-amber-800/60 bg-amber-950/30 text-amber-200' : 'border-slate-800 bg-slate-900/60 text-slate-400'}`}
+      >
+        📦 ขนาดประเมิน ~{sizeEstimate.approxMb.toFixed(1)}MB / ขีดจำกัด IPC ~25MB
+        <span className="ml-2 opacity-80">
+          (ไฟล์แนบ libs รวม {(sizeEstimate.blobBytes / 1048576).toFixed(1)}MB ·Starter/Reference/tests ~{(sizeEstimate.textBytes / 1024).toFixed(0)}KB)
+        </span>
+        {sizeEstimate.approxBytes > 20 * 1024 * 1024 && (
+          <span className="mt-0.5 block font-medium">
+            ⚠️ ใกล้/เกินขีดจำกัด — วิธีลด: เอา .jar/.whl ไฟล์ใหญ่หรือซ้ำออก (ดูรายชื่อด้านล่าง), ลบ reference ที่ไม่ใช้, แยก .zip หลายส่วน หรือใช้ห้อง lab ที่ลง lib ไว้แล้ว
+          </span>
+        )}
+      </div>
+
       {/* Phase 9.1: เช็ค runtime ของภาษาที่โจทย์ใช้ (ไม่ดาวน์โหลดแยก — ขาดให้ติดตั้งเอง + Re-scan/Browse) */}
       <MissingRuntimePrompt languages={[language]} />
 
+      <div
+        title="ปุ่มนี้ตรวจเฉพาะโครง (reference + tests ครบหรือไม่) ยังไม่รันโค้ดจริง การรันจริงต้องรอ Runtime/Grader Phase 9"
+        className="rounded-xl border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200"
+      >
+        🧪 <b>ปุ่มด้านล่างตรวจโครงเท่านั้น ยังไม่รันจริง (Phase 9)</b> — ผ่านหมายถึง reference/tests ครบ ไม่ได้แปลว่าโค้ดรันถูกทุกเคส
+      </div>
       <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={testReferenceSolution} className="inline-flex items-center gap-1.5 rounded-xl bg-amber-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-600">
-          <Play size={15} /> ▶ ทดสอบรันโปรเจกต์เฉลยกับทุก Test Case
+        <button
+          type="button"
+          onClick={testReferenceSolution}
+          title="ตรวจเฉพาะโครง reference + tests ครบหรือไม่ — ยังไม่รันโค้ดจริง (Phase 9)"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-amber-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-600"
+        >
+          <Play size={15} /> 🧪 ตรวจโครงเฉลย (ยังไม่รันจริง — Phase 9)
         </button>
         <button type="button" onClick={() => void attachToRoom()} disabled={attaching} className="inline-flex items-center gap-1.5 rounded-xl bg-sky-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-600 disabled:opacity-40">
           📌 {attaching ? 'กำลังผูก…' : 'ผูกเข้าห้องสอบ'}
