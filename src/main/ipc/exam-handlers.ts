@@ -93,6 +93,28 @@ export function registerExamHandlers(
     return { ok: true }
   })
 
+  router.register('host:get-exam-state', () => {
+    if (state.role !== 'host') throw new Error('HOST_ROLE_REQUIRED')
+    const mgr = services.getSessionManager()
+    const hostState = mgr.getExamHostState() as {
+      state: 'idle' | 'running' | 'collecting' | 'finished'
+      title: string | null
+      questionCount: number
+      examEndsAtMs: number
+      serverNowMs: number
+      room: string | null
+    }
+    return {
+      ...hostState,
+      durationSeconds: mgr.examInfo?.durationSeconds ?? 0
+    }
+  })
+
+  router.register('host:get-summaries', () => {
+    if (state.role !== 'host') throw new Error('HOST_ROLE_REQUIRED')
+    return { summaries: services.getSessionManager().getHostSummaries() }
+  })
+
   /* ---------- Student ---------- */
 
   router.register('student:submit-answer', (req) => {
@@ -113,6 +135,12 @@ export function registerExamHandlers(
   router.register('student:enter-kiosk', (): KioskEnterResponse => {
     if (state.role !== 'student') throw new Error('STUDENT_ROLE_REQUIRED')
     services.enterKiosk()
+    return { ok: true }
+  })
+
+  router.register('student:exit-kiosk', (): KioskEnterResponse => {
+    if (state.role !== 'student') throw new Error('STUDENT_ROLE_REQUIRED')
+    services.exitKiosk()
     return { ok: true }
   })
 

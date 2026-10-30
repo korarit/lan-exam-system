@@ -391,6 +391,10 @@ export interface DocsPanelState {
   enforcement: 'warn' | 'block'
   /** ลิงก์สุดท้ายที่ถูกบล็อก (แสดงป้ายเตือนในแผง) */
   blockedUrl: string | null
+  /** R4: URL นอกรายการที่กำลังเปิดในโหมด warn (ตรวจจับอย่างเดียว — แบนเนอร์เหลือง) */
+  warnUrl: string | null
+  /** R8: ข้อผิดพลาดการสร้าง/วาง WebContentsView (null = ปกติ) */
+  viewError: string | null
 }
 export interface DocsToggleRequest {
   open: boolean
@@ -925,6 +929,9 @@ export interface IpcInvokeMap {
   'host:create-room': { req: CreateRoomRequest; res: HostRoomInfo }
   'host:close-room': { req: void; res: SelectRoleResponse }
   'host:get-room': { req: void; res: GetRoomResponse }
+  'host:get-exam-state': { req: void; res: HostExamStateEvent & { durationSeconds: number } }
+  'host:get-students': { req: void; res: StudentsUpdatedEvent }
+  'host:get-summaries': { req: void; res: HostExamSummariesEvent }
   'host:load-exam': { req: LoadExamRequest; res: LoadExamResponse }
   'host:select-exam-file': { req: void; res: SelectExamFileResponse }
   'host:start-exam': { req: void; res: ExamStartResponse }
@@ -946,6 +953,7 @@ export interface IpcInvokeMap {
     res: StudentSubmitResponse
   }
   'student:enter-kiosk': { req: void; res: KioskEnterResponse }
+  'student:exit-kiosk': { req: void; res: KioskEnterResponse }
   'student:internal-copy': { req: InternalCopyRequest; res: StudentSubmitResponse }
   'student:typing-metrics': { req: TypingMetricsRequest; res: StudentSubmitResponse }
   /* ---------- Module Packet Transport (Phase 2 สเปค/เพิ่งมีโค้ด) ---------- */
@@ -959,6 +967,7 @@ export interface IpcInvokeMap {
   'host:close-doc-preview': { req: void; res: OkResponse }
   'host:list-recorded-domains': { req: void; res: ListRecordedDomainsResponse }
   'host:approve-domain': { req: ApproveDomainRequest; res: ApproveDomainResponse }
+  'host:clear-recorded-domains': { req: void; res: OkResponse }
   'host:set-domain-enforcement': { req: SetDomainEnforcementRequest; res: OkResponse }
   'host:get-triage-overview': { req: void; res: TriageOverviewEvent }
   'host:get-student-evidence': { req: StudentEvidenceRequest; res: StudentEvidenceResponse }
@@ -1112,6 +1121,46 @@ export const IpcInvokeSchemas: {
       .object({ room: HostRoomInfoSchema.nullable() })
       .strict()
   },
+  'host:get-exam-state': {
+    request: z.void(),
+    response: z
+      .object({
+        state: z.enum(['idle', 'running', 'collecting', 'finished']),
+        title: z.string().nullable(),
+        questionCount: z.number().int().nonnegative(),
+        examEndsAtMs: z.number().int(),
+        serverNowMs: z.number().int(),
+        room: z.string().max(80).nullable(),
+        durationSeconds: z.number().int().nonnegative()
+      })
+      .strict()
+  },
+  'host:get-students': {
+    request: z.void(),
+    response: z.object({ students: z.array(HostStudentStatusIpcSchema) }).strict()
+  },
+  'host:get-summaries': {
+    request: z.void(),
+    response: z
+      .object({
+        summaries: z.array(
+          z
+            .object({
+              studentId: z.string().min(1),
+              studentName: z.string().min(1),
+              answeredCount: z.number().int().nonnegative(),
+              maxReachedCursor: z.number().int().nonnegative(),
+              totalQuestions: z.number().int().nonnegative(),
+              awardedPoints: z.number().nonnegative(),
+              online: z.boolean(),
+              finished: z.boolean(),
+              finishReason: z.string().max(20).optional()
+            })
+            .strict()
+        )
+      })
+      .strict()
+  },
   'student:start-discovery': {
     request: z.void(),
     response: z.object({ ok: z.boolean(), role: z.union([z.literal('host'), z.literal('student')]) }).strict()
@@ -1196,6 +1245,10 @@ export const IpcInvokeSchemas: {
     request: z.void(),
     response: z.object({ ok: z.boolean() }).strict()
   },
+  'student:exit-kiosk': {
+    request: z.void(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
   'student:internal-copy': {
     request: z.object({ text: z.string().min(1).max(10_000) }).strict(),
     response: z.object({ ok: z.boolean() }).strict()
@@ -1266,6 +1319,10 @@ export const IpcInvokeSchemas: {
         updatedCount: z.number().int().nonnegative().optional()
       })
       .strict()
+  },
+  'host:clear-recorded-domains': {
+    request: z.void(),
+    response: z.object({ ok: z.boolean() }).strict()
   },
   'host:set-domain-enforcement': {
     request: z.object({ mode: z.enum(['warn', 'block']) }).strict(),
@@ -2048,7 +2105,9 @@ export const IpcEventSchemas: {
       url: z.string().max(2_048).nullable(),
       allowedDomains: z.array(z.string().min(1).max(200)).max(512),
       enforcement: z.enum(['warn', 'block']),
-      blockedUrl: z.string().max(2_048).nullable()
+      blockedUrl: z.string().max(2_048).nullable(),
+      warnUrl: z.string().max(2_048).nullable(),
+      viewError: z.string().max(500).nullable()
     })
     .strict(),
   'exam:proctor-warning': ProctorWarningPayloadSchema,

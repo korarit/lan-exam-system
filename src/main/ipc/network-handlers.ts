@@ -48,6 +48,10 @@ export function registerNetworkHandlers(
     return { room: services.getRoomManager().room }
   })
 
+  router.register('host:get-students', () => {
+    return { students: services.getRoomManager().students }
+  })
+
   /* ---------- Student ---------- */
 
   router.register('student:start-discovery', () => {

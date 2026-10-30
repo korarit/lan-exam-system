@@ -156,6 +156,8 @@ export class CoreSessionManager {
     if (this.state === 'running' || this.state === 'collecting') {
       throw new Error('EXAM_IN_PROGRESS')
     }
+    const onlineCount = (room.students ?? []).filter((s) => s.online).length
+    if (onlineCount === 0) throw new Error('NO_ONLINE_STUDENTS')
     const roomId = room.room.roomId
     const startedAtMs = Date.now()
 
@@ -311,11 +313,21 @@ export class CoreSessionManager {
     this.pushSummaries()
   }
 
-  /** push คะแนนเบื้องต้นต่อคนให้หน้าจอครู (auto-grade ปรนัย/เติมคำสั้น — essay รอครูตรวจ) */
-  pushSummaries(): void {
+  /** สรุปคะแนนเบื้องต้นต่อคนสำหรับหน้าจอครู (auto-grade ปรนัย/เติมคำสั้น — essay รอครูตรวจ) */
+  getHostSummaries(): Array<{
+    studentId: string
+    studentName: string
+    answeredCount: number
+    maxReachedCursor: number
+    totalQuestions: number
+    awardedPoints: number
+    online: boolean
+    finished: boolean
+    finishReason?: string
+  }> {
     const room = this.opts.getRoom()
     const names = new Map((room?.students ?? []).map((s) => [s.studentId, s.studentName]))
-    const summaries = (room?.students ?? []).map((student) => {
+    return (room?.students ?? []).map((student) => {
       const summary = this.getSummary(student.studentId)
       const entry: {
         studentId: string
@@ -340,7 +352,11 @@ export class CoreSessionManager {
       if (summary.finishReason !== undefined) entry.finishReason = summary.finishReason
       return entry
     })
-    this.opts.sendHostEvent('host:exam-summaries', { summaries })
+  }
+
+  /** push คะแนนเบื้องต้นต่อคนให้หน้าจอครู (auto-grade ปรนัย/เติมคำสั้น — essay รอครูตรวจ) */
+  pushSummaries(): void {
+    this.opts.sendHostEvent('host:exam-summaries', { summaries: this.getHostSummaries() })
   }
 
   private autoCollectCurrentDraft(studentId: string): void {

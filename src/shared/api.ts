@@ -36,6 +36,9 @@ export interface ZtExamApi {
   createRoom(req: CreateRoomRequest): Promise<HostRoomInfo>
   closeRoom(): Promise<SelectRoleResponse>
   getRoom(): Promise<GetRoomResponse>
+  getExamState(): Promise<IpcInvokeMap['host:get-exam-state']['res']>
+  getStudents(): Promise<IpcInvokeMap['host:get-students']['res']>
+  getSummaries(): Promise<IpcInvokeMap['host:get-summaries']['res']>
   loadExam(req: LoadExamRequest): Promise<LoadExamResponse>
   selectExamFile(): Promise<SelectExamFileResponse>
   startExam(): Promise<ExamStartResponse>
@@ -50,6 +53,7 @@ export interface ZtExamApi {
   navigate(req: { cursorIndex: number }): Promise<StudentSubmitResponse>
   moduleSend(req: IpcInvokeMap['student:module-send']['req']): Promise<IpcInvokeMap['student:module-send']['res']>
   enterKiosk(): Promise<KioskEnterResponse>
+  exitKiosk(): Promise<KioskEnterResponse>
   /* ---------- Guard (Phase 3a) ---------- */
   markInternalCopy(req: IpcInvokeMap['student:internal-copy']['req']): Promise<StudentSubmitResponse>
   sendTypingMetrics(req: IpcInvokeMap['student:typing-metrics']['req']): Promise<StudentSubmitResponse>
@@ -63,6 +67,7 @@ export interface ZtExamApi {
   closeDocPreview(): Promise<IpcInvokeMap['host:close-doc-preview']['res']>
   listRecordedDomains(): Promise<IpcInvokeMap['host:list-recorded-domains']['res']>
   approveDomain(req: IpcInvokeMap['host:approve-domain']['req']): Promise<IpcInvokeMap['host:approve-domain']['res']>
+  clearRecordedDomains(): Promise<IpcInvokeMap['host:clear-recorded-domains']['res']>
   setDomainEnforcement(req: IpcInvokeMap['host:set-domain-enforcement']['req']): Promise<IpcInvokeMap['host:set-domain-enforcement']['res']>
   /* ---------- Audit Hash Chain & Triage (Phase 3b) ---------- */
   getTriageOverview(): Promise<IpcInvokeMap['host:get-triage-overview']['res']>

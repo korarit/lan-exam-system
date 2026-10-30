@@ -41,6 +41,9 @@ const api: ZtExamApi = {
   createRoom: (req) => call('host:create-room', req),
   closeRoom: () => call('host:close-room', undefined),
   getRoom: () => call('host:get-room', undefined),
+  getExamState: () => call('host:get-exam-state', undefined),
+  getStudents: () => call('host:get-students', undefined),
+  getSummaries: () => call('host:get-summaries', undefined),
   loadExam: (req) => call('host:load-exam', req),
   selectExamFile: () => call('host:select-exam-file', undefined),
   startExam: () => call('host:start-exam', undefined),
@@ -55,6 +58,7 @@ const api: ZtExamApi = {
   navigate: (req) => call('student:navigate', req),
   moduleSend: (req) => call('student:module-send', req),
   enterKiosk: () => call('student:enter-kiosk', undefined),
+  exitKiosk: () => call('student:exit-kiosk', undefined),
   markInternalCopy: (req) => call('student:internal-copy', req),
   sendTypingMetrics: (req) => call('student:typing-metrics', req),
 
@@ -67,6 +71,7 @@ const api: ZtExamApi = {
   closeDocPreview: () => call('host:close-doc-preview', undefined),
   listRecordedDomains: () => call('host:list-recorded-domains', undefined),
   approveDomain: (req) => call('host:approve-domain', req),
+  clearRecordedDomains: () => call('host:clear-recorded-domains', undefined),
   setDomainEnforcement: (req) => call('host:set-domain-enforcement', req),
 
   getTriageOverview: () => call('host:get-triage-overview', undefined),
