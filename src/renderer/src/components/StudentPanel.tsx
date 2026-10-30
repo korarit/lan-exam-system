@@ -7,8 +7,13 @@ import {
   Lock,
   ShieldAlert,
   Clock,
-  Search
+  Search,
+  Loader2,
+  Wifi,
+  WifiOff
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import { toast } from 'sonner'
 import type { DiscoveredRoom } from '@shared/protocol-schema'
 import { useStudentNetworkStore } from '../store/network-store'
 import { useAppStore } from '../store/app-store'
@@ -16,13 +21,30 @@ import { useStudentExamStore } from '../store/exam-store'
 import { getScreenWorker } from '../student/screen-worker'
 import ExamView from '../core-student/ExamView'
 import ProctorOverlay from '../core-student/ProctorOverlay'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Label } from './ui/label'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
+import { Badge } from './ui/badge'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from './ui/dialog'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
+import { Skeleton } from './ui/skeleton'
+import { ScrollArea } from './ui/scroll-area'
+import { cn } from '../lib/utils'
 
 function timeSince(ms: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000))
-  if (s < 60) return `${s}s`
+  if (s < 60) return `${s} วิ`
   const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m`
-  return `${Math.floor(m / 60)}h`
+  if (m < 60) return `${m} นาที`
+  return `${Math.floor(m / 60)} ชม`
 }
 
 /** แยก host:port จากช่อง manual — trim, ตัด scheme http(s)://, รองรับ IPv6 `[::1]:port`, เช็ค port 1–65535 (NC-05) */
@@ -62,6 +84,8 @@ function translateJoinError(raw: string): string {
   return raw
 }
 
+type StatusVariant = 'default' | 'secondary' | 'destructive' | 'outline'
+
 export default function StudentPanel(): React.JSX.Element {
   const rooms = useStudentNetworkStore((s) => s.rooms)
   const connection = useStudentNetworkStore((s) => s.connection)
@@ -74,17 +98,20 @@ export default function StudentPanel(): React.JSX.Element {
   const [studentId, setStudentId] = useState('')
   const [studentName, setStudentName] = useState('')
   const [joining, setJoining] = useState(false)
+  const [scanning, setScanning] = useState(true)
 
-  // manual fallback
+  // manual fallback ผ่าน Dialog
   const [manualOpen, setManualOpen] = useState(false)
   const [manualHost, setManualHost] = useState('')
   const [manualRoomId, setManualRoomId] = useState('')
 
   useEffect(() => {
+    setScanning(true)
     void window.ztExam.startDiscovery()
-    const unsubRooms = window.ztExam.onEvent('network:rooms-updated', (event) =>
+    const unsubRooms = window.ztExam.onEvent('network:rooms-updated', (event) => {
       useStudentNetworkStore.getState().setRooms(event.rooms)
-    )
+      setScanning(false)
+    })
     const unsubConn = window.ztExam.onEvent('network:connection-state', (event) =>
       useStudentNetworkStore.getState().setConnection(event)
     )
@@ -115,20 +142,27 @@ export default function StudentPanel(): React.JSX.Element {
       void getScreenWorker().stop()
       void window.ztExam.stopDiscovery()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function join(ip: string, port: number, roomId: string): Promise<void> {
     if (!/^\d{6}$/.test(pin)) {
-      setJoinError('กรอก PIN 6 หลัก')
+      const msg = 'กรอก PIN 6 หลัก'
+      setJoinError(msg)
+      toast.error(msg)
       return
     }
     // NC-02: แยกข้อความรหัสว่าง vs ชื่อว่าง — ครูตามตัวง่ายกว่า
     if (studentId.trim().length === 0) {
-      setJoinError('กรอกรหัสนักเรียน (ยังว่างอยู่)')
+      const msg = 'กรอกรหัสนักเรียน (ยังว่างอยู่)'
+      setJoinError(msg)
+      toast.error(msg)
       return
     }
     if (studentName.trim().length === 0) {
-      setJoinError('กรอกชื่อ-นามสกุล (ยังว่างอยู่)')
+      const msg = 'กรอกชื่อ-นามสกุล (ยังว่างอยู่)'
+      setJoinError(msg)
+      toast.error(msg)
       return
     }
     setJoinError(null)
@@ -151,29 +185,48 @@ export default function StudentPanel(): React.JSX.Element {
           phase: 'waiting'
         })
         notify({ severity: 'info', message: 'เข้าห้องสอบสำเร็จ — รอครูเริ่มข้อสอบ' })
+        toast.success('เข้าห้องสอบสำเร็จ — รอครูเริ่มข้อสอบ')
       } else {
-        setJoinError(translateJoinError(result.reason ?? 'เข้าห้องไม่สำเร็จ'))
+        const msg = translateJoinError(result.reason ?? 'เข้าห้องไม่สำเร็จ')
+        setJoinError(msg)
+        toast.error(msg)
       }
     } catch (err) {
-      setJoinError(translateJoinError(err instanceof Error ? err.message : 'เข้าห้องไม่สำเร็จ'))
+      const msg = translateJoinError(err instanceof Error ? err.message : 'เข้าห้องไม่สำเร็จ')
+      setJoinError(msg)
+      toast.error(msg)
     } finally {
       setJoining(false)
     }
   }
 
-  const statusBanner = useMemo(() => {
+  function handleManualJoin(): void {
+    const parsed = parseManualHost(manualHost)
+    if (!parsed || !manualRoomId.trim()) {
+      const msg = !parsed
+        ? 'รูปแบบ IP:Port ไม่ถูกต้อง (เช่น 192.168.1.10:44456)'
+        : 'กรอก Room ID ด้วย'
+      setJoinError(msg)
+      toast.error(msg)
+      return
+    }
+    setManualOpen(false)
+    void join(parsed.ip, parsed.port, manualRoomId.trim())
+  }
+
+  const statusBanner = useMemo<{ icon: LucideIcon; variant: StatusVariant; title: string; detail: string } | null>(() => {
     switch (connection.state) {
       case 'ready':
-        return { icon: Lock, color: 'border-emerald-700/50 bg-emerald-950/40 text-emerald-200', text: 'เชื่อมต่อเครื่องแม่สำเร็จ — รอเริ่มสอบ' }
+        return { icon: Wifi, variant: 'default', title: 'พร้อมสอบ', detail: 'เชื่อมต่อเครื่องแม่สำเร็จ — รอเริ่มสอบ' }
       case 'connecting':
       case 'reconnecting':
-        return { icon: RefreshCw, color: 'border-sky-700/50 bg-sky-950/40 text-sky-200', text: 'กำลังเชื่อมต่อเครื่องแม่…' }
+        return { icon: RefreshCw, variant: 'secondary', title: 'กำลังเชื่อมต่อ', detail: 'กำลังเชื่อมต่อเครื่องแม่…' }
       case 'frozen':
-        return { icon: ShieldAlert, color: 'border-amber-700/50 bg-amber-950/40 text-amber-200', text: `ขาดการติดต่อกับเครื่องแม่ — กำลังเชื่อมต่อใหม่ (${connection.reason ?? ''})` }
+        return { icon: ShieldAlert, variant: 'outline', title: 'ขาดการติดต่อ', detail: `กำลังเชื่อมต่อใหม่ (${connection.reason ?? ''})` }
       case 'rejected':
-        return { icon: ShieldAlert, color: 'border-red-800/60 bg-red-950/40 text-red-200', text: `เข้าห้องไม่ได้: ${translateJoinError(connection.reason ?? 'unknown')}` }
+        return { icon: WifiOff, variant: 'destructive', title: 'เข้าห้องไม่ได้', detail: translateJoinError(connection.reason ?? 'unknown') }
       case 'closed':
-        return { icon: Clock, color: 'border-slate-700 bg-slate-900 text-slate-300', text: 'ห้องปิดแล้ว — แจ้งครูให้เปิดห้องใหม่ แล้วเลือกห้อง/กรอก IP เพื่อเข้าอีกครั้ง' }
+        return { icon: Clock, variant: 'destructive', title: 'ห้องปิดแล้ว', detail: 'แจ้งครูให้เปิดห้องใหม่ แล้วเข้าอีกครั้ง' }
       default:
         return null
     }
@@ -185,191 +238,263 @@ export default function StudentPanel(): React.JSX.Element {
   const frozenFull = connection.state === 'frozen' && examPhase !== 'active' && examPhase !== 'timeup'
 
   return (
-    <div className="relative h-full">
-      {/* หน้าทำข้อสอบ (Kiosk) ครอบทั้งหน้าเมื่อ phase ≥ waiting */}
-      <StudentExamLayers />
-      {/* ผลของปุ่มผู้คุมสอบ: ข้อความเตือนขึ้นจอ + Freeze เครื่อง (Phase 3b) */}
-      <ProctorOverlay />
+    <TooltipProvider>
+      <div className="relative h-full">
+        {/* หน้าทำข้อสอบ (Kiosk) ครอบทั้งหน้าเมื่อ phase ≥ waiting */}
+        <StudentExamLayers />
+        {/* ผลของปุ่มผู้คุมสอบ: ข้อความเตือนขึ้นจอ + Freeze เครื่อง (Phase 3b) */}
+        <ProctorOverlay />
 
-      {/* Fail-closed overlay บังทุกอย่างเมื่อหลุดการเชื่อมต่อ */}
-      {frozenFull && (
-        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-slate-950/95">
-          <ShieldAlert size={48} className="mb-4 text-amber-400" />
-          <h2 className="text-lg font-semibold text-amber-200">ขาดการติดต่อกับเครื่องแม่</h2>
-          <p className="mt-2 text-sm text-slate-400">กำลังเชื่อมต่อใหม่อัตโนมัติ… ห้ามปิดแอป</p>
-        </div>
-      )}
-
-      <div className="mx-auto w-full max-w-2xl space-y-6 p-6">
-        {statusBanner && (
-          <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-sm ${statusBanner.color}`}>
-            <statusBanner.icon size={16} />
-            {statusBanner.text}
+        {/* Fail-closed overlay บังทุกอย่างเมื่อหลุดการเชื่อมต่อ */}
+        {frozenFull && (
+          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-background/95">
+            <ShieldAlert size={48} className="mb-4 text-amber-500" />
+            <h2 className="text-lg font-semibold">ขาดการติดต่อกับเครื่องแม่</h2>
+            <p className="mt-2 text-sm text-muted-foreground">กำลังเชื่อมต่อใหม่อัตโนมัติ… ห้ามปิดแอป</p>
           </div>
         )}
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-          <div className="mb-4 flex items-center gap-2">
-            <Radio size={18} className="text-sky-400" />
-            <h2 className="font-semibold">ห้องสอบในวง LAN ({rooms.length})</h2>
-            <span className="ml-auto inline-flex items-center gap-1 text-xs text-slate-500">
-              <Search size={12} /> UDP discovery ทุก 2 วิ
-            </span>
-          </div>
-          {rooms.length === 0 ? (
-            <p className="py-6 text-center text-sm text-slate-500">
-              ยังไม่พบห้องสอบ — ให้ครูเปิดห้องก่อน หรือกรอก IP เองด้านล่าง
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {rooms.map((room) => (
-                <li key={room.roomId}>
-                  <button
+        <div className="mx-auto w-full max-w-2xl space-y-6 p-6">
+          {statusBanner && (
+            <Card>
+              <CardContent className="flex items-center gap-3 pt-6">
+                <Badge variant={statusBanner.variant}>
+                  <statusBanner.icon />
+                  {statusBanner.title}
+                </Badge>
+                <span className="text-sm text-muted-foreground">{statusBanner.detail}</span>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Radio size={18} className="text-muted-foreground" />
+                <CardTitle>ห้องสอบในวง LAN</CardTitle>
+                <Badge variant="secondary" className="ml-1 tabular-nums">
+                  {rooms.length}
+                </Badge>
+                <span className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground">
+                  <Search size={12} /> สแกนทุก 2 วิ
+                </span>
+              </div>
+              <CardDescription>เลือกห้อง แล้วกรอก PIN จากจอครู</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {scanning && rooms.length === 0 ? (
+                <div className="space-y-2" aria-label="กำลังค้นหาห้องสอบ">
+                  <Skeleton className="h-16 w-full" />
+                  <Skeleton className="h-16 w-full" />
+                  <Skeleton className="h-16 w-full" />
+                </div>
+              ) : rooms.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 py-6 text-center">
+                  <Radio size={24} className="text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">ยังไม่พบห้องสอบ — ให้ครูเปิดห้องก่อน หรือกรอก IP เอง</p>
+                  <Button variant="outline" size="sm" onClick={() => setManualOpen(true)}>
+                    กรอก IP เอง
+                  </Button>
+                </div>
+              ) : (
+                <ScrollArea className="max-h-72">
+                  <ul className="space-y-2 pr-4">
+                    {rooms.map((room) => {
+                      const isActive = selected?.roomId === room.roomId
+                      return (
+                        <li key={room.roomId}>
+                          <Button
+                            type="button"
+                            variant={isActive ? 'secondary' : 'outline'}
+                            onClick={() => {
+                              setSelected(room)
+                              setManualRoomId(room.roomId)
+                            }}
+                            className={cn('h-auto w-full justify-start p-4 text-left', isActive && 'border-primary')}
+                            aria-pressed={isActive}
+                          >
+                            <span className="w-full">
+                              <span className="flex items-center justify-between gap-2">
+                                <span className="font-medium">{room.roomName}</span>
+                                <span className="inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
+                                  <Clock size={12} />
+                                  {timeSince(room.lastSeenAtMs)}
+                                </span>
+                              </span>
+                              <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="font-mono tabular-nums">
+                                      {room.sourceIp}:{room.tcpPort}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <span className="font-mono">
+                                      {room.sourceIp}:{room.tcpPort}
+                                    </span>
+                                  </TooltipContent>
+                                </Tooltip>
+                                <span>{room.hostName}</span>
+                                <span className="tabular-nums">นักเรียน {room.studentCount} คน</span>
+                              </span>
+                              <span className="mt-1 block">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="font-mono text-[10px] text-muted-foreground">
+                                      cert {room.certFpShort.length > 16 ? `${room.certFpShort.slice(0, 16)}…` : room.certFpShort}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <span className="font-mono">{room.certFpShort}</span>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </span>
+                            </span>
+                          </Button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </ScrollArea>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <KeyRound size={18} className="text-muted-foreground" />
+                <CardTitle>เข้าห้องสอบ</CardTitle>
+                {selected && (
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={() => {
-                      setSelected(room)
-                      setManualRoomId(room.roomId)
+                      setSelected(null)
+                      setManualRoomId('')
                     }}
-                    className={`w-full rounded-xl border p-4 text-left transition ${
-                      selected?.roomId === room.roomId
-                        ? 'border-sky-500/70 bg-sky-950/30'
-                        : 'border-slate-800 bg-slate-950/40 hover:border-slate-600'
-                    }`}
+                    className="ml-auto"
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">{room.roomName}</span>
-                      <span className="flex items-center gap-1 text-xs text-slate-500">
-                        <Clock size={12} />
-                        {timeSince(room.lastSeenAtMs)}ที่แล้ว
-                      </span>
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {room.sourceIp}:{room.tcpPort} · {room.hostName} · นักเรียน {room.studentCount} คน
-                    </div>
-                    <div className="mt-1 font-mono text-[10px] text-slate-600">
-                      cert {room.certFpShort.length > 16 ? `${room.certFpShort}…` : room.certFpShort}
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+                    ล้างห้องที่เลือก
+                  </Button>
+                )}
+              </div>
+              <CardDescription>
+                {selected ? `ห้อง: ${selected.roomName}` : 'เลือกห้องด้านบน หรือกรอก IP เอง'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="student-id">รหัสนักเรียน</Label>
+                  <Input
+                    id="student-id"
+                    value={studentId}
+                    onChange={(e) => setStudentId(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="student-name">ชื่อ-นามสกุล</Label>
+                  <Input
+                    id="student-name"
+                    value={studentName}
+                    onChange={(e) => setStudentName(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="room-pin">PIN 6 หลัก</Label>
+                  <Input
+                    id="room-pin"
+                    value={pin}
+                    inputMode="numeric"
+                    maxLength={6}
+                    onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                    placeholder="••••••"
+                    className="font-mono tracking-widest tabular-nums"
+                  />
+                </div>
+              </div>
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-          <div className="mb-4 flex items-center gap-2">
-            <KeyRound size={18} className="text-emerald-400" />
-            <h2 className="font-semibold">เข้าห้องสอบ</h2>
-            {selected && (
-              <button
+              {joinError && (
+                <Card role="alert" className="mt-3 border-destructive/50 bg-destructive/10">
+                  <CardContent className="pt-6 text-sm text-destructive">{joinError}</CardContent>
+                </Card>
+              )}
+
+              <Button
                 type="button"
+                variant="default"
+                disabled={joining}
                 onClick={() => {
-                  setSelected(null)
-                  setManualRoomId('')
+                  const target = selected
+                  if (target) {
+                    void join(target.sourceIp, target.tcpPort, target.roomId)
+                  } else {
+                    setJoinError('เลือกห้องก่อน หรือกรอก IP เอง')
+                    setManualOpen(true)
+                  }
                 }}
-                className="ml-auto text-xs text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline"
+                className="mt-4 w-full"
               >
-                ยกเลิกห้องที่เลือก ({selected.roomName})
-              </button>
-            )}
-          </div>
-
-          {!selected && !manualOpen && (
-            <p className="text-sm text-slate-500">เลือกห้องจากรายการด้านบน หรือ</p>
-          )}
-          {!selected && (
-            <button
-              type="button"
-              onClick={() => setManualOpen((v) => !v)}
-              className="mt-2 text-sm text-sky-400 hover:text-sky-300"
-            >
-              {manualOpen ? '− ซ่อนช่องกรอกด้วยตนเอง' : '+ กรอก IP เครื่องแม่ด้วยตนเอง'}
-            </button>
-          )}
-
-          {manualOpen && !selected && (
-            <div className="mb-4 mt-3 grid grid-cols-2 gap-3">
-              <input
-                placeholder="เครื่องแม่ (192.168.1.10:44456)"
-                value={manualHost}
-                onChange={(e) => setManualHost(e.target.value)}
-                className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none"
-              />
-              <input
-                placeholder="Room ID"
-                value={manualRoomId}
-                onChange={(e) => setManualRoomId(e.target.value)}
-                className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm focus:border-sky-500 focus:outline-none"
-              />
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <label className="block">
-              <span className="mb-1 block text-xs text-slate-400">รหัสนักเรียน</span>
-              <input
-                value={studentId}
-                onChange={(e) => setStudentId(e.target.value)}
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-xs text-slate-400">ชื่อ-นามสกุล</span>
-              <input
-                value={studentName}
-                onChange={(e) => setStudentName(e.target.value)}
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-xs text-slate-400">Room PIN (จากจอครู)</span>
-              <input
-                value={pin}
-                inputMode="numeric"
-                maxLength={6}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-                placeholder="••••••"
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-lg tracking-[0.3em] focus:border-emerald-500 focus:outline-none"
-              />
-            </label>
-          </div>
-
-          {joinError && (
-            <p className="mt-3 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-sm text-red-300">
-              {joinError}
-            </p>
-          )}
-
-          <button
-            type="button"
-            disabled={joining}
-            onClick={() => {
-              const target = selected
-              if (target) {
-                void join(target.sourceIp, target.tcpPort, target.roomId)
-              } else if (manualOpen) {
-                const parsed = parseManualHost(manualHost)
-                if (!parsed || !manualRoomId.trim()) {
-                  setJoinError(
-                    !parsed
-                      ? 'รูปแบบ IP:Port ไม่ถูกต้อง (ตัวอย่าง 192.168.1.10:44456 หรือ [::1]:44456, พอร์ต 1–65535)'
-                      : 'รูปแบบ IP:Port หรือ Room ID ไม่ถูกต้อง'
-                  )
-                  return
-                }
-                void join(parsed.ip, parsed.port, manualRoomId.trim())
-              } else {
-                setJoinError('เลือกห้องก่อน หรือกรอก IP เครื่องแม่')
-              }
-            }}
-            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-3 font-semibold text-white transition hover:bg-sky-500 disabled:opacity-40"
-          >
-            <PlugZap size={18} />
-            {joining ? 'กำลังตรวจ PIN + fingerprint…' : 'เข้าห้องสอบ'}
-          </button>
+                {joining ? <Loader2 className="animate-spin" /> : <PlugZap />}
+                {joining ? 'กำลังตรวจ PIN…' : 'เข้าห้องสอบ'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setManualOpen(true)}
+                className="mt-2 w-full"
+              >
+                กรอก IP เอง
+              </Button>
+            </CardContent>
+          </Card>
         </div>
+
+        <Dialog open={manualOpen} onOpenChange={setManualOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>กรอก IP เครื่องแม่เอง</DialogTitle>
+              <DialogDescription>ใช้เมื่อสแกน LAN ไม่เจอห้อง — ขอ IP กับ Room ID จากครู</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="manual-host">IP:Port</Label>
+                <Input
+                  id="manual-host"
+                  placeholder="192.168.1.10:44456"
+                  value={manualHost}
+                  onChange={(e) => setManualHost(e.target.value)}
+                  className="font-mono tabular-nums"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="manual-room">Room ID</Label>
+                <Input
+                  id="manual-room"
+                  placeholder="Room ID"
+                  value={manualRoomId}
+                  onChange={(e) => setManualRoomId(e.target.value)}
+                  className="font-mono"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setManualOpen(false)}>
+                ยกเลิก
+              </Button>
+              <Button type="button" variant="default" disabled={joining} onClick={handleManualJoin}>
+                {joining ? <Loader2 className="animate-spin" /> : <Lock />}
+                เข้าห้อง
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
-    </div>
+    </TooltipProvider>
   )
 }
 
@@ -382,17 +507,17 @@ function StudentExamLayers(): React.JSX.Element {
   return (
     <>
       {phase === 'waiting' && (
-        <div className="fixed inset-0 z-30 flex flex-col items-center justify-center bg-slate-950">
-          <Lock size={40} className="mb-3 text-sky-400" />
+        <div className="fixed inset-0 z-30 flex flex-col items-center justify-center bg-background">
+          <Lock size={40} className="mb-3 text-muted-foreground" />
           {connState === 'closed' ? (
             <>
-              <h2 className="text-lg font-semibold text-slate-200">ห้องปิดแล้ว</h2>
-              <p className="mt-2 text-sm text-slate-400">แจ้งครูให้เปิดห้องใหม่ แล้วเลือกห้อง/กรอก IP เพื่อเข้าอีกครั้ง</p>
+              <h2 className="text-lg font-semibold">ห้องปิดแล้ว</h2>
+              <p className="mt-2 text-sm text-muted-foreground">แจ้งครูให้เปิดห้องใหม่ แล้วเข้าอีกครั้ง</p>
             </>
           ) : (
             <>
-              <h2 className="text-lg font-semibold text-slate-200">เชื่อมต่อเครื่องแม่สำเร็จ</h2>
-              <p className="mt-2 text-sm text-slate-400">รอครูกดเริ่มการสอบ…</p>
+              <h2 className="text-lg font-semibold">เชื่อมต่อสำเร็จ</h2>
+              <p className="mt-2 text-sm text-muted-foreground">รอครูกดเริ่มสอบ…</p>
             </>
           )}
         </div>
