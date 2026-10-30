@@ -1,6 +1,20 @@
-import { Eye, Monitor, Snowflake, WifiOff } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { AlertTriangle, Eye, Loader2, Monitor, Snowflake, WifiOff } from 'lucide-react'
 import type { StudentTriageView } from '@shared/ipc-channels'
 import { timeAgo } from '../../store/triage-store'
+import { cn } from '@renderer/lib/utils'
+import { Badge } from '@renderer/components/ui/badge'
+import { Button } from '@renderer/components/ui/button'
+import { Card } from '@renderer/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@renderer/components/ui/dialog'
+import { Skeleton } from '@renderer/components/ui/skeleton'
 
 interface Props {
   view: StudentTriageView
@@ -16,75 +30,98 @@ interface Props {
   freezing: boolean
 }
 
-const LEVEL_STYLES: Record<string, { border: string; bg: string; badge: string; label: string }> = {
+const SEVERITY: Record<string, { label: string; className: string }> = {
   critical: {
-    border: 'border-red-700/70',
-    bg: 'bg-red-950/30',
-    badge: 'bg-red-900/60 text-red-200',
-    label: 'วิกฤต'
+    label: 'วิกฤต',
+    className: 'border-destructive/50 bg-destructive/10 text-destructive'
   },
   warning: {
-    border: 'border-amber-700/60',
-    bg: 'bg-amber-950/20',
-    badge: 'bg-amber-900/50 text-amber-200',
-    label: 'เฝ้าระวัง'
+    label: 'เฝ้าระวัง',
+    className: 'border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300'
   },
   normal: {
-    border: 'border-slate-800',
-    bg: 'bg-slate-950/40',
-    badge: 'bg-emerald-900/50 text-emerald-200',
-    label: 'ปกติ'
+    label: 'ปกติ',
+    className: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
   }
 }
 
 export default function StudentTriageCard(props: Props): React.JSX.Element {
   const view = props.view
-  const style = LEVEL_STYLES[view.triageLevel] ?? LEVEL_STYLES.normal!
+  const severity = SEVERITY[view.triageLevel] ?? SEVERITY.normal!
+  const [freezeOpen, setFreezeOpen] = useState(false)
+  const [thumbLoaded, setThumbLoaded] = useState(false)
+
+  useEffect(() => {
+    setThumbLoaded(false)
+  }, [props.thumbnailSrc])
+
+  const answered = props.progress ? Math.min(props.progress.answered, props.progress.total) : 0
+  const total = props.progress?.total ?? 0
+  const progressPct = total > 0 ? Math.min(100, Math.round((answered / total) * 100)) : 0
+
+  function confirmFreeze(): void {
+    setFreezeOpen(false)
+    props.onToggleFreeze()
+  }
+
   return (
-    <div
-      className={`rounded-xl border p-3 ${style.border} ${style.bg} ${
-        view.triageLevel === 'critical' ? 'ring-1 ring-red-700/50' : ''
-      }`}
+    <Card
+      className={cn(
+        'space-y-2 p-3',
+        view.triageLevel === 'critical' && 'border-destructive/60 ring-1 ring-destructive/40'
+      )}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${style.badge}`}>
-              {style.label}
-            </span>
-            {view.disconnected && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
-                <WifiOff size={11} /> ขาดการติดต่อ
-              </span>
-            )}
-            {view.frozen && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-sky-300">
-                <Snowflake size={11} /> แช่แข็ง
-              </span>
-            )}
-          </div>
-          <div className="mt-1 truncate text-sm font-medium text-slate-100">{props.name}</div>
-          <div className="text-xs text-slate-500">{view.studentId}</div>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <Badge variant="outline" className={severity.className}>
+            {severity.label}
+          </Badge>
+          <Badge variant={props.online ? 'outline' : 'secondary'}>
+            {props.online ? 'ออนไลน์' : 'ออฟไลน์'}
+          </Badge>
+          {view.disconnected && (
+            <Badge variant="secondary">
+              <WifiOff />
+              ขาดการติดต่อ
+            </Badge>
+          )}
+          {view.frozen && (
+            <Badge variant="secondary">
+              <Snowflake />
+              แช่แข็ง
+            </Badge>
+          )}
         </div>
-        <div className="text-right">
+        <div className="shrink-0 text-right">
           <div
-            className={`font-mono text-lg font-bold ${
+            className={cn(
+              'font-mono text-lg font-bold tabular-nums',
               view.activeSuspicionScore >= 40
-                ? 'text-red-400'
+                ? 'text-destructive'
                 : view.activeSuspicionScore >= 15
-                  ? 'text-amber-300'
-                  : 'text-slate-500'
-            }`}
+                  ? 'text-amber-600 dark:text-amber-300'
+                  : 'text-muted-foreground'
+            )}
           >
             {view.activeSuspicionScore}
           </div>
-          <div className="text-[10px] text-slate-500">คะแนน</div>
+          <div className="text-[10px] text-muted-foreground">คะแนน</div>
         </div>
       </div>
 
+      <div className="min-w-0">
+        <div className="truncate text-sm font-medium">{props.name}</div>
+        <div className="font-mono text-xs tabular-nums text-muted-foreground">{view.studentId}</div>
+      </div>
+
       {props.progress && (
-        <div className="mt-1.5 text-[11px] text-slate-500">
-          ข้อที่ {Math.min(props.progress.answered + 1, props.progress.total)} / {props.progress.total}
+        <div className="space-y-1">
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progressPct}%` }} />
+          </div>
+          <div className="text-[11px] tabular-nums text-muted-foreground">
+            ข้อที่ {Math.min(props.progress.answered + 1, props.progress.total)} / {props.progress.total}
+          </div>
         </div>
       )}
 
@@ -92,62 +129,90 @@ export default function StudentTriageCard(props: Props): React.JSX.Element {
         <button
           type="button"
           onClick={props.onOpenScreen}
-          className="relative mt-2 block w-full overflow-hidden rounded-lg border border-slate-800 bg-black"
+          className="relative block w-full overflow-hidden rounded-md border bg-muted"
           title="คลิกเพื่อเปิด Screen Inspector (ภาพสด / ย้อนหลัง 5 นาที) — การเปิดดูบันทึก audit ลง chain"
         >
-          {/* Privacy: เบลอภาพย่อไว้ก่อนจนกว่าครูกดเปิดดู (ตอนนั้นลง PROCTOR_VIEWED_SCREEN อัตโนมัติ) */}
-          <img src={props.thumbnailSrc} alt="thumbnail (เบลอ)" className="aspect-video w-full object-cover blur-md" />
-          <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-slate-950/45 text-[11px] text-slate-200">
-            <span className="inline-flex items-center gap-1 rounded-full border border-slate-600 bg-slate-950/70 px-2.5 py-1">
-              <Eye size={12} /> คลิกเพื่อเปิดดูจอ
+          {!thumbLoaded && <Skeleton className="aspect-video w-full" />}
+          <img
+            src={props.thumbnailSrc}
+            alt="ภาพย่อหน้าจอนักเรียน (เบลอ)"
+            onLoad={() => setThumbLoaded(true)}
+            className={cn('aspect-video w-full object-cover blur-md', !thumbLoaded && 'hidden')}
+          />
+          {thumbLoaded && (
+            <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-background/45 text-[11px]">
+              <span className="inline-flex items-center gap-1 rounded-full border bg-background/70 px-2.5 py-1 text-foreground">
+                <Eye size={12} /> คลิกเพื่อเปิดดูจอ
+              </span>
+              <span className="text-[10px] text-muted-foreground">เปิดดู = บันทึก audit ลง chain</span>
             </span>
-            <span className="text-[10px] text-slate-400">เปิดดู = บันทึก audit ลง chain</span>
-          </span>
+          )}
         </button>
       ) : null}
 
       {view.latestSummary && (
-        <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-1.5 text-xs text-slate-300">
-          <span className="mr-1">{view.triageLevel === 'critical' ? '🚨' : '⚠️'}</span>
-          {view.latestSummary}
-          <span className="ml-1 text-slate-500">· {timeAgo(view.lastEventAtMs, props.nowMs)}</span>
+        <div className="rounded-md border bg-muted/40 px-2.5 py-1.5 text-xs">
+          <span className="mr-1 inline-flex items-center gap-1 font-medium">
+            <AlertTriangle size={12} className={view.triageLevel === 'critical' ? 'text-destructive' : 'text-amber-600 dark:text-amber-300'} />
+            {view.latestSummary}
+          </span>
+          <span className="ml-1 tabular-nums text-muted-foreground">{timeAgo(view.lastEventAtMs, props.nowMs)}</span>
           {view.unacknowledgedCriticalCount > 0 && (
-            <span className="ml-1 rounded bg-red-900/60 px-1 font-mono text-[10px] text-red-200">
+            <Badge variant="destructive" className="ml-1 font-mono tabular-nums">
               รอตรวจ {view.unacknowledgedCriticalCount}
-            </span>
+            </Badge>
           )}
         </div>
       )}
 
-      <div className="mt-2 flex items-center gap-2">
-        <button
+      <div className="flex items-center gap-1.5">
+        <Button type="button" variant="outline" size="sm" onClick={props.onSelect}>
+          <Eye /> ดูหลักฐาน
+        </Button>
+        <Button type="button" variant="secondary" size="sm" disabled={!props.online} onClick={props.onOpenScreen}>
+          <Monitor /> ดูหน้าจอ
+        </Button>
+        <Button
           type="button"
-          onClick={props.onSelect}
-          className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2 py-1 text-[11px] text-slate-300 transition hover:bg-slate-800"
-        >
-          <Eye size={12} /> ดูหลักฐาน
-        </button>
-        <button
-          type="button"
-          disabled={!props.online}
-          onClick={props.onOpenScreen}
-          className="inline-flex items-center gap-1 rounded-lg border border-sky-700/60 px-2 py-1 text-[11px] text-sky-300 transition hover:bg-sky-950/40 disabled:opacity-40"
-        >
-          <Monitor size={12} /> ดูหน้าจอ
-        </button>
-        <button
-          type="button"
+          variant="outline"
+          size="sm"
           disabled={props.freezing || !props.online}
-          onClick={props.onToggleFreeze}
-          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] transition disabled:opacity-40 ${
-            view.frozen
-              ? 'border-sky-700/60 text-sky-300 hover:bg-sky-950/40'
-              : 'border-slate-700 text-slate-300 hover:bg-slate-800'
-          }`}
+          onClick={() => setFreezeOpen(true)}
         >
-          <Snowflake size={12} /> {view.frozen ? 'ปลด Freeze' : 'Freeze'}
-        </button>
+          {props.freezing ? <Loader2 className="animate-spin" /> : <Snowflake />}
+          {view.frozen ? 'ปลด Freeze' : 'Freeze'}
+        </Button>
       </div>
-    </div>
+
+      {/* TRI-12: confirm กันกด Freeze พลาดจากการ์ด */}
+      <Dialog open={freezeOpen} onOpenChange={setFreezeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {view.frozen ? 'ปลด Freeze' : 'สั่ง Freeze'} — {props.name}
+            </DialogTitle>
+            <DialogDescription>
+              {view.frozen
+                ? 'ปลดแช่แข็งหน้าจอนักเรียน กลับมาทำข้อสอบต่อได้ตามปกติ ดำเนินการต่อหรือไม่'
+                : `สั่ง Freeze เครื่องของ ${view.studentId} หน้าจอนักเรียนจะถูกแช่แข็งทันทีจนกว่าจะปลด ดำเนินการต่อหรือไม่`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setFreezeOpen(false)}>
+              ยกเลิก
+            </Button>
+            <Button
+              type="button"
+              variant={view.frozen ? 'default' : 'destructive'}
+              disabled={props.freezing}
+              onClick={confirmFreeze}
+            >
+              {props.freezing && <Loader2 className="animate-spin" />}
+              ยืนยัน{view.frozen ? 'ปลด Freeze' : ' Freeze'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
   )
 }

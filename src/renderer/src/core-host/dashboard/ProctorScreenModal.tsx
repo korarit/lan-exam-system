@@ -1,8 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Monitor, X, History, Radio, Pin, Loader2 } from 'lucide-react'
+import { History, Loader2, Monitor, Pin, Radio, Snowflake, X } from 'lucide-react'
 import type { RingSegmentMeta } from '@shared/screen-protocol'
 import { useHostScreenStore } from '../../store/screen-store'
 import { useTriageStore } from '../../store/triage-store'
+import { useAppStore } from '../../store/app-store'
+import { cn } from '@renderer/lib/utils'
+import { Badge } from '@renderer/components/ui/badge'
+import { Button } from '@renderer/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle
+} from '@renderer/components/ui/dialog'
+import { Skeleton } from '@renderer/components/ui/skeleton'
 
 interface Props {
   studentId: string
@@ -29,10 +41,14 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
   const ingestSegmentData = useHostScreenStore((s) => s.ingestSegmentData)
   const ingestLiveSegment = useHostScreenStore((s) => s.ingestLiveSegment)
   const overview = useTriageStore((s) => s.overview)
+  const notify = useAppStore((s) => s.notify)
   const [mode, setMode] = useState<'live' | 'playback'>('playback')
   const [selectedDisplayId, setSelectedDisplayId] = useState<string | null>(null)
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null)
   const [fetching, setFetching] = useState(false)
+  const [stillLoaded, setStillLoaded] = useState(false)
+  const [freezeOpen, setFreezeOpen] = useState(false)
+  const [freezing, setFreezing] = useState(false)
   /** โหมดสด: ติดตามเซกเมนต์ใหม่อัตโนมัติ (ปิดเมื่อผู้คุมลาก timeline ไปย้อนหลัง) */
   const [followLive, setFollowLive] = useState(true)
 
@@ -97,6 +113,12 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
     }
     return best
   }, [thumbnails, props.studentId, activeDisplayId, mode])
+
+  const stillSrc = liveFrame ? `data:${liveFrame.mimeType};base64,${liveFrame.imageBase64}` : null
+
+  useEffect(() => {
+    setStillLoaded(false)
+  }, [stillSrc])
 
   const videoUrl = useMemo(() => {
     if (!selectedSegmentId) return null
@@ -164,6 +186,8 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
       .map((alert) => ({ atMs: alert.lastSeenAtMs, severity: alert.severity, text: alert.summaryText }))
   }, [overview, props.studentId, historyStartMs])
 
+  const frozen = overview?.students.find((s) => s.studentId === props.studentId)?.frozen ?? false
+
   async function switchMode(next: 'live' | 'playback'): Promise<void> {
     if (next === mode) return
     setMode(next)
@@ -184,69 +208,104 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
       .catch(() => setFetching(false))
   }
 
+  async function doToggleFreeze(): Promise<void> {
+    setFreezing(true)
+    try {
+      const res = await window.ztExam.setStudentFreeze({ studentId: props.studentId, frozen: !frozen })
+      if (!res.ok) {
+        notify({ severity: 'critical', message: `สั่ง ${frozen ? 'ปลด Freeze' : 'Freeze'} ไม่สำเร็จ` })
+      } else {
+        notify({ severity: frozen ? 'info' : 'critical', message: frozen ? 'ปลด Freeze แล้ว' : 'สั่ง Freeze เครื่องนักเรียนแล้ว' })
+      }
+    } catch (err) {
+      notify({ severity: 'warning', message: err instanceof Error ? err.message : 'สั่งไม่สำเร็จ' })
+    } finally {
+      setFreezing(false)
+      setFreezeOpen(false)
+    }
+  }
+
+  const waitingLive = mode === 'live' && !videoUrl && !stillSrc
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
-      <div className="flex h-full max-h-[92vh] w-full max-w-4xl flex-col rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
+    <Dialog open onOpenChange={(open) => { if (!open) props.onClose() }}>
+      <DialogContent className="flex max-h-[92vh] max-w-4xl flex-col gap-0 overflow-hidden p-0">
         {/* Header */}
-        <div className="flex items-center gap-3 border-b border-slate-800 px-5 py-3">
-          <Monitor size={18} className="text-sky-400" />
-          <div>
-            <h3 className="font-semibold text-slate-100">Screen Inspector — {props.name}</h3>
-            <p className="text-[11px] text-slate-500">
-              ทุกการเปิดดูถูกบันทึกลง Audit Log (hash chain) · วิดีโอย้อนหลังเก็บที่เครื่องนักเรียน 5 นาทีล่าสุด
-            </p>
+        <DialogHeader className="border-b px-5 py-3 text-left">
+          <div className="flex items-center gap-2">
+            <Monitor size={18} className="shrink-0 text-primary" />
+            <DialogTitle className="text-base">Screen Inspector — {props.name}</DialogTitle>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="ml-auto"
+              onClick={props.onClose}
+              aria-label="ปิด Screen Inspector"
+            >
+              <X size={16} />
+            </Button>
           </div>
-          <button
-            type="button"
-            onClick={props.onClose}
-            className="ml-auto rounded-lg border border-slate-700 p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
-          >
-            <X size={16} />
-          </button>
-        </div>
+          <DialogDescription className="flex flex-wrap items-center gap-2">
+            <span className="font-mono tabular-nums">{props.studentId}</span>
+            {frozen && (
+              <Badge variant="secondary">
+                <Snowflake />
+                แช่แข็ง
+              </Badge>
+            )}
+            <span>ทุกการเปิดดูถูกบันทึกลง Audit Log (hash chain) · วิดีโอย้อนหลังเก็บที่เครื่องนักเรียน 5 นาทีล่าสุด</span>
+          </DialogDescription>
+        </DialogHeader>
 
         {/* Controls */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 px-5 py-2">
-          <button
+        <div className="flex flex-wrap items-center gap-2 border-b px-5 py-2">
+          <Button
             type="button"
+            size="sm"
+            variant={mode === 'live' ? 'destructive' : 'outline'}
             onClick={() => void switchMode('live')}
-            className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-              mode === 'live' ? 'bg-red-700 text-white' : 'border border-slate-700 text-slate-300 hover:bg-slate-800'
-            }`}
           >
-            <Radio size={13} /> ดูสด (720p · UDP)
-          </button>
-          <button
+            <Radio /> ดูสด (720p · UDP)
+          </Button>
+          <Button
             type="button"
+            size="sm"
+            variant={mode === 'playback' ? 'default' : 'outline'}
             onClick={() => void switchMode('playback')}
-            className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-              mode === 'playback' ? 'bg-sky-700 text-white' : 'border border-slate-700 text-slate-300 hover:bg-slate-800'
-            }`}
           >
-            <History size={13} /> ย้อนหลัง 5 นาที
-          </button>
+            <History /> ย้อนหลัง 5 นาที
+          </Button>
           {mode === 'live' && !followLive && (
-            <button
-              type="button"
-              onClick={followLatestLive}
-              className="inline-flex items-center gap-1 rounded-lg bg-red-900/60 px-3 py-1.5 text-xs font-medium text-red-200 transition hover:bg-red-800"
-            >
-              <Radio size={13} /> กลับไปดูสด
-            </button>
+            <Button type="button" size="sm" variant="destructive" onClick={followLatestLive}>
+              <Radio /> กลับไปดูสด
+            </Button>
           )}
-          <button
+          <Button
             type="button"
+            size="sm"
+            variant="outline"
             onClick={() => {
               void window.ztExam
                 .pinScreenBuffer({ studentId: props.studentId, reason: 'PROCTOR_PIN-DASHBOARD' })
                 .catch(() => undefined)
             }}
-            className="inline-flex items-center gap-1 rounded-lg border border-amber-700/60 px-3 py-1.5 text-xs font-medium text-amber-300 transition hover:bg-amber-950/40"
+            className="border-amber-500/50 text-amber-700 dark:text-amber-300"
           >
-            <Pin size={13} /> Pin ล็อกหลักฐาน
-          </button>
+            <Pin /> Pin ล็อกหลักฐาน
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={freezing}
+            onClick={() => (frozen ? void doToggleFreeze() : setFreezeOpen(true))}
+          >
+            {freezing ? <Loader2 className="animate-spin" /> : <Snowflake />}
+            {frozen ? 'ปลด Freeze' : 'Freeze'}
+          </Button>
           {countdownSeconds !== null && mode === 'playback' && (
-            <span className="ml-auto text-xs text-amber-300">
+            <span className="ml-auto text-xs tabular-nums text-amber-700 dark:text-amber-300">
               วิดีโอย้อนหลังช่วงนี้จะถูกเขียนทับในอีก {Math.floor(countdownSeconds / 60)}:{String(countdownSeconds % 60).padStart(2, '0')} นาที
             </span>
           )}
@@ -254,26 +313,23 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
 
         {/* Display tabs */}
         {displayIds.length > 1 && (
-          <div className="flex gap-1 border-b border-slate-800 px-5 py-2">
+          <div className="flex gap-1 border-b px-5 py-2">
             {displayIds.map((displayId, index) => (
-              <button
+              <Button
                 key={displayId}
                 type="button"
+                size="sm"
+                variant={activeDisplayId === displayId ? 'secondary' : 'ghost'}
                 onClick={() => setSelectedDisplayId(displayId)}
-                className={`rounded px-3 py-1 text-xs transition ${
-                  activeDisplayId === displayId
-                    ? 'bg-sky-700/40 text-sky-200'
-                    : 'text-slate-400 hover:bg-slate-800'
-                }`}
               >
                 Display {index + 1}
-              </button>
+              </Button>
             ))}
           </div>
         )}
 
         {/* Viewer */}
-        <div className="flex min-h-0 flex-1 flex-col gap-3 p-5">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-5">
           {videoUrl ? (
             <video
               key={videoUrl}
@@ -281,37 +337,46 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
               controls
               autoPlay
               onEnded={advanceToNext}
-              className="max-h-[46vh] w-full rounded-xl border border-slate-800 bg-black"
+              className="max-h-[46vh] w-full rounded-md border bg-muted object-contain"
             />
-          ) : liveFrame && mode === 'live' && liveFrame.mode === 'live' ? (
-            /* Fallback ภาพนิ่ง (JPEG ผ่าน TLS) เมื่อ UDP transport ยังไม่พร้อม */
-            <img
-              src={`data:${liveFrame.mimeType};base64,${liveFrame.imageBase64}`}
-              alt="student screen"
-              className="max-h-[46vh] w-full rounded-xl border border-slate-800 bg-black object-contain"
-            />
+          ) : stillSrc ? (
+            <div className="relative">
+              {!stillLoaded && <Skeleton className="h-[30vh] w-full" />}
+              <img
+                src={stillSrc}
+                alt="ภาพหน้าจอนักเรียน"
+                onLoad={() => setStillLoaded(true)}
+                className={cn(
+                  'max-h-[46vh] w-full rounded-md border bg-muted object-contain',
+                  !stillLoaded && 'hidden'
+                )}
+              />
+            </div>
           ) : (
-            <div className="flex h-[30vh] items-center justify-center rounded-xl border border-dashed border-slate-800 text-sm text-slate-500">
-              {fetching ? (
-                <span className="inline-flex items-center gap-2">
-                  <Loader2 size={16} className="animate-spin" /> กำลังดึงเซกเมนต์จากเครื่องนักเรียน…
-                </span>
-              ) : mode === 'live' ? (
-                'กำลังรอวิดีโอสด 720p/30fps ผ่านช่องทาง UDP…'
-              ) : (
-                'ยังไม่มีภาพ — คลิกเซกเมนต์บน Timeline ด้านล่าง'
-              )}
+            <div className="flex flex-col gap-2" aria-label="กำลังโหลดภาพหน้าจอ">
+              {(fetching || waitingLive) && <Skeleton className="h-[30vh] w-full" />}
+              <div className="flex items-center justify-center gap-2 rounded-md border border-dashed px-4 py-6 text-sm text-muted-foreground">
+                {fetching ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 size={16} className="animate-spin" /> กำลังดึงเซกเมนต์จากเครื่องนักเรียน…
+                  </span>
+                ) : mode === 'live' ? (
+                  'กำลังรอวิดีโอสด 720p/30fps ผ่านช่องทาง UDP…'
+                ) : (
+                  'ยังไม่มีภาพ — คลิกเซกเมนต์บน Timeline ด้านล่าง'
+                )}
+              </div>
             </div>
           )}
 
           {/* Timeline 5 นาที */}
           <div>
-            <div className="mb-1 flex items-center justify-between text-[11px] text-slate-500">
+            <div className="mb-1 flex items-center justify-between text-[11px] tabular-nums text-muted-foreground">
               <span>-5 นาที</span>
               <span>Timeline วิดีโอย้อนหลัง ({segments.length} เซกเมนต์ · คลิกเพื่อดู)</span>
               <span>ตอนนี้</span>
             </div>
-            <div className="relative h-9 overflow-hidden rounded-lg border border-slate-800 bg-slate-950">
+            <div className="relative h-9 overflow-hidden rounded-md border bg-muted/40">
               {segments.map((segment) => {
                 const offset = Math.min(
                   100,
@@ -326,11 +391,13 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
                     title={`เซกเมนต์ #${segment.seqNo}${segment.pinnedReason ? ' (Pin: ' + segment.pinnedReason + ')' : ''}`}
                     onClick={() => fetchSegment(segment)}
                     style={{ left: `${offset}%`, width: `${width}%` }}
-                    className={`absolute top-1 h-7 rounded transition ${
+                    className={cn(
+                      'absolute top-1 h-7 rounded transition',
                       segment.pinnedReason !== undefined
-                        ? 'bg-amber-600/80 hover:bg-amber-500'
-                        : 'bg-sky-800/80 hover:bg-sky-700'
-                    } ${isSelected ? 'ring-2 ring-white/70' : ''}`}
+                        ? 'bg-amber-500/80 hover:bg-amber-500'
+                        : 'bg-primary/70 hover:bg-primary',
+                      isSelected && 'ring-2 ring-ring'
+                    )}
                   />
                 )
               })}
@@ -341,16 +408,38 @@ export default function ProctorScreenModal(props: Props): React.JSX.Element {
                     key={`${marker.atMs}-${index}`}
                     title={marker.text}
                     style={{ left: `${offset}%` }}
-                    className={`absolute top-0 h-full w-1 -translate-x-1/2 ${
-                      marker.severity === 'critical' ? 'bg-red-500' : 'bg-amber-400'
-                    }`}
+                    className={cn(
+                      'absolute top-0 h-full w-1 -translate-x-1/2',
+                      marker.severity === 'critical' ? 'bg-destructive' : 'bg-amber-400'
+                    )}
                   />
                 )
               })}
             </div>
           </div>
         </div>
-      </div>
-    </div>
+
+        {/* ยืนยัน Freeze จากห้องตรวจจอ */}
+        <Dialog open={freezeOpen} onOpenChange={setFreezeOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>สั่ง Freeze — {props.name}</DialogTitle>
+              <DialogDescription>
+                {`สั่ง Freeze เครื่องของ ${props.studentId} หน้าจอนักเรียนจะถูกแช่แข็งทันทีจนกว่าจะปลด ดำเนินการต่อหรือไม่`}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2">
+              <Button type="button" variant="outline" onClick={() => setFreezeOpen(false)}>
+                ยกเลิก
+              </Button>
+              <Button type="button" variant="destructive" disabled={freezing} onClick={() => void doToggleFreeze()}>
+                {freezing && <Loader2 className="animate-spin" />}
+                ยืนยัน Freeze
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </DialogContent>
+    </Dialog>
   )
 }

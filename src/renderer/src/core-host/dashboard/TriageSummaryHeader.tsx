@@ -1,6 +1,31 @@
-import { Search, Volume2, VolumeX, FileDown, ShieldCheck, CheckCheck, BellRing } from 'lucide-react'
+import { useState } from 'react'
+import { BellRing, CheckCheck, FileDown, Loader2, Search, ShieldCheck, Volume2, VolumeX } from 'lucide-react'
 import type { TriageCounts } from '@shared/ipc-channels'
 import type { TriageFilter, TriageToastSeverity } from '../../store/triage-store'
+import { cn } from '@renderer/lib/utils'
+import { Button } from '@renderer/components/ui/button'
+import { Input } from '@renderer/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@renderer/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@renderer/components/ui/dialog'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger
+} from '@renderer/components/ui/tooltip'
 
 interface Props {
   counts: TriageCounts | null
@@ -23,101 +48,173 @@ interface Props {
 }
 
 const FILTER_BUTTONS: Array<{ key: TriageFilter; label: string; dot: string }> = [
-  { key: 'all', label: 'ทั้งหมด', dot: 'bg-slate-500' },
-  { key: 'critical', label: 'วิกฤต — ต้องตรวจทันที', dot: 'bg-red-500' },
+  { key: 'all', label: 'ทั้งหมด', dot: 'bg-muted-foreground' },
+  { key: 'critical', label: 'วิกฤต', dot: 'bg-destructive' },
   { key: 'warning', label: 'เฝ้าระวัง', dot: 'bg-amber-400' },
-  { key: 'disconnected', label: 'ขาดการติดต่อ', dot: 'bg-slate-400' },
+  { key: 'disconnected', label: 'ขาดการติดต่อ', dot: 'bg-muted-foreground' },
   { key: 'normal', label: 'ปกติ', dot: 'bg-emerald-500' }
 ]
 
 export default function TriageSummaryHeader(props: Props): React.JSX.Element {
   const counts = props.counts ?? { total: 0, critical: 0, warning: 0, disconnected: 0, normal: 0 }
-  return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {FILTER_BUTTONS.map((button) => (
-          <button
-            key={button.key}
-            type="button"
-            onClick={() => props.onFilterChange(button.key)}
-            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-              props.filter === button.key
-                ? 'border-sky-500/70 bg-sky-950/40 text-sky-200'
-                : 'border-slate-700 text-slate-400 hover:bg-slate-800'
-            }`}
-          >
-            <span className={`size-2 rounded-full ${button.dot}`} />
-            {button.label}
-            <span className="rounded-full bg-slate-800 px-1.5 font-mono text-[10px]">
-              {counts[button.key === 'all' ? 'total' : button.key]}
-            </span>
-          </button>
-        ))}
+  const [ackOpen, setAckOpen] = useState(false)
+  const [exportKind, setExportKind] = useState<'report' | 'bundle' | null>(null)
 
-        <div className="ml-auto flex items-center gap-2">
+  function confirmAck(): void {
+    setAckOpen(false)
+    props.onAckAll()
+  }
+
+  function confirmExport(): void {
+    const kind = exportKind
+    setExportKind(null)
+    if (kind === 'report') props.onExportReport()
+    else if (kind === 'bundle') props.onExportBundle()
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <div role="group" aria-label="ตัวกรองสถานะ" className="flex flex-wrap items-center gap-1.5">
+          {FILTER_BUTTONS.map((button) => (
+            <Button
+              key={button.key}
+              type="button"
+              size="sm"
+              variant={props.filter === button.key ? 'default' : 'outline'}
+              onClick={() => props.onFilterChange(button.key)}
+            >
+              <span className={cn('size-2 rounded-full', button.dot)} />
+              {button.label}
+              <span className="font-mono tabular-nums opacity-80">
+                {counts[button.key === 'all' ? 'total' : button.key]}
+              </span>
+            </Button>
+          ))}
+        </div>
+
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <div className="relative">
-            <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-            <input
+            <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
               value={props.search}
               onChange={(event) => props.onSearchChange(event.target.value)}
               placeholder="ค้นหารหัส/ชื่อนักเรียน…"
-              className="w-52 rounded-xl border border-slate-700 bg-slate-950 py-1.5 pl-8 pr-3 text-xs focus:border-sky-500 focus:outline-none"
+              className="w-52 pl-8 text-xs"
             />
           </div>
-          <button
-            type="button"
-            onClick={props.onToggleMute}
-            title={props.muted ? 'เปิดเสียง/แจ้งเตือนเหตุการณ์วิกฤต' : 'ปิดเสียง + ซ่อน toast แจ้งเตือน (TRI-06)'}
-            className="rounded-xl border border-slate-700 p-1.5 text-slate-400 transition hover:bg-slate-800"
-          >
-            {props.muted ? <VolumeX size={15} /> : <Volume2 size={15} className="text-emerald-400" />}
-          </button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={props.onToggleMute}
+                  aria-pressed={props.muted}
+                  aria-label={props.muted ? 'เปิดเสียงแจ้งเตือน' : 'ปิดเสียงแจ้งเตือน'}
+                >
+                  {props.muted ? <VolumeX /> : <Volume2 />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {props.muted ? 'เปิดเสียง/แจ้งเตือนเหตุการณ์วิกฤต' : 'ปิดเสียง + ซ่อน toast แจ้งเตือน'}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           {/* TRI-06: กรอง severity ของ toast กัน alert fatigue */}
-          <label
-            title="เลือก severity ที่ยอมให้ขึ้น toast แจ้งเตือน"
-            className="inline-flex items-center gap-1 rounded-xl border border-slate-700 px-2 py-1 text-slate-400"
-          >
-            <BellRing size={13} />
-            <select
-              value={props.toastSeverity}
-              onChange={(e) => props.onToastSeverityChange(e.target.value as TriageToastSeverity)}
-              className="bg-transparent text-xs text-slate-300 focus:outline-none"
-            >
-              <option value="critical">เตือนเฉพาะวิกฤต</option>
-              <option value="all">เตือนทั้งหมด</option>
-            </select>
-          </label>
+          <Select value={props.toastSeverity} onValueChange={(v) => props.onToastSeverityChange(v as TriageToastSeverity)}>
+            <SelectTrigger className="w-auto gap-2 text-xs" aria-label="เลือก severity ที่ยอมให้ขึ้น toast">
+              <BellRing size={13} className="text-muted-foreground" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="critical">เตือนเฉพาะวิกฤต</SelectItem>
+              <SelectItem value="all">เตือนทั้งหมด</SelectItem>
+            </SelectContent>
+          </Select>
           {/* TRI-06: รับทราบ alert ที่ค้างทั้งหมดในครั้งเดียว */}
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             disabled={props.ackingAll || props.pendingAckCount === 0}
-            onClick={props.onAckAll}
+            onClick={() => setAckOpen(true)}
             title={`รับทราบเหตุการณ์ค้างทั้งหมด (${props.pendingAckCount} คน)`}
-            className="inline-flex items-center gap-1 rounded-xl border border-slate-700 px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800 disabled:opacity-40"
+            className="border-destructive/50 text-destructive hover:bg-destructive/10"
           >
-            <CheckCheck size={14} />
+            {props.ackingAll ? <Loader2 className="animate-spin" /> : <CheckCheck />}
             {props.ackingAll ? 'กำลังรับทราบ…' : `รับทราบทั้งหมด${props.pendingAckCount > 0 ? ` (${props.pendingAckCount})` : ''}`}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             disabled={!props.canExport || props.exporting}
-            onClick={props.onExportReport}
+            onClick={() => setExportKind('report')}
             title="ส่งออกรายงานเหตุการณ์ (HTML)"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800 disabled:opacity-40"
           >
-            <FileDown size={14} /> รายงานเหตุการณ์
-          </button>
-          <button
+            {props.exporting ? <Loader2 className="animate-spin" /> : <FileDown />}
+            รายงานเหตุการณ์
+          </Button>
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             disabled={!props.canExport || props.exporting}
-            onClick={props.onExportBundle}
+            onClick={() => setExportKind('bundle')}
             title="ส่งออก Audit Bundle (.ztaudit)"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800 disabled:opacity-40"
           >
-            <ShieldCheck size={14} /> .ztaudit
-          </button>
+            {props.exporting ? <Loader2 className="animate-spin" /> : <ShieldCheck />}
+            .ztaudit
+          </Button>
         </div>
       </div>
+
+      {/* ยืนยันรับทราบทั้งหมด — destructive ต้อง confirm 2 ชั้น */}
+      <Dialog open={ackOpen} onOpenChange={setAckOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>รับทราบเหตุการณ์ค้างทั้งหมด</DialogTitle>
+            <DialogDescription>
+              รับทราบเหตุการณ์ค้างของ {props.pendingAckCount} คนทั้งหมด (บันทึก cleared ลง audit chain)
+              ดำเนินการต่อหรือไม่
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setAckOpen(false)}>
+              ยกเลิก
+            </Button>
+            <Button type="button" variant="destructive" onClick={confirmAck}>
+              ยืนยันรับทราบทั้งหมด
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ยืนยันส่งออกไฟล์ */}
+      <Dialog open={exportKind !== null} onOpenChange={(open) => { if (!open) setExportKind(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {exportKind === 'report' ? 'ส่งออกรายงานเหตุการณ์ (HTML)' : 'ส่งออก Audit Bundle (.ztaudit)'}
+            </DialogTitle>
+            <DialogDescription>
+              {exportKind === 'report'
+                ? 'สร้างไฟล์รายงานเหตุการณ์สำหรับส่งผู้คุมสอบ ดำเนินการต่อหรือไม่'
+                : 'สร้างไฟล์ Audit Bundle พร้อม hash chain สำหรับตรวจสอบย้อนหลัง ดำเนินการต่อหรือไม่'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setExportKind(null)}>
+              ยกเลิก
+            </Button>
+            <Button type="button" onClick={confirmExport}>
+              ยืนยันส่งออก
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

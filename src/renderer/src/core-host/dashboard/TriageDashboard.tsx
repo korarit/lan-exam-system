@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { LayoutDashboard } from 'lucide-react'
+import { Inbox, LayoutDashboard, SearchX } from 'lucide-react'
 import type { HostStudentSummary } from '@shared/ipc-channels'
 import type { HostStudentStatus } from '@shared/protocol-schema'
 import { matchesTriageFilter, shouldAlertToast, useTriageStore } from '../../store/triage-store'
 import { useHostScreenStore } from '../../store/screen-store'
 import { useAppStore } from '../../store/app-store'
+import { Badge } from '@renderer/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/ui/card'
+import { Skeleton } from '@renderer/components/ui/skeleton'
 import TriageSummaryHeader from './TriageSummaryHeader'
 import StudentTriageCard from './StudentTriageCard'
 import EvidenceTimelineDrawer from './EvidenceTimelineDrawer'
@@ -80,15 +83,14 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
         (names.get(view.studentId) ?? view.studentId).toLowerCase().includes(search.trim().toLowerCase()) ||
         view.studentId.toLowerCase().includes(search.trim().toLowerCase()))
   )
+  const pendingAckCount = visibleStudents.filter(
+    (v) => v.unacknowledgedCriticalCount > 0 || v.unacknowledgedWarningCount > 0
+  ).length
   const selected = overview?.students.find((view) => view.studentId === selectedStudentId) ?? null
   const notify = useAppStore((s) => s.notify)
 
-  // TRI-12: confirm กันกด Freeze พลาดจากการ์ด + toast error แทนกลืนเงียบ (.catch(()=>undefined))
+  // TRI-12: การ์ดยืนยันผ่าน Dialog ก่อนแล้ว — ตรงนี้ยิงคำสั่ง Freeze ได้เลย + toast error แทนกลืนเงียบ
   async function toggleFreezeFromCard(studentId: string, currentlyFrozen: boolean): Promise<void> {
-    if (!currentlyFrozen) {
-      const ok = window.confirm(`สั่ง Freeze เครื่องของ ${studentId}?\nหน้าจอนักเรียนจะถูกแช่แข็งทันทีจนกว่าจะปลด`)
-      if (!ok) return
-    }
     try {
       const res = await window.ztExam.setStudentFreeze({ studentId, frozen: !currentlyFrozen })
       if (!res.ok) {
@@ -99,12 +101,10 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
     }
   }
 
-  // TRI-06: รับทราบเหตุการณ์ค้างของทุกคนที่เห็นอยู่ (กัน alert fatigue ตอนแดงพร้อมกันหลายคน)
+  // TRI-06: รับทราบเหตุการณ์ค้างของทุกคนที่เห็นอยู่ (ยืนยันผ่าน Dialog ใน header แล้ว)
   async function ackAllVisible(): Promise<void> {
     const targets = visibleStudents.filter((v) => v.unacknowledgedCriticalCount > 0 || v.unacknowledgedWarningCount > 0)
     if (targets.length === 0) return
-    const ok = window.confirm(`รับทราบเหตุการณ์ค้างของ ${targets.length} คนทั้งหมด?\n(บันทึก cleared ลง audit chain)`)
-    if (!ok) return
     setAckingAll(true)
     try {
       let cleared = 0
@@ -140,16 +140,30 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
   }
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-      <div className="mb-4 flex items-center gap-2">
-        <LayoutDashboard size={18} className="text-sky-400" />
-        <h3 className="font-semibold">Dashboard คัดกรอง (Triage)</h3>
-        <span className="ml-auto text-xs text-slate-500">
-          {overview ? `${overview.counts.total} คน · อัปเดตแบบ real-time` : 'รอข้อมูลจากเครื่องแม่…'}
+    <Card>
+      <CardHeader className="flex flex-row flex-wrap items-center gap-2 space-y-0 pb-3">
+        <LayoutDashboard size={18} className="text-primary" />
+        <CardTitle className="text-base">Dashboard คัดกรอง (Triage)</CardTitle>
+        <Badge variant="secondary" className="tabular-nums">
+          {overview ? `${overview.counts.total} คน` : 'กำลังโหลด…'}
+        </Badge>
+        {overview && overview.counts.critical > 0 && (
+          <Badge variant="destructive" className="tabular-nums">
+            วิกฤต {overview.counts.critical}
+          </Badge>
+        )}
+        {overview && overview.counts.warning > 0 && (
+          <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 tabular-nums text-amber-700 dark:text-amber-300">
+            เฝ้าระวัง {overview.counts.warning}
+          </Badge>
+        )}
+        <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+          {overview ? 'อัปเดตแบบ real-time' : 'รอข้อมูลจากเครื่องแม่…'}
         </span>
-      </div>
+      </CardHeader>
 
-      <div className="space-y-3">
+      <CardContent className="space-y-3">
         <TriageSummaryHeader
           counts={overview?.counts ?? null}
           filter={filter}
@@ -158,7 +172,7 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
           toastSeverity={toastSeverity}
           canExport={props.canExport}
           exporting={exporting}
-          pendingAckCount={visibleStudents.filter((v) => v.unacknowledgedCriticalCount > 0 || v.unacknowledgedWarningCount > 0).length}
+          pendingAckCount={pendingAckCount}
           ackingAll={ackingAll}
           onFilterChange={setFilter}
           onSearchChange={setSearch}
@@ -169,14 +183,30 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
           onExportBundle={() => void exportWith('bundle')}
         />
 
-        {visibleStudents.length === 0 ? (
-          <p className="py-6 text-center text-sm text-slate-500">
-            {overview && overview.counts.total > 0
-              ? 'ไม่มีใครตรงกับตัวกรองนี้'
-              : 'ยังไม่มีข้อมูลคัดกรอง — เหตุการณ์จากเครื่องนักเรียนจะเข้ามาที่นี่แบบ real-time'}
-          </p>
+        {!overview ? (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3" aria-label="กำลังโหลดข้อมูลคัดกรอง">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} className="h-44 w-full" />
+            ))}
+          </div>
+        ) : visibleStudents.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-10 text-center">
+            {overview.counts.total > 0 ? (
+              <>
+                <SearchX size={28} className="text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">ไม่มีใครตรงกับตัวกรองนี้</p>
+                <p className="text-xs text-muted-foreground">ลองเปลี่ยนตัวกรองหรือล้างคำค้นหา</p>
+              </>
+            ) : (
+              <>
+                <Inbox size={28} className="text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">ยังไม่มีข้อมูลคัดกรอง</p>
+                <p className="text-xs text-muted-foreground">เหตุการณ์จากเครื่องนักเรียนจะเข้ามาที่นี่แบบ real-time</p>
+              </>
+            )}
+          </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {visibleStudents.map((view) => (
               <StudentTriageCard
                 key={view.studentId}
@@ -194,7 +224,7 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
             ))}
           </div>
         )}
-      </div>
+      </CardContent>
 
       {selected && (
         <EvidenceTimelineDrawer
@@ -213,6 +243,6 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
           onClose={() => setScreenInspectId(null)}
         />
       )}
-    </div>
+    </Card>
   )
 }
