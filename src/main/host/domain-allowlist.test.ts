@@ -68,13 +68,22 @@ describe('DomainAllowlistService.recordBatch — upsert', () => {
     expect(rows.map((r) => r.hits)).toEqual([9, 2, 1])
   })
 
-  it('recordTopUrl = source top-url + auto-approved', () => {
+  it('recordTopUrl = source top-url + pending (R2: ไม่ auto-approved)', () => {
     const { service, sessionId } = makeService()
     service.recordTopUrl(sessionId, 'docs.example.com')
     const rows = service.list(sessionId)
     expect(rows[0]!.source).toBe('top-url')
-    expect(rows[0]!.approved).toBe(true)
-    expect(service.listApproved(sessionId)).toEqual(['docs.example.com'])
+    expect(rows[0]!.approved).toBe(false)
+    expect(service.listApproved(sessionId)).toEqual([])
+  })
+
+  it('clear ล้างรายการทั้งห้องเพื่อเริ่ม record ใหม่ (R2)', () => {
+    const { service, sessionId } = makeService()
+    service.recordBatch(sessionId, [
+      { domain: 'cdn.example.com', topDomain: 'docs.example.com', source: 'preview', hits: 2, firstSeenMs: 1, lastSeenMs: 1 }
+    ])
+    expect(service.clear(sessionId)).toBe(1)
+    expect(service.list(sessionId)).toEqual([])
   })
 })
 
@@ -98,7 +107,7 @@ describe('DomainAllowlistService.approve — ครูตัดสิน (ไม
       { domain: 'fonts.gstatic.com', topDomain: 'docs.example.com', source: 'preview', hits: 1, firstSeenMs: 1, lastSeenMs: 1 }
     ])
     service.recordTopUrl(sessionId, 'docs.example.com')
-    expect(service.approveAll(sessionId)).toBe(2) // top-url อนุมัติไปแล้ว
+    expect(service.approveAll(sessionId)).toBe(3) // top-url ก็เป็น pending ต้องอนุมัติเอง (R2)
     expect(service.listApproved(sessionId).sort()).toEqual(['cdn.example.com', 'fonts.gstatic.com', 'docs.example.com'].sort())
   })
 

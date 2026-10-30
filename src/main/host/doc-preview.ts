@@ -107,7 +107,7 @@ export class DocPreviewController {
       return this.view.webContents.getURL() || null
     }).attachRecord(view.webContents.session, recorder)
 
-    // โดเมนของ URL ชั้นบน = auto-approved (top-url)
+    // R2: โดเมนของ URL ชั้นบน = pending ให้ครูกดอนุมัติเอง (ไม่ auto-approved — กันเผลอเปิดเว็บผิด)
     view.webContents.on('did-navigate', (_event, topUrl) => {
       recorder.recordTopUrl(topUrl)
       this.pushRecords()

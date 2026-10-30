@@ -55,18 +55,25 @@ export class DomainAllowlistService {
     run(records)
   }
 
-  /** โดเมนของ URL ชั้นบนที่ครูกรอก — auto-approved */
+  /** R2: โดเมนของ URL ชั้นบนที่ครูกรอก — เป็น pending ให้ครูกดอนุมัติเอง (ไม่ auto-approved) */
   recordTopUrl(sessionId: string, domain: string, atMs = Date.now()): void {
     this.db.db
       .prepare(
         `INSERT INTO recorded_domains
            (session_id, domain, top_domain, source, hits, first_seen_ms, last_seen_ms, approved, approved_at_ms)
-         VALUES (?, ?, ?, 'top-url', 1, ?, ?, 1, ?)
-         ON CONFLICT(session_id, domain, top_domain) DO UPDATE SET
-           hits = hits + 1,
-           last_seen_ms = excluded.last_seen_ms`
+          VALUES (?, ?, ?, 'top-url', 1, ?, ?, 0, NULL)
+          ON CONFLICT(session_id, domain, top_domain) DO UPDATE SET
+            hits = hits + 1,
+            last_seen_ms = excluded.last_seen_ms`
       )
-      .run(sessionId, domain.toLowerCase(), domain.toLowerCase(), atMs, atMs, atMs)
+      .run(sessionId, domain.toLowerCase(), domain.toLowerCase(), atMs, atMs)
+  }
+
+  /** R2: ล้างรายการ record ทั้งห้อง — เริ่ม record ใหม่ (เช่น ครูเผลอเปิดเว็บผิดแล้วอยากเริ่มใหม่) */
+  clear(sessionId: string): number {
+    return this.db.db
+      .prepare(`DELETE FROM recorded_domains WHERE session_id = ?`)
+      .run(sessionId).changes
   }
 
   list(sessionId: string): RecordedDomainRow[] {

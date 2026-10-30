@@ -42,6 +42,10 @@ export interface DocsPanelState {
   enforcement: DomainEnforcement
   /** ลิงก์สุดท้ายที่โดนบล็อก (แสดงข้อความป้ายเตือนในแผง) */
   blockedUrl: string | null
+  /** R4: URL นอกรายการที่กำลังเปิดในโหมด warn (แบนเนอร์เหลืองฝั่งนักเรียน) */
+  warnUrl: string | null
+  /** R8: ข้อผิดพลาดการสร้าง/วาง WebContentsView (null = ปกติ) */
+  viewError: string | null
 }
 
 const BLOCKED_PAGE_HTML = (url: string): string => `<!doctype html>
@@ -71,6 +75,8 @@ export class DocsViewController {
   private open = false
   private hidden = false
   private lastUrl: string | null = null
+  /** R8: ข้อผิดพลาดล่าสุดของการเปิดแผง (โชว์ปุ่ม retry ฝั่ง renderer) */
+  private viewError: string | null = null
   /** ลิงก์ของหน้าเปิดครั้งแรกจากครู (ExamStarted docsUrl) */
   private preferredStartUrl: string | null = null
   private readonly now: () => number
@@ -114,13 +120,29 @@ export class DocsViewController {
 
   private pushState(): void {
     const policy = this.opts.getPolicy()
+    const enforcement = policy?.enforcement ?? 'warn'
     this.opts.pushState({
       open: this.open && !this.hidden,
       url: this.lastUrl,
       allowedDomains: policy?.allowedDomains ?? [],
-      enforcement: policy?.enforcement ?? 'warn',
-      blockedUrl: this.lastBlockedUrl
+      enforcement,
+      blockedUrl: this.lastBlockedUrl,
+      // R4: โหมด warn + URL ปัจจุบันนอก allowlist = กำลังดูเว็บนอกเอกสาร (แบนเนอร์เหลือง)
+      warnUrl: enforcement === 'warn' && this.lastBlockedUrl === null ? this.computeOffWhitelistUrl() : null,
+      viewError: this.viewError
     })
+  }
+
+  /** URL ปัจจุบันที่อยู่นอก allowlist (null = อยู่ในรายการ/หน้า home/ยังไม่เปิด) */
+  private computeOffWhitelistUrl(): string | null {
+    if (!this.lastUrl) return null
+    try {
+      const policy = this.opts.getPolicy()
+      const verdict = evaluateUrlAgainstWhitelist(this.lastUrl, policy?.allowedDomains ?? [])
+      return verdict === 'allowed' ? null : this.lastUrl
+    } catch {
+      return null
+    }
   }
 
   /**
@@ -128,17 +150,41 @@ export class DocsViewController {
    * เปิดครั้งแรก → โหลดหน้าแรก (docsUrl ของครู ถ้ามี — เมื่อถูกตามกติกา)
    */
   toggle(open: boolean): { ok: boolean } {
-    if (this.sessionId === null) return { ok: false }
+    if (this.sessionId === null) {
+      this.viewError = 'ยังไม่เข้าห้องสอบ — เปิดแผงเอกสารไม่ได้'
+      this.pushState()
+      return { ok: false }
+    }
     const window = this.opts.getWindow()
     const policy = this.opts.getPolicy()
-    if (open && (!window || !policy)) return { ok: false }
+    if (open && (!window || !policy)) {
+      // R8: สร้างช้า/ล้มเหลว (ไม่มีหน้าต่างหรือนโยบาย) — เก็บสาเหตุให้ renderer โชว์ปุ่ม retry
+      this.viewError = !window ? 'ไม่พบหน้าต่างข้อสอบ — ลองเปิดเอกสารอีกครั้ง' : 'ยังไม่ได้รับนโยบายเอกสารจากเครื่องแม่ — ลองอีกครั้ง'
+      this.pushState()
+      return { ok: false }
+    }
+    const wasOpen = this.open
     this.open = open
     if (open) {
       this.hidden = false
-      const view = this.ensureView()
+      this.viewError = null
+      let view: WebContentsView | null = null
+      try {
+        view = this.ensureView()
+      } catch {
+        this.viewError = 'สร้างแผงเอกสารไม่สำเร็จ — ลองเปิดเอกสารอีกครั้ง'
+        this.pushState()
+        return { ok: false }
+      }
       if (view && window && !window.isDestroyed()) {
-        window.contentView.addChildView(view)
-        this.syncBounds(window)
+        try {
+          window.contentView.addChildView(view)
+          this.syncBounds(window)
+        } catch {
+          this.viewError = 'วางแผงเอกสารบนหน้าจอไม่สำเร็จ — ลองเปิดเอกสารอีกครั้ง'
+          this.pushState()
+          return { ok: false }
+        }
         if (view.webContents.getURL() === '') {
           const startUrl = this.resolveHomeUrl(policy?.allowedDomains ?? [])
           void view.webContents.loadURL(startUrl)
@@ -152,6 +198,19 @@ export class DocsViewController {
         windowNow.contentView.removeChildView(this.view)
       }
       this.lastBlockedUrl = null
+      this.viewError = null
+      // R5: นักเรียนปิดแผงเอง → event warning ให้ครูเห็นใน triage (ปิดจากที่เคยเปิดเท่านั้น)
+      if (wasOpen) {
+        this.opts.emit({
+          eventId: `docs-toggle-${this.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          code: 'DOCS_PANEL_TOGGLED',
+          severity: 'warning',
+          score: 5,
+          detectorId: 'docs-filter',
+          detail: { action: 'close', mode: policy?.enforcement ?? 'warn' },
+          occurredAtMs: this.now()
+        })
+      }
     }
     this.pushState()
     return { ok: true }
@@ -182,6 +241,7 @@ export class DocsViewController {
       if (policy === null) return { ok: false, reason: 'not-open' }
       const view = this.ensureView()
       if (view && this.open) {
+        this.lastBlockedUrl = null
         void view.webContents
           .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(DOCS_HOME_HTML(policy.allowedDomains))}`)
           .catch(() => undefined)
@@ -232,6 +292,10 @@ export class DocsViewController {
       if (view && this.open) {
         void view.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(BLOCKED_PAGE_HTML(parsed.toString()))}`)
       }
+    } else {
+      // R4: warn = ปล่อยโหลดต่อ แต่จำ URL นอกระเบียบไว้โชว์แบนเนอร์เหลืองทันที
+      this.lastUrl = parsed.toString()
+      this.pushState()
     }
     return { ok: false, reason: 'off-whitelist' }
   }
@@ -417,5 +481,6 @@ export class DocsViewController {
     this.hidden = false
     this.lastUrl = null
     this.lastBlockedUrl = null
+    this.viewError = null
   }
 }

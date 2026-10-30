@@ -805,7 +805,15 @@ void app.whenReady().then(() => {
     getSessionManager: ensureSessionManager,
     getDocPreview: ensureDocPreview,
     getAllowlist: ensureDomainAllowlist,
-    getSessionId: () => roomManager?.room?.roomId ?? null
+    getSessionId: () => roomManager?.room?.roomId ?? null,
+    // R3: การตัดสิน allowlist ลง audit hash chain (มีชื่อครู/เวลา) — lobby (ยังไม่มี chain) fallback เป็น console
+    recordAudit: (eventCode, summaryText, evidence) => {
+      try {
+        ensureTriageService().recordHostEvent('HOST', eventCode, 'normal', summaryText, evidence, 0)
+      } catch {
+        console.info(`[allowlist-audit-fallback] ${eventCode}: ${summaryText}`)
+      }
+    }
   })
   registerAuditHandlers(router, state, {
     getSessionManager: ensureSessionManager,

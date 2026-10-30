@@ -146,6 +146,8 @@ export const DetectionEventCatalog = {
   STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL: { category: 'network-tunnel', severity: 'critical', score: 60 },
   UNAUTHORIZED_DOCS_URL_ATTEMPT: { category: 'network-tunnel', severity: 'critical', score: 40 },
   PROXY_DOMAIN_VIOLATION: { category: 'network-tunnel', severity: 'critical', score: 40 },
+  /* R5: นักเรียนกดปิดแผงเอกสารเอง — event ระดับ warning ให้ครูเห็นใน triage */
+  DOCS_PANEL_TOGGLED: { category: 'stealth-overlay', severity: 'warning', score: 5 },
   DIRECT_IP_PROXY_ATTEMPT: { category: 'network-tunnel', severity: 'critical', score: 40 },
   VSCODE_PROFILE_TAMPERED: { category: 'app-tamper', severity: 'critical', score: 50 },
   UNAUTHORIZED_IDE_DETECTED: { category: 'ai-assistant', severity: 'critical', score: 50 }
