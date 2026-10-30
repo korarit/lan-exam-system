@@ -42,8 +42,10 @@ export default function MissingRuntimePrompt(props: Props): React.JSX.Element | 
     setMessage(null)
     try {
       const res = await window.ztExam.checkRuntimes({ languages: props.languages })
-      setStatuses(res.runtimes)
-      props.onStatusChange?.(res.runtimes.every((r) => r.found))
+      // กันจอขาวถ้า IPC ตอบรูปทรงไม่ครบ — ถือว่าไม่มีข้อมูล runtime (ไม่บล็อก UI)
+      const runtimes = res.runtimes ?? []
+      setStatuses(runtimes)
+      props.onStatusChange?.(runtimes.every((r) => r.found))
     } catch {
       setMessage('ตรวจ runtime ไม่สำเร็จ — ลองกดตรวจสอบอีกครั้ง')
     } finally {

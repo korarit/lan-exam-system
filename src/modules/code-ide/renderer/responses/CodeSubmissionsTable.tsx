@@ -150,7 +150,7 @@ export default function CodeSubmissionsTable(): React.JSX.Element {
         <Card><CardContent className="px-3 py-2 text-[13px]">{actionMsg}</CardContent></Card>
       )}
 
-      {snapshot !== null && snapshot.depsUnsupported.length > 0 && (
+      {snapshot !== null && (snapshot.depsUnsupported ?? []).length > 0 && (
         <Card className="border-primary/30 bg-primary/5">
           <CardContent className="px-3 py-2 text-[13px]">
             Offline libs บางตัวใช้ตรวจ/รันไม่ได้: {snapshot.depsUnsupported.join('; ').slice(0, 400)} — อัปโหลดเป็น .zip/.jar ใหม่แล้วผูกห้องอีกครั้ง

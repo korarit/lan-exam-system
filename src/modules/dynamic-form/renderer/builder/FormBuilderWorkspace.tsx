@@ -64,7 +64,7 @@ export default function FormBuilderWorkspace(): React.JSX.Element {
   useEffect(() => {
     void window.ztExam
       .listSavedForms()
-      .then((res) => setSavedForms(res.forms))
+      .then((res) => setSavedForms(res.forms ?? []))
       .catch(() => setSavedForms([]))
   }, [])
 
@@ -96,7 +96,7 @@ export default function FormBuilderWorkspace(): React.JSX.Element {
       const res = await window.ztExam.saveZtform({ formPayloadJson, encrypted, ...(password !== undefined ? { password } : {}) })
       if (res.ok) {
         setNotice(`บันทึกสำเร็จ: ${res.filePath}`)
-        void window.ztExam.listSavedForms().then((r) => setSavedForms(r.forms))
+        void window.ztExam.listSavedForms().then((r) => setSavedForms(r.forms ?? [])).catch(() => undefined)
       } else {
         setNotice(
           res.reason === 'CANCELLED'

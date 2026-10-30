@@ -60,7 +60,13 @@ export default function ResponsesDashboard(): React.JSX.Element {
   const refresh = async (): Promise<void> => {
     setLoading(true)
     try {
-      setSnapshot(await api.getFormResponses())
+      const snap = (await api.getFormResponses()) as unknown
+      // กันจอขาวทั้งแถบถ้า IPC ตอบรูปทรงไม่ครบ (เช่น mock/เวอร์ชันไม่ตรง) — ถือว่าไม่มีข้อมูล
+      if (snap !== null && typeof snap === 'object' && 'form' in snap && (snap as { form?: unknown }).form !== null && typeof (snap as { form?: unknown }).form === 'object' && 'items' in ((snap as { form: object }).form as object) && Array.isArray(((snap as { form: { items?: unknown } }).form).items)) {
+        setSnapshot(snap as FormResponsesSnapshot)
+      } else {
+        setSnapshot(null)
+      }
       const state = await api.getFormState()
       setNotice(
         state.formTitle === null
@@ -158,7 +164,7 @@ export default function ResponsesDashboard(): React.JSX.Element {
 
   const questions = useMemo(() => {
     if (snapshot === null) return []
-    return snapshot.form.items.filter(isFormItemQuestion)
+    return (snapshot.form?.items ?? []).filter(isFormItemQuestion)
   }, [snapshot])
   const questionList = useMemo(
     () =>
