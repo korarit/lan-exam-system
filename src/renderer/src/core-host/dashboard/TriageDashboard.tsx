@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { LayoutDashboard } from 'lucide-react'
 import type { HostStudentSummary } from '@shared/ipc-channels'
 import type { HostStudentStatus } from '@shared/protocol-schema'
-import { matchesTriageFilter, useTriageStore } from '../../store/triage-store'
+import { matchesTriageFilter, shouldAlertToast, useTriageStore } from '../../store/triage-store'
 import { useHostScreenStore } from '../../store/screen-store'
 import { useAppStore } from '../../store/app-store'
 import TriageSummaryHeader from './TriageSummaryHeader'
@@ -28,7 +28,10 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
   const setSelectedStudentId = useTriageStore((s) => s.setSelectedStudentId)
   const muted = useTriageStore((s) => s.muted)
   const setMuted = useTriageStore((s) => s.setMuted)
+  const toastSeverity = useTriageStore((s) => s.toastSeverity)
+  const setToastSeverity = useTriageStore((s) => s.setToastSeverity)
   const [exporting, setExporting] = useState(false)
+  const [ackingAll, setAckingAll] = useState(false)
   // Phase 3c: Screen Inspector modal + ภาพย่อของการ์ดแต่ละใบ
   const [screenInspectId, setScreenInspectId] = useState<string | null>(null)
   const thumbnails = useHostScreenStore((s) => s.thumbnails)
@@ -80,6 +83,47 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
   const selected = overview?.students.find((view) => view.studentId === selectedStudentId) ?? null
   const notify = useAppStore((s) => s.notify)
 
+  // TRI-12: confirm กันกด Freeze พลาดจากการ์ด + toast error แทนกลืนเงียบ (.catch(()=>undefined))
+  async function toggleFreezeFromCard(studentId: string, currentlyFrozen: boolean): Promise<void> {
+    if (!currentlyFrozen) {
+      const ok = window.confirm(`สั่ง Freeze เครื่องของ ${studentId}?\nหน้าจอนักเรียนจะถูกแช่แข็งทันทีจนกว่าจะปลด`)
+      if (!ok) return
+    }
+    try {
+      const res = await window.ztExam.setStudentFreeze({ studentId, frozen: !currentlyFrozen })
+      if (!res.ok) {
+        notify({ severity: 'critical', message: `สั่ง ${currentlyFrozen ? 'ปลด Freeze' : 'Freeze'} ไม่สำเร็จ — เครื่องนักเรียนอาจไม่ได้รับคำสั่ง` })
+      }
+    } catch (err) {
+      notify({ severity: 'critical', message: err instanceof Error ? err.message : 'สั่ง Freeze ไม่สำเร็จ' })
+    }
+  }
+
+  // TRI-06: รับทราบเหตุการณ์ค้างของทุกคนที่เห็นอยู่ (กัน alert fatigue ตอนแดงพร้อมกันหลายคน)
+  async function ackAllVisible(): Promise<void> {
+    const targets = visibleStudents.filter((v) => v.unacknowledgedCriticalCount > 0 || v.unacknowledgedWarningCount > 0)
+    if (targets.length === 0) return
+    const ok = window.confirm(`รับทราบเหตุการณ์ค้างของ ${targets.length} คนทั้งหมด?\n(บันทึก cleared ลง audit chain)`)
+    if (!ok) return
+    setAckingAll(true)
+    try {
+      let cleared = 0
+      for (const target of targets) {
+        try {
+          const res = await window.ztExam.resolveTriage({ studentId: target.studentId, resolution: 'cleared' })
+          cleared += res.affectedAlerts
+        } catch {
+          /* รายคนล้มเหลวข้ามไป — จะ toast สรุปตอนท้าย */
+        }
+      }
+      if (shouldAlertToast('info', { muted, toastSeverity })) {
+        notify({ severity: 'info', message: `รับทราบทั้งหมดแล้ว (${cleared} เหตุการณ์ / ${targets.length} คน)` })
+      }
+    } finally {
+      setAckingAll(false)
+    }
+  }
+
   async function exportWith(kind: 'report' | 'bundle'): Promise<void> {
     setExporting(true)
     try {
@@ -111,11 +155,16 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
           filter={filter}
           search={search}
           muted={muted}
+          toastSeverity={toastSeverity}
           canExport={props.canExport}
           exporting={exporting}
+          pendingAckCount={visibleStudents.filter((v) => v.unacknowledgedCriticalCount > 0 || v.unacknowledgedWarningCount > 0).length}
+          ackingAll={ackingAll}
           onFilterChange={setFilter}
           onSearchChange={setSearch}
           onToggleMute={() => setMuted(!muted)}
+          onToastSeverityChange={setToastSeverity}
+          onAckAll={() => void ackAllVisible()}
           onExportReport={() => void exportWith('report')}
           onExportBundle={() => void exportWith('bundle')}
         />
@@ -139,11 +188,7 @@ export default function TriageDashboard(props: Props): React.JSX.Element {
                 thumbnailSrc={thumbnailByStudent.get(view.studentId) ?? null}
                 onSelect={() => setSelectedStudentId(view.studentId)}
                 onOpenScreen={() => setScreenInspectId(view.studentId)}
-                onToggleFreeze={() => {
-                  void window.ztExam
-                    .setStudentFreeze({ studentId: view.studentId, frozen: !view.frozen })
-                    .catch(() => undefined)
-                }}
+                onToggleFreeze={() => void toggleFreezeFromCard(view.studentId, view.frozen)}
                 freezing={false}
               />
             ))}

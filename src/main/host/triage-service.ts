@@ -128,6 +128,8 @@ export class TriageService {
   resolveAlerts(studentId: string, resolution: AlertResolution, note?: string): number {
     const roomId = this.activeRoomId
     if (!roomId) return 0
+    // Main-side validation (กัน IPC ตรง/caller อื่นส่ง note ยาวเกิน — UI จำกัด 500 อยู่แล้ว)
+    if (note !== undefined && note.length > 500) throw new Error('NOTE_TOO_LONG: note must be ≤ 500 characters')
     const affected = this.engine.acknowledgeAlerts(studentId, resolution)
     if (affected === 0 && !note) return 0
     const eventCode =
@@ -152,6 +154,9 @@ export class TriageService {
   sendWarning(studentId: string, message: string): boolean {
     const roomId = this.activeRoomId
     if (!roomId) return false
+    // Main-side validation (กัน IPC ตรง/caller อื่นส่งข้อความยาวเกิน — UI จำกัด 300 อยู่แล้ว)
+    if (message.length === 0) throw new Error('WARNING_EMPTY: message must not be empty')
+    if (message.length > 300) throw new Error('WARNING_TOO_LONG: message must be ≤ 300 characters')
     const tlsServer = this.opts.getRoom()?.tlsServerInstance
     const delivered = tlsServer !== undefined && tlsServer !== null
     if (delivered) {

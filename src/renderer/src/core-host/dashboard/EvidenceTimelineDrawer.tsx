@@ -38,6 +38,13 @@ export default function EvidenceTimelineDrawer(props: Props): React.JSX.Element 
   }, [props.studentId])
 
   async function submitResolution(): Promise<void> {
+    // TRI-12: confirm กันกดยืนยันพบทุจริตพลาด (ปักหมุดถาวรลง audit chain)
+    if (resolution === 'confirmed') {
+      const ok = window.confirm(
+        `ยืนยัน "พบการทุจริต" ของ ${props.name}?\nผลจะถูกปักหมุดถาวรลง audit chain — ตรวจสอบหลักฐานให้แน่ใจก่อนกด`
+      )
+      if (!ok) return
+    }
     setSubmitting(true)
     try {
       const res = await window.ztExam.resolveTriage({
@@ -66,7 +73,12 @@ export default function EvidenceTimelineDrawer(props: Props): React.JSX.Element 
     if (!warningText.trim()) return
     try {
       await window.ztExam.sendProctorWarning({ studentId: props.studentId, message: warningText.trim() })
-      notify({ severity: 'info', message: 'ส่งข้อความเตือนขึ้นจอนักเรียนแล้ว' })
+      // TRI-19: warn ที่ส่งขณะ frozen จะถูกคิวไว้ฝั่งนักเรียน (ไม่แสดงจนกว่าปลด Freeze)
+      if (data?.info?.frozen) {
+        notify({ severity: 'warning', message: 'ส่งแล้ว แต่เครื่องนักเรียนถูก Freeze — ข้อความจะค้างแสดงหลังปลด Freeze (หรือส่งซ้ำหลังปลด)' })
+      } else {
+        notify({ severity: 'info', message: 'ส่งข้อความเตือนขึ้นจอนักเรียนแล้ว' })
+      }
       setWarningText('')
     } catch (err) {
       notify({ severity: 'warning', message: err instanceof Error ? err.message : 'ส่งไม่สำเร็จ' })
@@ -75,6 +87,11 @@ export default function EvidenceTimelineDrawer(props: Props): React.JSX.Element 
 
   async function toggleFreeze(): Promise<void> {
     const frozen = !(data?.info?.frozen ?? false)
+    // TRI-12: confirm ก่อนสั่ง Freeze กันกดผิด
+    if (frozen) {
+      const ok = window.confirm(`สั่ง Freeze เครื่องของ ${props.name}?\nหน้าจอนักเรียนจะถูกแช่แข็งทันทีจนกว่าจะปลด`)
+      if (!ok) return
+    }
     try {
       await window.ztExam.setStudentFreeze({ studentId: props.studentId, frozen })
       notify({
@@ -275,6 +292,11 @@ export default function EvidenceTimelineDrawer(props: Props): React.JSX.Element 
               <Snowflake size={13} /> {info.frozen ? 'ปลด Freeze' : 'Freeze'}
             </button>
           </div>
+          {info.frozen && (
+            <p className="mt-2 rounded-lg border border-sky-800/60 bg-sky-950/30 px-2.5 py-1.5 text-[11px] text-sky-300">
+              เครื่องนี้ถูก Freeze — ข้อความเตือนจะค้างแสดงหลังปลด Freeze (TRI-19)
+            </p>
+          )}
           <div className="mt-2 flex items-center gap-2">
             <input
               value={warningText}

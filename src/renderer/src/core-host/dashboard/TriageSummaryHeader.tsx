@@ -1,17 +1,23 @@
-import { Search, Volume2, VolumeX, FileDown, ShieldCheck } from 'lucide-react'
+import { Search, Volume2, VolumeX, FileDown, ShieldCheck, CheckCheck, BellRing } from 'lucide-react'
 import type { TriageCounts } from '@shared/ipc-channels'
-import type { TriageFilter } from '../../store/triage-store'
+import type { TriageFilter, TriageToastSeverity } from '../../store/triage-store'
 
 interface Props {
   counts: TriageCounts | null
   filter: TriageFilter
   search: string
   muted: boolean
+  toastSeverity: TriageToastSeverity
   canExport: boolean
   exporting: boolean
+  /** จำนวนคนที่มี alert รอตรวจ (สำหรับปุ่มรับทราบทั้งหมด) */
+  pendingAckCount: number
+  ackingAll: boolean
   onFilterChange: (filter: TriageFilter) => void
   onSearchChange: (search: string) => void
   onToggleMute: () => void
+  onToastSeverityChange: (level: TriageToastSeverity) => void
+  onAckAll: () => void
   onExportReport: () => void
   onExportBundle: () => void
 }
@@ -61,10 +67,36 @@ export default function TriageSummaryHeader(props: Props): React.JSX.Element {
           <button
             type="button"
             onClick={props.onToggleMute}
-            title={props.muted ? 'เปิดเสียงเตือนเหตุการณ์วิกฤต' : 'ปิดเสียงเตือน'}
+            title={props.muted ? 'เปิดเสียง/แจ้งเตือนเหตุการณ์วิกฤต' : 'ปิดเสียง + ซ่อน toast แจ้งเตือน (TRI-06)'}
             className="rounded-xl border border-slate-700 p-1.5 text-slate-400 transition hover:bg-slate-800"
           >
             {props.muted ? <VolumeX size={15} /> : <Volume2 size={15} className="text-emerald-400" />}
+          </button>
+          {/* TRI-06: กรอง severity ของ toast กัน alert fatigue */}
+          <label
+            title="เลือก severity ที่ยอมให้ขึ้น toast แจ้งเตือน"
+            className="inline-flex items-center gap-1 rounded-xl border border-slate-700 px-2 py-1 text-slate-400"
+          >
+            <BellRing size={13} />
+            <select
+              value={props.toastSeverity}
+              onChange={(e) => props.onToastSeverityChange(e.target.value as TriageToastSeverity)}
+              className="bg-transparent text-xs text-slate-300 focus:outline-none"
+            >
+              <option value="critical">เตือนเฉพาะวิกฤต</option>
+              <option value="all">เตือนทั้งหมด</option>
+            </select>
+          </label>
+          {/* TRI-06: รับทราบ alert ที่ค้างทั้งหมดในครั้งเดียว */}
+          <button
+            type="button"
+            disabled={props.ackingAll || props.pendingAckCount === 0}
+            onClick={props.onAckAll}
+            title={`รับทราบเหตุการณ์ค้างทั้งหมด (${props.pendingAckCount} คน)`}
+            className="inline-flex items-center gap-1 rounded-xl border border-slate-700 px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800 disabled:opacity-40"
+          >
+            <CheckCheck size={14} />
+            {props.ackingAll ? 'กำลังรับทราบ…' : `รับทราบทั้งหมด${props.pendingAckCount > 0 ? ` (${props.pendingAckCount})` : ''}`}
           </button>
           <button
             type="button"

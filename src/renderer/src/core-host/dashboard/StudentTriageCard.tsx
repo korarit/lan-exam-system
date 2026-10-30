@@ -92,10 +92,17 @@ export default function StudentTriageCard(props: Props): React.JSX.Element {
         <button
           type="button"
           onClick={props.onOpenScreen}
-          className="mt-2 block w-full overflow-hidden rounded-lg border border-slate-800 bg-black"
-          title="คลิกเพื่อเปิด Screen Inspector (ภาพสด / ย้อนหลัง 5 นาที)"
+          className="relative mt-2 block w-full overflow-hidden rounded-lg border border-slate-800 bg-black"
+          title="คลิกเพื่อเปิด Screen Inspector (ภาพสด / ย้อนหลัง 5 นาที) — การเปิดดูบันทึก audit ลง chain"
         >
-          <img src={props.thumbnailSrc} alt="thumbnail" className="aspect-video w-full object-cover" />
+          {/* Privacy: เบลอภาพย่อไว้ก่อนจนกว่าครูกดเปิดดู (ตอนนั้นลง PROCTOR_VIEWED_SCREEN อัตโนมัติ) */}
+          <img src={props.thumbnailSrc} alt="thumbnail (เบลอ)" className="aspect-video w-full object-cover blur-md" />
+          <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-slate-950/45 text-[11px] text-slate-200">
+            <span className="inline-flex items-center gap-1 rounded-full border border-slate-600 bg-slate-950/70 px-2.5 py-1">
+              <Eye size={12} /> คลิกเพื่อเปิดดูจอ
+            </span>
+            <span className="text-[10px] text-slate-400">เปิดดู = บันทึก audit ลง chain</span>
+          </span>
         </button>
       ) : null}
 
