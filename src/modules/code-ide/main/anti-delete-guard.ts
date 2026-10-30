@@ -56,7 +56,8 @@ const DESTRUCTIVE_PATTERNS: Array<{ re: RegExp; label: string }> = [
   // เมธอดอ็อบเจกต์ (.exec / ->exec / ::exec เช่น db.exec, PDO::exec) คือ API ฐานข้อมูลปกติ —
   // บล็อกเฉพาะการเรียกฟังก์ชัน global ลอย ๆ (exec(, system() ฯลฯ) ที่รัน shell ได้
   { re: /(?<![\w>$\-\:.])(unlink|rmdir|rename|exec|shell_exec|system|passthru|popen|proc_open|pcntl_exec)\s*\(/, label: 'php dangerous fn' },
-  { re: /\b(remove|unlink|rmdir|DeleteFile|RemoveDirectory)\s*\(/, label: 'c/c++ delete api' },
+  { re: /\b(remove|unlink|rmdir|remove_all|DeleteFile|RemoveDirectory)\s*\(/, label: 'c/c++ delete api' },
+  { re: /std::filesystem::remove/, label: 'c++ filesystem::remove' },
   { re: /system\s*\(\s*"/, label: 'c system()' },
   { re: /\.\.\//, label: 'parent path ../' },
   { re: /[A-Za-z]:\\/, label: 'absolute drive path' }
