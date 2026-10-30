@@ -1,8 +1,11 @@
 import { useEffect } from 'react'
+import { toast } from 'sonner'
 import { useAppStore } from './store/app-store'
 import RoleSelector from './components/RoleSelector'
 import HostShell from './components/HostShell'
 import StudentShell from './components/StudentShell'
+import { ThemeProvider } from './components/theme-provider'
+import { Toaster } from './components/ui/sonner'
 
 export default function App(): React.JSX.Element {
   const role = useAppStore((s) => s.role)
@@ -20,30 +23,25 @@ export default function App(): React.JSX.Element {
     return window.ztExam.onRoleChanged((event) => setRole(event.role))
   }, [setRole])
 
+  useEffect(() => {
+    if (!activeNotification) return
+    const { severity, message } = activeNotification
+    if (severity === 'critical') {
+      toast.error(message)
+    } else if (severity === 'warning') {
+      toast.warning(message)
+    } else {
+      toast.info(message)
+    }
+    clearNotification()
+  }, [activeNotification, clearNotification])
+
   return (
-    <div className="h-full">
-      {role === 'host' ? <HostShell /> : role === 'student' ? <StudentShell /> : <RoleSelector />}
-      {activeNotification && (
-        <div
-          role="status"
-          className={`fixed bottom-4 right-4 z-50 rounded-xl border px-4 py-3 text-sm shadow-lg ${
-            activeNotification.severity === 'critical'
-              ? 'border-red-500/40 bg-red-950/80 text-red-200'
-              : activeNotification.severity === 'warning'
-                ? 'border-amber-500/40 bg-amber-950/80 text-amber-200'
-                : 'border-slate-700 bg-slate-900/90 text-slate-200'
-          }`}
-        >
-          {activeNotification.message}
-          <button
-            type="button"
-            onClick={clearNotification}
-            className="ml-3 text-xs text-slate-400 hover:text-slate-200"
-          >
-            ปิด
-          </button>
-        </div>
-      )}
-    </div>
+    <ThemeProvider>
+      <div className="h-full bg-background text-foreground">
+        {role === 'host' ? <HostShell /> : role === 'student' ? <StudentShell /> : <RoleSelector />}
+        <Toaster />
+      </div>
+    </ThemeProvider>
   )
 }
