@@ -91,10 +91,10 @@
 
 ## 3. Checklist งานย่อย (Implementation Checklist)
 
-- [ ] **11.1.1** เขียนชุดทดสอบอัตโนมัติสำหรับโปรเจกต์หลายไฟล์/หลายโฟลเดอร์ + Offline Libraries ในหมวด **CLI (`Java`, `Python`, `JS/TS`)**
-- [ ] **11.1.2** เขียนชุดทดสอบอัตโนมัติสำหรับโปรเจกต์หลายโฟลเดอร์ในหมวด **Frontend (`HTML/CSS/JS`, `React`)**
-- [ ] **11.1.3** เขียนชุดทดสอบอัตโนมัติสำหรับหมวด **Backend REST API (`Node/TS`, `Python`)** และการตรวจด้วย `HttpApiTestCase`
-- [ ] **11.1.4** เขียนชุดทดสอบอัตโนมัติสำหรับหมวด **Database / SQL (`SQLite`)** และการตรวจด้วย `SqlTestCase`
-- [ ] **11.2.1** เขียนชุดทดสอบ Stress & Tampering Test (Infinite Loop, Hanging Server, SQL Timeout, Path Traversal, และ Read-Only File Protection)
-- [ ] **11.3.1** เขียนชุดทดสอบการทำงานร่วมกับ `ProcessInspector` และ `NetworkInspector` (อนุญาต Loopback เฉพาะพอร์ต Backend Sandbox แต่จับกุมการต่อเน็ตนอกทันที)
-- [ ] **11.4.1** สร้างสคริปต์และชุดทดสอบ End-to-End จำลองการสอบทั้ง 4 หมวดด้วยโหมดรันคู่ในเครื่องเดียว (`dev:pair`)
+- [x] **11.1.1** เขียนชุดทดสอบอัตโนมัติสำหรับโปรเจกต์หลายไฟล์/หลายโฟลเดอร์ + Offline Libraries ในหมวด **CLI (`Java`, `Python`, `JS/TS`)** — ทำแล้ว (`src/modules/code-ide/main/runners/multi-stack.test.ts` 11.1.1: Python/JS/TS/Java/PHP/Go จริง + C/Rust adaptive + offline PYTHONPATH/node_modules) ✅
+- [x] **11.1.2** เขียนชุดทดสอบอัตโนมัติสำหรับโปรเจกต์หลายโฟลเดอร์ในหมวด **Frontend (`HTML/CSS/JS`, `React`)** — ทำแล้ว (HTML+styles/+scripts และ component folders ผ่าน esbuild+jsdom) ✅
+- [x] **11.1.3** เขียนชุดทดสอบอัตโนมัติสำหรับหมวด **Backend REST API (`Node/TS`, `Python`)** และการตรวจด้วย `HttpApiTestCase` — ทำแล้ว (Node CRUD + verifyDb ไฟล์จริง, Python stdlib) ✅
+- [x] **11.1.4** เขียนชุดทดสอบอัตโนมัติสำหรับหมวด **Database / SQL (`SQLite`)** และการตรวจด้วย `SqlTestCase` — ทำแล้ว (JOIN 3 ตาราง, DELETE/DROP + respawn, create-table, ตรวจซ้ำไม่ปนเปื้อน) ✅
+- [x] **11.2.1** เขียนชุดทดสอบ Stress & Tampering Test (Infinite Loop, Hanging Server, SQL Timeout, Path Traversal, และ Read-Only File Protection) — ทำแล้ว (`src/modules/code-ide/main/sandbox-stress.test.ts` 33 เคส + เพิ่ม `runSqliteTestWithTimeout` (worker + deadline) เข้า grader/IPC, เพิ่ม pattern `remove_all`/`filesystem::remove`, Go hermetic env) ✅
+- [x] **11.3.1** เขียนชุดทดสอบการทำงานร่วมกับ `ProcessInspector` และ `NetworkInspector` (อนุญาต Loopback เฉพาะพอร์ต Backend Sandbox แต่จับกุมการต่อเน็ตนอกทันที) — ทำแล้ว (`src/modules/code-ide/main/security-integration.test.ts`: loopback เงียบ, นอก loopback = CRITICAL, DNS AI, zero-leakage audit) ✅
+- [x] **11.4.1** สร้างสคริปต์และชุดทดสอบ End-to-End จำลองการสอบทั้ง 4 หมวดด้วยโหมดรันคู่ในเครื่องเดียว (`dev:pair`) — ทำแล้ว (`src/modules/code-ide/main/e2e-exam-flow.test.ts`: ครู 4 ข้อ + นร. 2 คน + autosave/submit/grade/disk-mirror/CSV/export/re-grade + ตรวจสคริปต์ `dev:pair`) ✅

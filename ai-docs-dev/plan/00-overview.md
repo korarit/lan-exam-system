@@ -22,7 +22,7 @@
 | [phase-8-code-ide-ui.md](./phase-8-code-ide-ui.md) | **Phase 8: `code-ide` Module — Multi-Language IDE UI** | หน้าจอ IDE ภายในแอป (Monaco Multi-file, Problem Builder, Test Console, และ Sandboxed Live Preview) รองรับ **Java, Python, HTML/CSS, React, JS, TS** และไฟล์ `.ztcode` | Done |
 | [phase-9-code-ide-runtime.md](./phase-9-code-ide-runtime.md) | **Phase 9: `code-ide` Module — External Runtime Engine** | เชื่อมต่อ Runtime ภายนอกในเครื่อง (`javac`/`java`, `python`, `node`) เหมือน IDE มาตรฐาน + Offline `esbuild`/React Bundler & Headless DOM Runner พร้อมระบบจำกัด Timeout/Memory | Done |
 | [phase-10-code-ide-backend.md](./phase-10-code-ide-backend.md) | **Phase 10: `code-ide` Module — Backend, Grader & Export** | Embedded Backend สำหรับตรวจ Hidden Test Cases (ทั้ง CLI และ DOM/React), คิวตรวจขนาน, หน้าดูโค้ด/Diff/Code Playback, และ Export คะแนน CSV + โฟลเดอร์ซอร์สโค้ด | Done |
-| [phase-11-code-ide-testing.md](./phase-11-code-ide-testing.md) | **Phase 11: `code-ide` Module — Testing & Stress Verification** | ชุดทดสอบครบทั้ง 6 ภาษา, ทดสอบตัดจบ Infinite Loop / Stdout Flood, ทดสอบจับโค้ดที่แอบยิงเน็ตหา AI, และทดสอบ End-to-End ในเครื่องเดียว | Pending |
+| [phase-11-code-ide-testing.md](./phase-11-code-ide-testing.md) | **Phase 11: `code-ide` Module — Testing & Stress Verification** | ชุดทดสอบครบทั้ง 6 ภาษา, ทดสอบตัดจบ Infinite Loop / Stdout Flood, ทดสอบจับโค้ดที่แอบยิงเน็ตหา AI, และทดสอบ End-to-End ในเครื่องเดียว | Done |
 | [phase-12-post-mvp.md](./phase-12-post-mvp.md) | **Phase 12: Post-MVP Extensions** | Cloud Sync หลังสอบ, สมการคณิตศาสตร์ออฟไลน์ (KaTeX), และ External URL Wrapper Mode | Pending |
 
 ---
