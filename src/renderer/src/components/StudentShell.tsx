@@ -1,4 +1,4 @@
-import { GraduationCap, WifiOff } from 'lucide-react'
+import { GraduationCap, Wifi, WifiOff, Loader2 } from 'lucide-react'
 import StudentPanel from './StudentPanel'
 import { useAppStore } from '../store/app-store'
 
@@ -16,7 +16,13 @@ export default function StudentShell(): React.JSX.Element {
           </div>
         </div>
         <div className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-400">
-          <WifiOff size={14} className="text-amber-400" />
+          {connectionState === 'connected' ? (
+            <Wifi size={14} className="text-emerald-400" />
+          ) : connectionState === 'connecting' ? (
+            <Loader2 size={14} className="animate-spin text-sky-400" />
+          ) : (
+            <WifiOff size={14} className="text-amber-400" />
+          )}
           {connectionState}
         </div>
       </header>

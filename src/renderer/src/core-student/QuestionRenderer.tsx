@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Check, Lock, Type } from 'lucide-react'
-import { useStudentExamStore } from '../store/exam-store'
+import { ArrowLeft, Check, Lock, Type, TriangleAlert } from 'lucide-react'
+import { useStudentExamStore, stashLocalAnswer } from '../store/exam-store'
+
+/** แปลเหตุผล submit-rejected จากเครื่องแม่เป็นภาษาไทย (TC-S27) */
+const SUBMIT_REJECTED_TH: Record<string, string> = {
+  'cursor-mismatch': 'ข้อที่ส่งไม่ตรงกับข้อปัจจุบันของเครื่องแม่ — กด “ส่งอีกครั้ง” ได้เลย',
+  'time-expired': 'หมดเวลาส่งข้อแล้ว — คำตอบอาจไม่ถูกบันทึก ให้แจ้งครูทันที',
+  'bad-question': 'ข้อมูลข้อสอบไม่ถูกต้อง — ให้แจ้งครู',
+  'not-started': 'การสอบยังไม่เริ่ม — รอครูกดเริ่มแล้วกด “ส่งอีกครั้ง”'
+}
 
 /**
  * Question Card (checklist 2.5.3):
@@ -13,6 +21,9 @@ export default function QuestionRenderer(): React.JSX.Element | null {
   const fontScale = useStudentExamStore((s) => s.fontScale)
   const setFontScale = useStudentExamStore((s) => s.setFontScale)
   const answered = useStudentExamStore((s) => s.answeredCount)
+  const submitRejectedReason = useStudentExamStore((s) => s.submitRejectedReason)
+  const clearSubmitRejected = useStudentExamStore((s) => s.clearSubmitRejected)
+  const storeDraft = useStudentExamStore((s) => s.draft)
   const [selectedChoiceIndex, setSelectedChoiceIndex] = useState<number | null>(null)
   const [textContent, setTextContent] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
@@ -20,17 +31,64 @@ export default function QuestionRenderer(): React.JSX.Element | null {
   const autosaveDirty = useRef(false)
   const lastEventDraftKey = useRef<string | null>(null)
   const questionStartMs = useRef(Date.now())
+  /** คำตอบค้างส่ง autosave (question เก่ายังอยู่ใน ref นี้จนกว่าจะ flush) */
+  const pendingRef = useRef<{ questionId: string; cursorIndex: number; answer: { type: 'text'; content: string } | { type: 'mcq'; choiceIndex: number } } | null>(null)
+  /** ผู้สอบแตะต้องช่องคำตอบแล้ว — กัน recovery มาช้าทับงานที่พิมพ์ไว้ */
+  const hasLocalEdits = useRef(false)
   /** จังหวะการพิมพ์ (IKI) สำหรับ ABNORMAL_TYPING_PATTERN (Phase 3a) */
   const typingIntervals = useRef<number[]>([])
   const lastKeydownMs = useRef<number | null>(null)
   const metricsSent = useRef(false)
 
-  // เคลียรคำตอบทำงานพร้อมรับข้อใหม่ (draft จาก server กู้คืน)
+  /** ยิง draft ค้างขึ้นเครื่องแม่ทันที (flush-on-submit/navigate/change/unmount — TC-S16) */
+  async function flushPending(): Promise<void> {
+    if (autosaveTimer.current !== null) {
+      window.clearTimeout(autosaveTimer.current)
+      autosaveTimer.current = null
+    }
+    autosaveDirty.current = false
+    const pending = pendingRef.current
+    if (!pending) return
+    pendingRef.current = null
+    try {
+      await window.ztExam.autosaveDraft({
+        questionId: pending.questionId,
+        cursorIndex: pending.cursorIndex,
+        draft: pending.answer
+      })
+      useStudentExamStore.getState().onLocalDraftSaved()
+    } catch {
+      /* สายหลุด — คำตอบยังอยู่ใน stashLocalAnswer ฝั่ง UI, กดส่งใหม่หลัง reconnect */
+    }
+  }
+  const flushRef = useRef<() => Promise<void>>(async () => undefined)
+  flushRef.current = flushPending
+
+  // unmount → flush คำตอบค้างก่อนทิ้ง (เช่น เปลี่ยนข้อ/หมดเวลา)
+  useEffect(() => {
+    return () => {
+      void flushRef.current()
+    }
+  }, [])
+
+  // จำคำตอบล่าสุดทุกครั้งที่ผู้สอบแตะต้อง (ไม่รอ debounce — ใช้ตอน time-up auto-submit)
+  function markEdited(answer: { type: 'text'; content: string } | { type: 'mcq'; choiceIndex: number }): void {
+    const q = useStudentExamStore.getState().question
+    if (!q) return
+    hasLocalEdits.current = true
+    pendingRef.current = { questionId: q.questionId, cursorIndex: q.cursorIndex, answer }
+    stashLocalAnswer({ questionId: q.questionId, cursorIndex: q.cursorIndex, answer })
+    scheduleAutosave()
+  }
+
+  // เคลียรคำตอบทำงานพร้อมรับข้อใหม่ — flush ของข้อเก่าก่อนทิ้ง (TC-S16)
   useEffect(() => {
     if (!question) return
     if (question.questionId !== lastEventDraftKey.current) {
+      void flushPending()
       setSelectedChoiceIndex(null)
       setTextContent('')
+      hasLocalEdits.current = false
       autosaveDirty.current = false
       if (autosaveTimer.current !== null) window.clearTimeout(autosaveTimer.current)
       autosaveTimer.current = null
@@ -38,7 +96,9 @@ export default function QuestionRenderer(): React.JSX.Element | null {
       typingIntervals.current = []
       lastKeydownMs.current = null
       metricsSent.current = false
+      lastEventDraftKey.current = question.questionId
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [question])
 
   // ส่งสถิติการพิมพ์เป็นระยะ (วิเคราะห์ฝั่ง main → เตือนเครื่องแม่ถ้าพิมพ์แบบเครื่องจักร)
@@ -63,13 +123,13 @@ export default function QuestionRenderer(): React.JSX.Element | null {
     lastKeydownMs.current = now
   }
 
-  // กู้คืน Draft จากเครื่องแม่หลัง reconnect
+  // กู้คืน Draft จากเครื่องแม่ — ฟัง store.draft โดยตรง เผื่อ exam:recovery มาช้าหลัง render
   useEffect(() => {
-    const draft = useStudentExamStore.getState().draft
-    if (!draft || !question) return
-    if (draft.type === 'text') setTextContent(draft.content)
-    if (draft.type === 'mcq') setSelectedChoiceIndex(draft.choiceIndex)
-  }, [question?.questionId])
+    if (!storeDraft || !question) return
+    if (hasLocalEdits.current) return
+    if (storeDraft.type === 'text') setTextContent(storeDraft.content)
+    if (storeDraft.type === 'mcq') setSelectedChoiceIndex(storeDraft.choiceIndex)
+  }, [question?.questionId, storeDraft])
 
   function currentAnswer():
     | { type: 'text'; content: string }
@@ -105,6 +165,8 @@ export default function QuestionRenderer(): React.JSX.Element | null {
     const answer = currentAnswer()
     if (!question || !answer) return
     setShowConfirm(false)
+    clearSubmitRejected()
+    await flushPending()
     await window.ztExam.submitAnswer({
       questionId: question.questionId,
       cursorIndex: question.cursorIndex,
@@ -115,6 +177,7 @@ export default function QuestionRenderer(): React.JSX.Element | null {
 
   async function goBack(): Promise<void> {
     if (!question || question.cursorIndex === 0) return
+    await flushPending()
     await window.ztExam.navigate({ cursorIndex: question.cursorIndex - 1 })
   }
 
@@ -161,7 +224,7 @@ export default function QuestionRenderer(): React.JSX.Element | null {
                   type="button"
                   onClick={() => {
                     setSelectedChoiceIndex(index)
-                    scheduleAutosave()
+                    markEdited({ type: 'mcq', choiceIndex: index })
                   }}
                   className={`flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition ${
                     selectedChoiceIndex === index
@@ -191,7 +254,7 @@ export default function QuestionRenderer(): React.JSX.Element | null {
             value={textContent}
             onChange={(e) => {
               setTextContent(e.target.value)
-              scheduleAutosave()
+              markEdited({ type: 'text', content: e.target.value })
             }}
             onKeyDown={trackTypingRhythm}
             placeholder="พิมพ์คำตอบสั้น"
@@ -205,7 +268,7 @@ export default function QuestionRenderer(): React.JSX.Element | null {
             value={textContent}
             onChange={(e) => {
               setTextContent(e.target.value)
-              scheduleAutosave()
+              markEdited({ type: 'text', content: e.target.value })
             }}
             onKeyDown={trackTypingRhythm}
             placeholder="พิมพ์คำตอบอัตนัย…"
@@ -228,9 +291,12 @@ export default function QuestionRenderer(): React.JSX.Element | null {
 
         <button
           type="button"
-          disabled={question.type !== 'essay' && question.type !== 'short-answer' && selectedChoiceIndex === null}
+          disabled={question.type === 'mcq' && selectedChoiceIndex === null}
           onClick={() => {
-            if (!question.allowBackNavigation) {
+            const blank =
+              (question.type === 'short-answer' || question.type === 'essay') &&
+              textContent.trim().length === 0
+            if (!question.allowBackNavigation || blank) {
               setShowConfirm(true)
               return
             }
@@ -242,14 +308,47 @@ export default function QuestionRenderer(): React.JSX.Element | null {
         </button>
       </div>
 
+      {/* TC-S27: แสดงเหตุผลที่เครื่องแม่ปฏิเสธ + ปุ่มส่งอีกครั้ง */}
+      {submitRejectedReason && (
+        <div className="mt-3 rounded-xl border border-red-800/60 bg-red-950/40 px-4 py-3 text-sm">
+          <div className="flex items-start gap-2 text-red-200">
+            <TriangleAlert size={16} className="mt-0.5 shrink-0" />
+            <span>ส่งคำตอบไม่สำเร็จ: {SUBMIT_REJECTED_TH[submitRejectedReason] ?? submitRejectedReason}</span>
+          </div>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              disabled={question.type === 'mcq' && selectedChoiceIndex === null}
+              onClick={() => void confirmSubmit()}
+              className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-red-500 disabled:opacity-40"
+            >
+              ส่งอีกครั้ง
+            </button>
+            <button
+              type="button"
+              onClick={() => clearSubmitRejected()}
+              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800"
+            >
+              ปิด
+            </button>
+          </div>
+        </div>
+      )}
+
       {showConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80">
           <div className="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-900 p-6">
             <div className="mb-3 flex items-center gap-2 font-semibold text-amber-300">
-              <Lock size={18} /> ไปข้อนี้แล้วแก้ไม่ได้
+              {(question.type === 'short-answer' || question.type === 'essay') && textContent.trim().length === 0 ? (
+                <><TriangleAlert size={18} /> ส่งกระดาษเปล่า?</>
+              ) : (
+                <><Lock size={18} /> ไปข้อนี้แล้วแก้ไม่ได้</>
+              )}
             </div>
             <p className="text-sm text-slate-400">
-              ข้อ {question.cursorIndex + 1} จะถูกส่งและข้ามไปข้อถัดไปทันที ย้อนกลับมาแก้ไม่ได้
+              {(question.type === 'short-answer' || question.type === 'essay') && textContent.trim().length === 0
+                ? `ข้อ ${question.cursorIndex + 1} ยังไม่มีคำตอบ ยืนยันส่งเป็นกระดาษเปล่า?`
+                : `ข้อ ${question.cursorIndex + 1} จะถูกส่งและข้ามไปข้อถัดไปทันที ย้อนกลับมาแก้ไม่ได้`}
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button

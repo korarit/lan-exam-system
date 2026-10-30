@@ -30,31 +30,28 @@ export default function HudBar(props: HudBarProps): React.JSX.Element {
   const examTitle = useStudentExamStore((s) => s.examTitle)
   const question = useStudentExamStore((s) => s.question)
   const remaining = useStudentExamStore((s) => s.remainingSeconds)
+  const lastTickAtMs = useStudentExamStore((s) => s.lastTickAtMs)
   const lastDraftSavedAtMs = useStudentExamStore((s) => s.lastDraftSavedAtMs)
   const examMode = useStudentExamStore((s) => s.examMode)
   const docsOpen = useDocsStore((s) => s.docs?.open ?? false)
-  const [, setTick] = useState(0)
+  const [, setNow] = useState(Date.now())
 
-  // local countdown display (วินาทีลดจากค่าที่เครื่องแม่ส่งมา = หน่วยเวลา authoritative)
+  // นาฬิกาแบบ derived: server tick เป็น authoritative แล้วลบเวลาที่ผ่านไปเอง
+  // (ไม่ mutate store ทุกวิ — กันเดินซ้อนกับ exam:tick, TC-S18)
   useEffect(() => {
-    const interval = window.setInterval(() => setTick((t) => t + 1), 1000)
+    const interval = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(interval)
   }, [])
 
-  useEffect(() => {
-    if (remaining > 0) {
-      const interval = window.setInterval(() => {
-        useStudentExamStore.setState({ remainingSeconds: Math.max(0, remaining - 1) })
-      }, 1000)
-      return () => window.clearInterval(interval)
-    }
-    return undefined
-  }, [remaining])
+  const tickAgeMs = lastTickAtMs === null ? 0 : Math.max(0, Date.now() - lastTickAtMs)
+  const displayRemaining = Math.max(0, remaining - Math.floor(tickAgeMs / 1000))
+  // เวลาประมาณเมื่อ tick ล่าสุดนานเกิน 2 วิ
+  const approx = lastTickAtMs !== null && tickAgeMs > 2000
 
   const timerClass =
-    remaining <= 60
+    displayRemaining <= 60
       ? 'text-red-400 border-red-800/60 bg-red-950/50'
-      : remaining <= 300
+      : displayRemaining <= 300
         ? 'text-orange-300 border-orange-800/50 bg-orange-950/40'
         : 'text-emerald-300 border-emerald-800/50 bg-emerald-950/30'
 
@@ -91,7 +88,7 @@ export default function HudBar(props: HudBarProps): React.JSX.Element {
 
       <div className="ml-auto flex items-center gap-1.5 text-slate-400">
         <Save size={14} />
-        <span>{lastDraftSavedAtMs ? `บันทึกอัตโนมัติ ${timeAgo(lastDraftSavedAtMs)}` : 'ยังไม่มีตัวบันทึก'}</span>
+        <span>{lastDraftSavedAtMs ? `บันทึกอัตโนมัติ ${timeAgo(lastDraftSavedAtMs)}` : 'ยังไม่มีการบันทึก'}</span>
       </div>
 
       <div
@@ -105,7 +102,7 @@ export default function HudBar(props: HudBarProps): React.JSX.Element {
 
       <div className={`flex items-center gap-2 rounded-full border px-3 py-1 font-mono text-base font-bold tabular-nums ${timerClass}`}>
         <AlarmClock size={16} />
-        {formatClock(remaining)}
+        {approx ? '≈' : ''}{formatClock(displayRemaining)}
       </div>
     </div>
   )
