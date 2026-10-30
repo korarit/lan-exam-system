@@ -26,6 +26,7 @@ import type { RecordedDomainItem, AttestationConfigResponse } from '@shared/ipc-
 import { DEFAULT_FORBIDDEN_DOMAINS } from '@shared/policy-schema'
 import { useHostNetworkStore } from '../store/network-store'
 import { useAppStore } from '../store/app-store'
+import { playCriticalBeep, shouldAlertToast, useTriageStore } from '../store/triage-store'
 import type { HostExamSummariesEvent } from '@shared/ipc-channels'
 import TriageDashboard from '../core-host/dashboard/TriageDashboard'
 
@@ -35,10 +36,56 @@ const MODE_LABELS: Record<ExamMode, string> = {
   'external-tools': 'External Tools — อนุญาต VS Code'
 }
 
-/** ป้ายเตือนเชิงข้อมูล: รายการที่ชนโดเมน AI ที่รู้จัก (ระบบไม่ขวาง — ให้ครูสังเกตเอง) */
+/** ป้ายเตือนเชิงข้อมูล: รายการที่ชนโดเมน AI ที่รู้จัก (ค่าเริ่มต้น = บล็อก ต้องติ๊กรับทราบความเสี่ยงรายตัว — R3) */
 function isKnownForbiddenDomain(domain: string): boolean {
   const host = domain.toLowerCase()
   return DEFAULT_FORBIDDEN_DOMAINS.some((f) => host === f || host.endsWith(`.${f}`))
+}
+
+/** R7: รวมแถวโดเมนซ้ำ (โดเมนเดียวถูกเรียกจากหลาย top) เป็นรายการเดียว — แสดง topDomains หลายค่า */
+interface MergedDomain {
+  domain: string
+  topDomains: string[]
+  sources: string[]
+  hits: number
+  approved: boolean
+  lastSeenAtMs: number
+}
+
+function mergeRecordedDomains(rows: RecordedDomainItem[]): MergedDomain[] {
+  const byDomain = new Map<string, MergedDomain>()
+  for (const r of rows) {
+    const key = r.domain.toLowerCase()
+    const existing = byDomain.get(key)
+    if (!existing) {
+      byDomain.set(key, {
+        domain: r.domain,
+        topDomains: [r.topDomain],
+        sources: [r.source],
+        hits: r.hits,
+        approved: r.approved,
+        lastSeenAtMs: r.lastSeenAtMs
+      })
+    } else {
+      if (!existing.topDomains.includes(r.topDomain)) existing.topDomains.push(r.topDomain)
+      if (!existing.sources.includes(r.source)) existing.sources.push(r.source)
+      existing.hits += r.hits
+      existing.approved = existing.approved && r.approved
+      existing.lastSeenAtMs = Math.max(existing.lastSeenAtMs, r.lastSeenAtMs)
+    }
+  }
+  return [...byDomain.values()].sort((a, b) => b.hits - a.hits || (a.domain < b.domain ? -1 : a.domain > b.domain ? 1 : 0))
+}
+
+/** แปล error code ฝั่ง main เป็นภาษาครู (I-05) */
+function translateHostError(message: string): string {
+  if (message.includes('NO_ONLINE_STUDENTS')) return 'ยังไม่มีนักเรียนออนไลน์ — รอนักเรียนเข้าห้องก่อนเริ่มสอบ'
+  if (message.includes('EXAM_NOT_LOADED')) return 'ยังไม่ได้เลือกไฟล์ข้อสอบ — เลือกไฟล์ข้อสอบก่อนเริ่ม'
+  if (message.includes('ROOM_NOT_OPEN')) return 'ยังไม่ได้เปิดห้องสอบ — เปิดห้องก่อนเริ่มสอบ'
+  if (message.includes('EXAM_IN_PROGRESS')) return 'การสอบกำลังดำเนินอยู่แล้ว'
+  if (message.includes('ROOM_ALREADY_OPEN')) return 'เปิดห้องสอบไว้แล้ว — ไม่ต้องเปิดซ้ำ'
+  if (message.includes('HOST_ROLE_REQUIRED')) return 'ต้องอยู่ในบทบาทเครื่องแม่ (host) เท่านั้น'
+  return message
 }
 
 export default function HostPanel(): React.JSX.Element {
@@ -46,6 +93,7 @@ export default function HostPanel(): React.JSX.Element {
   const students = useHostNetworkStore((s) => s.students)
   const setRoom = useHostNetworkStore((s) => s.setRoom)
   const notify = useAppStore((s) => s.notify)
+  const setConnectionState = useAppStore((s) => s.setConnectionState)
   const [roomName, setRoomName] = useState('ห้องสอบ 401')
   const [mode, setMode] = useState<ExamMode>('closed')
   const [enforcement, setEnforcement] = useState<EnforcementMode>('report-only')
@@ -67,9 +115,15 @@ export default function HostPanel(): React.JSX.Element {
   const [recordedDomains, setRecordedDomains] = useState<RecordedDomainItem[]>([])
   const [domainEnforcement, setDomainEnforcement] = useState<'warn' | 'block'>('warn')
   const [openingDoc, setOpeningDoc] = useState(false)
+  /* R1: ยืนยันอนุมัติทั้งหมดสองชั้น */
+  const [approveConfirm, setApproveConfirm] = useState(false)
+  /* R3: ติ๊กรับทราบความเสี่ยงรายตัวก่อนอนุมัติโดเมนชน AI */
+  const [riskAck, setRiskAck] = useState<Record<string, boolean>>({})
   const isDocsMode = room?.mode === 'in-app-docs'
   const isLobby = examState === 'idle'
-  const pendingDomains = recordedDomains.filter((r) => !r.approved)
+  const mergedDomains = mergeRecordedDomains(recordedDomains)
+  const pendingDomains = mergedDomains.filter((r) => !r.approved)
+  const aiPendingDomains = pendingDomains.filter((r) => isKnownForbiddenDomain(r.domain))
 
   /* ---------- Attestation (Phase 4) — ป้าย DEV MODE + สวิตช์บังคับตรวจลายเซ็น ---------- */
   const [attestation, setAttestation] = useState<AttestationConfigResponse | null>(null)
@@ -89,8 +143,44 @@ export default function HostPanel(): React.JSX.Element {
   }
 
   useEffect(() => {
-    // กู้สถานะห้องเมื่อกลับมาที่หน้านี้ (เช่น reload)
-    void window.ztExam.getRoom().then((res) => setRoom(res.room))
+    // กู้สถานะห้องเมื่อกลับมาที่หน้านี้ (เช่น reload) — TC-H15:
+    // กู้ room + examState/loadedExam + students + summaries ไม่ให้รีเซ็ตเป็น idle ผิดๆ
+    void (async () => {
+      try {
+        const res = await window.ztExam.getRoom()
+        setRoom(res.room)
+        setConnectionState(res.room ? 'connected' : 'offline')
+        if (res.room) {
+          try {
+            const examStateRes = await window.ztExam.getExamState()
+            setExamState(examStateRes.state)
+            if (examStateRes.title !== null) {
+              setLoadedExam({
+                title: examStateRes.title,
+                questionCount: examStateRes.questionCount,
+                durationSeconds: examStateRes.durationSeconds ?? 0
+              })
+            }
+          } catch {
+            /* คง idle ไว้ถ้าอ่านสถานะสอบไม่ได้ */
+          }
+          try {
+            const studentsRes = await window.ztExam.getStudents()
+            useHostNetworkStore.getState().setStudents(studentsRes.students)
+          } catch {
+            /* คงรายชื่อว่างไว้ถ้าอ่านไม่ได้ */
+          }
+          try {
+            const summariesRes = await window.ztExam.getSummaries()
+            setSummaries(summariesRes.summaries)
+          } catch {
+            /* คง summaries ว่างไว้ถ้าอ่านไม่ได้ */
+          }
+        }
+      } catch {
+        /* กู้ห้องไม่ได้ — คงหน้าเปิดห้องไว้ */
+      }
+    })()
     const unsub = window.ztExam.onEvent('host:students-updated', (event) =>
       useHostNetworkStore.getState().setStudents(event.students)
     )
@@ -110,23 +200,23 @@ export default function HostPanel(): React.JSX.Element {
         message: event.reason === 'time-up' ? 'หมดเวลาสอบ — เก็บข้อสอบอัตโนมัติแล้ว' : 'จบการสอบแล้ว (คำสั่งครู)'
       })
     })
+    // TRI-06: ผูก muted + กรอง severity กับ toast/เสียง alert จริง — mute แล้วเงียบทั้งหมด
     const unsubGuard = window.ztExam.onEvent('host:guard-events', (event) => {
       const critical = event.events.filter((e) => e.severity === 'critical')
-      if (critical.length > 0) {
-        const names = studentNames.get(event.studentId) ?? event.studentId
-        notify({
-          severity: 'critical',
-          message: `ตรวจพบพฤติกรรมน่าสงสัย: ${names} — ${critical.map((e) => e.code).join(', ')}`
-        })
-      }
+      if (critical.length === 0) return
+      const { muted, toastSeverity } = useTriageStore.getState()
+      if (!shouldAlertToast('critical', { muted, toastSeverity })) return
+      const names = studentNames.get(event.studentId) ?? event.studentId
+      notify({
+        severity: 'critical',
+        message: `ตรวจพบพฤติกรรมน่าสงสัย: ${names} — ${critical.map((e) => e.code).join(', ')}`
+      })
+      playCriticalBeep(muted)
     })
     // โดเมนที่ record จาก Doc Preview (Phase 3a-plus) — push หลัง flush ทุกรอบ
     const unsubDomains = window.ztExam.onEvent('host:recorded-domains-updated', (event) =>
       setRecordedDomains(event.records)
     )
-    if (isDocsMode) {
-      void window.ztExam.listRecordedDomains().then((res) => setRecordedDomains(res.records))
-    }
     // Attestation state (Phase 4)
     void window.ztExam.getAttestationConfig().then(setAttestation)
     return () => {
@@ -137,7 +227,20 @@ export default function HostPanel(): React.JSX.Element {
       unsubGuard()
       unsubDomains()
     }
-  }, [setRoom, notify])
+  }, [setRoom, notify, setConnectionState])
+
+  // R7: โหลดรายการโดเมนใหม่ทุกครั้งที่ห้องเปลี่ยน (ไม่ใช่แค่ตอน mount) — กันเปิดห้องหลัง mount แล้วรายการค้างว่าง
+  const roomId = room?.roomId
+  useEffect(() => {
+    if (!isDocsMode || !roomId) return
+    void window.ztExam.listRecordedDomains().then((res) => setRecordedDomains(res.records))
+  }, [isDocsMode, roomId])
+
+  // R1: ปิดแผงยืนยันอัตโนมัติเมื่อไม่มีรายการรอแล้ว (กันกดยืนยันซ้ำกับรายการว่าง)
+  const pendingCount = pendingDomains.length
+  useEffect(() => {
+    if (pendingCount === 0) setApproveConfirm(false)
+  }, [pendingCount])
 
   async function selectExamFile(): Promise<void> {
     setPicking(true)
@@ -147,7 +250,13 @@ export default function HostPanel(): React.JSX.Element {
         setLoadedExam({ title: result.title, questionCount: result.questionCount, durationSeconds: result.durationSeconds })
         notify({ severity: 'info', message: `โหลด "${result.title}" (${result.questionCount} ข้อ)` })
       } else if (result.message) {
-        notify({ severity: 'warning', message: result.message })
+        // I-04: กดยกเลิก dialog ไม่ใช่ความผิดพลาด — ใช้ info หรือเงียบ ไม่ใช้ warning
+        const isCancel = result.message.includes('ยกเลิกการเลือกไฟล์')
+        if (!isCancel) {
+          notify({ severity: 'warning', message: result.message })
+        } else {
+          notify({ severity: 'info', message: result.message })
+        }
       }
     } finally {
       setPicking(false)
@@ -155,6 +264,14 @@ export default function HostPanel(): React.JSX.Element {
   }
 
   async function startExam(): Promise<void> {
+    // NC-09: กันลืม enforce — dev build หลุดไปสอบจริงโดยไม่บังคับลายเซ็น = ช่องโหว่
+    // ต้องให้ครูยืนยันชัดเจนนก่อนเริ่มสอบ
+    if (attestation?.devMode && !attestation.signatureEnforced) {
+      const ok = window.confirm(
+        '⚠️ คำเตือนความปลอดภัย\n\nกำลังเริ่มสอบใน DEV MODE โดย "ไม่ได้บังคับตรวจลายเซ็น" — เครื่องนักเรียนที่ถูกแก้ไขไฟล์แอปจะผ่านการตรวจได้\n\n• กด ตกลง = ยืนยันเริ่มสอบแบบไม่บังคับลายเซ็น (ซ้อม/พัฒนาเท่านั้น)\n• กด ยกเลิก = กลับไปกด "บังคับตรวจลายเซ็นจริง" ก่อน'
+      )
+      if (!ok) return
+    }
     setStarting(true)
     try {
       await window.ztExam.startExam()
@@ -163,7 +280,7 @@ export default function HostPanel(): React.JSX.Element {
     } catch (err) {
       notify({
         severity: 'critical',
-        message: err instanceof Error ? err.message : 'เริ่มการสอบไม่สำเร็จ'
+        message: err instanceof Error ? translateHostError(err.message) : 'เริ่มการสอบไม่สำเร็จ'
       })
     } finally {
       setStarting(false)
@@ -171,8 +288,12 @@ export default function HostPanel(): React.JSX.Element {
   }
 
   async function endExam(): Promise<void> {
+    // I-07: confirm กันเผลอกดจบ + กันกดซ้ำตอน collecting
+    if (examState === 'collecting') return
+    if (!window.confirm('ยืนยันจบการสอบทั้งห้อง?\nนักเรียนทุกคนจะถูกเก็บคำตอบทันที การกระทำนี้ย้อนกลับไม่ได้')) return
     try {
       await window.ztExam.endExam()
+      setExamState('collecting')
       notify({ severity: 'warning', message: 'สั่งจบการสอบ — กำลังเก็บคำตอบทั้งหมด' })
     } catch {
       notify({ severity: 'critical', message: 'จบการสอบไม่สำเร็จ' })
@@ -212,9 +333,30 @@ export default function HostPanel(): React.JSX.Element {
   }
 
   async function approveAllDomains(): Promise<void> {
+    // R1: ชั้นที่สอง — ส่งจริงหลังครูเห็นจำนวน+รายชื่อแล้ว; backend กัน AI ปนอีกชั้น
     const res = await window.ztExam.approveDomain({ domain: '*', approved: true })
     if (res.ok) {
       notify({ severity: 'info', message: `อนุมัติทั้งหมด (${res.updatedCount ?? 0} รายการ)` })
+      setApproveConfirm(false)
+    } else if (res.reason === 'FORBIDDEN_DOMAIN_PRESENT') {
+      notify({ severity: 'warning', message: 'มีโดเมนชน AI ปนอยู่ — ห้ามอนุมัติทั้งหมด ต้องอนุมัติรายตัว' })
+      setApproveConfirm(false)
+    } else {
+      notify({ severity: 'warning', message: 'อนุมัติทั้งหมดไม่สำเร็จ' })
+    }
+  }
+
+  async function clearRecordedDomains(): Promise<void> {
+    // R2: ล้างรายการ/เริ่ม record ใหม่ต่อห้อง (เช่น เผลอเปิดเว็บผิด)
+    if (!window.confirm('ล้างรายการโดเมนที่ record ไว้ทั้งหมดของห้องนี้?\nต้องเปิดตรวจเอกสารใหม่อีกรอบเพื่อเก็บรายการใหม่')) return
+    const res = await window.ztExam.clearRecordedDomains()
+    if (res.ok) {
+      setRecordedDomains([])
+      setApproveConfirm(false)
+      setRiskAck({})
+      notify({ severity: 'info', message: 'ล้างรายการโดเมนแล้ว — เปิดตรวจเอกสารใหม่เพื่อเริ่ม record' })
+    } else {
+      notify({ severity: 'warning', message: 'ล้างรายการโดเมนไม่สำเร็จ' })
     }
   }
 
@@ -228,13 +370,14 @@ export default function HostPanel(): React.JSX.Element {
     try {
       const info = await window.ztExam.createRoom({ roomName, mode, enforcement })
       setRoom(info)
+      setConnectionState('connected')
       // ค่าเริ่มต้นของการบังคับโดเมนสืบจาก enforcement ของห้อง (ครูตั้งทับได้ในการ์ด)
       setDomainEnforcement(enforcement === 'block-and-report' ? 'block' : 'warn')
       notify({ severity: 'info', message: `เปิดห้อง "${info.roomName}" สำเร็จ` })
     } catch (err) {
       notify({
         severity: 'critical',
-        message: err instanceof Error ? err.message : 'เปิดห้องไม่สำเร็จ'
+        message: err instanceof Error ? translateHostError(err.message) : 'เปิดห้องไม่สำเร็จ'
       })
     } finally {
       setCreating(false)
@@ -242,16 +385,31 @@ export default function HostPanel(): React.JSX.Element {
   }
 
   async function closeRoom(): Promise<void> {
+    // I-07: บล็อกปิดห้องขณะกำลังสอบ/กำลังเก็บ — กันเผลอตัดการเชื่อมต่อทั้งห้อง
+    if (examState === 'running' || examState === 'collecting') {
+      notify({ severity: 'warning', message: 'กำลังสอบอยู่ — จบการสอบก่อนปิดห้อง' })
+      return
+    }
+    if (!window.confirm('ปิดห้องสอบ?\nนักเรียนที่เชื่อมต่ออยู่จะหลุดทั้งหมด')) return
     await window.ztExam.closeRoom()
     setRoom(null)
     useHostNetworkStore.getState().setStudents([])
+    setSummaries([])
+    setExamState('idle')
+    setLoadedExam(null)
+    setConnectionState('offline')
     notify({ severity: 'warning', message: 'ปิดห้องสอบแล้ว' })
   }
 
   async function copy(label: string, value: string): Promise<void> {
-    await navigator.clipboard.writeText(value)
-    setCopied(label)
-    setTimeout(() => setCopied(null), 1500)
+    // TC-H16: clipboard อาจล้มเหลว (permission) — ดักไว้ + แจ้งครู
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(label)
+      setTimeout(() => setCopied(null), 1500)
+    } catch {
+      notify({ severity: 'warning', message: 'คัดลอกไม่สำเร็จ — อนุญาต clipboard หรือจดด้วยตนเอง' })
+    }
   }
 
   if (!room) {
@@ -328,8 +486,14 @@ export default function HostPanel(): React.JSX.Element {
           </div>
           <button
             type="button"
+            disabled={examState === 'running' || examState === 'collecting'}
+            title={
+              examState === 'running' || examState === 'collecting'
+                ? 'กำลังสอบอยู่ — จบการสอบก่อนปิดห้อง'
+                : 'ปิดห้องสอบ'
+            }
             onClick={() => void closeRoom()}
-            className="rounded-lg border border-red-800/60 px-3 py-1.5 text-sm text-red-300 transition hover:bg-red-950/60"
+            className="rounded-lg border border-red-800/60 px-3 py-1.5 text-sm text-red-300 transition hover:bg-red-950/60 disabled:opacity-40"
           >
             ปิดห้อง
           </button>
@@ -340,8 +504,18 @@ export default function HostPanel(): React.JSX.Element {
             <KeyRound size={16} />
             Room PIN — ขึ้นบนจอหน้าห้องสอบ
           </div>
-          <div className="font-mono text-6xl font-bold tracking-[0.3em] text-emerald-400">
-            {room.roomPin}
+          <div className="flex items-center justify-center gap-3">
+            <div className="font-mono text-6xl font-bold tracking-[0.3em] text-emerald-400">
+              {room.roomPin}
+            </div>
+            <button
+              type="button"
+              title="คัดลอก Room PIN"
+              onClick={() => void copy('pin', room.roomPin)}
+              className="shrink-0 rounded-lg border border-slate-700 px-2.5 py-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
+            >
+              {copied === 'pin' ? <Check size={16} /> : <Copy size={16} />}
+            </button>
           </div>
         </div>
 
@@ -352,6 +526,7 @@ export default function HostPanel(): React.JSX.Element {
               <code className="truncate font-mono text-xs text-slate-300">{room.roomId}</code>
               <button
                 type="button"
+                title="คัดลอก Room ID"
                 onClick={() => void copy('id', room.roomId)}
                 className="shrink-0 text-slate-500 hover:text-slate-200"
               >
@@ -360,18 +535,32 @@ export default function HostPanel(): React.JSX.Element {
             </dd>
           </div>
           <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-            <dt className="text-xs text-slate-500">TLS port / Cert fingerprint (ย่อ)</dt>
-            <dd className="mt-1 flex items-center gap-2">
-              <code className="font-mono text-xs text-slate-300">
-                :{room.tcpPort} · {room.certFpShort}…
-              </code>
-              <button
-                type="button"
-                onClick={() => void copy('fp', room.certFingerprint)}
-                className="shrink-0 text-slate-500 hover:text-slate-200"
-              >
-                {copied === 'fp' ? <Check size={14} /> : <Copy size={14} />}
-              </button>
+            <dt className="text-xs text-slate-500">TLS port + Cert fingerprint (ย่อ)</dt>
+            <dd className="mt-1 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-slate-500">port</span>
+                <code className="font-mono text-xs text-slate-300">:{room.tcpPort}</code>
+                <button
+                  type="button"
+                  title="คัดลอก TLS port"
+                  onClick={() => void copy('port', String(room.tcpPort))}
+                  className="shrink-0 text-slate-500 hover:text-slate-200"
+                >
+                  {copied === 'port' ? <Check size={14} /> : <Copy size={14} />}
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-slate-500">fingerprint</span>
+                <code className="truncate font-mono text-xs text-slate-300">{room.certFpShort}…</code>
+                <button
+                  type="button"
+                  title="คัดลอก Cert fingerprint (เต็ม)"
+                  onClick={() => void copy('fp', room.certFingerprint)}
+                  className="shrink-0 text-slate-500 hover:text-slate-200"
+                >
+                  {copied === 'fp' ? <Check size={14} /> : <Copy size={14} />}
+                </button>
+              </div>
             </dd>
           </div>
         </dl>
@@ -385,6 +574,11 @@ export default function HostPanel(): React.JSX.Element {
           {examState === 'running' && (
             <span className="ml-auto rounded-full border border-emerald-800/60 bg-emerald-950/40 px-3 py-1 text-xs text-emerald-300">
               กำลังสอบ
+            </span>
+          )}
+          {examState === 'collecting' && (
+            <span className="ml-auto rounded-full border border-amber-800/60 bg-amber-950/40 px-3 py-1 text-xs text-amber-300">
+              กำลังเก็บคำตอบ…
             </span>
           )}
           {examState === 'finished' && (
@@ -421,26 +615,34 @@ export default function HostPanel(): React.JSX.Element {
                 </button>
               </>
             )}
-            {!loadedExam && onlineStudents.length === 0 && (
-              <span className="text-xs text-slate-500">ดูนักเรียนในห้องก่อน แล้วเลือกไฟล์ข้อสอบเพื่อเริ่ม</span>
+            {onlineStudents.length === 0 && !loadedExam && (
+              <span className="text-xs text-slate-500">ยังไม่มีนักเรียนออนไลน์ — รอนักเรียนเข้าห้อง แล้วเลือกไฟล์ข้อสอบเพื่อเริ่ม</span>
+            )}
+            {onlineStudents.length === 0 && loadedExam && (
+              <span className="text-xs text-slate-500">โหลดข้อสอบแล้ว — รอนักเรียนออนไลน์ก่อนเริ่มสอบ</span>
+            )}
+            {onlineStudents.length > 0 && !loadedExam && (
+              <span className="text-xs text-slate-500">มีนักเรียนพร้อมแล้ว — เลือกไฟล์ข้อสอบเพื่อเริ่มการสอบ</span>
             )}
           </div>
         )}
 
-        {examState === 'running' && (
+        {(examState === 'running' || examState === 'collecting') && (
           <button
             type="button"
+            disabled={examState === 'collecting'}
             onClick={() => void endExam()}
-            className="inline-flex items-center gap-2 rounded-xl border border-red-800/60 px-4 py-2.5 text-sm text-red-300 transition hover:bg-red-950/60"
+            className="inline-flex items-center gap-2 rounded-xl border border-red-800/60 px-4 py-2.5 text-sm text-red-300 transition hover:bg-red-950/60 disabled:opacity-40"
           >
-            <StopCircle size={16} /> จบการสอบ (เก็บทั้งห้อง)
+            <StopCircle size={16} />
+            {examState === 'collecting' ? 'กำลังเก็บคำตอบ…' : 'จบการสอบ (เก็บทั้งห้อง)'}
           </button>
         )}
 
         {summaries.length > 0 && (
           <div className="mt-5">
             <div className="mb-2 flex items-center gap-2 text-xs text-slate-500">
-              <GraduationCap size={14} /> ความคืบหน้ารายคน (สามารถดูระบบให้คะแนนโดยอัตโนมัติ — ข้อจัดตั้งให้ข้อมือตรวจหลังสอบ)
+              <GraduationCap size={14} /> ความคืบหน้ารายคน (อัตโนมัติเฉพาะปรนัย/เติมคำสั้น — อัตนัยรอครูตรวจ)
             </div>
             <ul className="space-y-2">
               {summaries.map((s) => (
@@ -513,71 +715,143 @@ export default function HostPanel(): React.JSX.Element {
             onChange={(e) => void changeDomainEnforcement(e.target.value as 'warn' | 'block')}
             className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none sm:max-w-xs"
           >
-            <option value="warn">เตือน (แจ้งครู — ปล่อยผ่าน)</option>
+            {/* R4: warn = ตรวจจับอย่างเดียว ไม่ได้เตือนนักเรียน — ข้อความต้องไม่ทำให้เข้าใจผิด */}
+            <option value="warn">ตรวจจับอย่างเดียว — ไม่บล็อก (นักเรียนยังเข้าได้)</option>
             <option value="block">บล็อก (ตัดทันที + แจ้งครู)</option>
           </select>
 
-          {recordedDomains.length > 0 && (
+          {mergedDomains.length > 0 && (
             <div className="mt-4">
-              <div className="mb-2 flex items-center justify-between">
+              <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="text-xs text-slate-500">
-                  โดเมนที่เว็บเอกสารเรียกใช้จริง ({recordedDomains.length} รายการ)
+                  โดเมนที่เว็บเอกสารเรียกใช้จริง ({mergedDomains.length} รายการ)
                 </span>
-                <button
-                  type="button"
-                  disabled={pendingDomains.length === 0}
-                  onClick={() => void approveAllDomains()}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-800/60 px-3 py-1.5 text-xs text-emerald-300 transition hover:bg-emerald-950/60 disabled:opacity-40"
-                >
-                  <ShieldCheck size={13} /> อนุญาตทั้งหมด
-                </button>
-              </div>
-              <ul className="max-h-64 space-y-1.5 overflow-y-auto">
-                {recordedDomains.map((r) => (
-                  <li
-                    key={`${r.domain}|${r.topDomain}|${r.source}`}
-                    className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm"
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    title="ล้างรายการทั้งหมดของห้องนี้เพื่อเริ่ม record ใหม่"
+                    onClick={() => void clearRecordedDomains()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800"
                   >
-                    {r.approved ? (
-                      <CheckCircle2 size={14} className="shrink-0 text-emerald-400" />
-                    ) : (
-                      <CircleDashed size={14} className="shrink-0 text-amber-400" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <code className="truncate font-mono text-xs text-slate-200">{r.domain}</code>
-                        {isKnownForbiddenDomain(r.domain) && (
-                          <span className="rounded bg-red-950/60 px-1.5 py-0.5 text-[10px] text-red-300">
-                            ชนโดเมน AI ที่รู้จัก — โปรดตรวจเอง
-                          </span>
-                        )}
-                        {r.source === 'top-url' && (
-                          <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">โดเมนหลัก</span>
+                    ล้างรายการ / เริ่มใหม่
+                  </button>
+                  {/* R1: ห้าม approve-all ถ้ามีแถวชน AI — บังคับอนุมัติรายตัว */}
+                  {aiPendingDomains.length > 0 ? (
+                    <span className="rounded-lg border border-red-800/60 bg-red-950/40 px-3 py-1.5 text-xs text-red-300">
+                      มีโดเมนชน AI {aiPendingDomains.length} รายการ — อนุมัติรายตัวเท่านั้น
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={pendingDomains.length === 0}
+                      onClick={() => setApproveConfirm(true)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-800/60 px-3 py-1.5 text-xs text-emerald-300 transition hover:bg-emerald-950/60 disabled:opacity-40"
+                    >
+                      <ShieldCheck size={13} /> อนุญาตทั้งหมด
+                    </button>
+                  )}
+                </div>
+              </div>
+              {/* R1: ยืนยันสองชั้น — แสดงจำนวน + รายชื่อที่จะอนุมัติก่อนส่งจริง */}
+              {approveConfirm && aiPendingDomains.length === 0 && (
+                <div className="mb-2 rounded-xl border border-amber-800/60 bg-amber-950/30 p-3">
+                  <div className="text-xs font-semibold text-amber-200">
+                    ยืนยันอนุมัติทั้งหมด {pendingDomains.length} รายการ:
+                  </div>
+                  <ul className="mt-1.5 max-h-32 space-y-0.5 overflow-y-auto text-xs text-amber-100/90">
+                    {pendingDomains.map((r) => (
+                      <li key={r.domain} className="truncate font-mono">
+                        {r.domain} <span className="text-amber-300/70">({r.hits} ครั้ง)</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void approveAllDomains()}
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-500"
+                    >
+                      ยืนยันอนุมัติ {pendingDomains.length} รายการ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setApproveConfirm(false)}
+                      className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800"
+                    >
+                      ยกเลิก
+                    </button>
+                  </div>
+                </div>
+              )}
+              <ul className="max-h-64 space-y-1.5 overflow-y-auto">
+                {mergedDomains.map((r) => {
+                  const ai = isKnownForbiddenDomain(r.domain)
+                  const acked = riskAck[r.domain] === true
+                  return (
+                    <li
+                      key={r.domain}
+                      className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm"
+                    >
+                      {r.approved ? (
+                        <CheckCircle2 size={14} className="shrink-0 text-emerald-400" />
+                      ) : (
+                        <CircleDashed size={14} className="shrink-0 text-amber-400" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <code className="truncate font-mono text-xs text-slate-200">{r.domain}</code>
+                          {ai && (
+                            <span className="rounded bg-red-950/60 px-1.5 py-0.5 text-[10px] text-red-300">
+                              ชนโดเมน AI — ค่าเริ่มต้นบล็อก
+                            </span>
+                          )}
+                          {r.sources.includes('top-url') && (
+                            <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
+                              โดเมนหลัก (รอครูอนุมัติ)
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                          {/* R2: แสดง URL ต้นทางของแต่ละโดเมน */}
+                          ต้นทาง {r.topDomains.map((t) => `https://${t}`).join(', ')} · {r.hits} ครั้ง
+                        </div>
+                        {/* R3: แถวชน AI ต้องติ๊กรับทราบความเสี่ยงรายตัวก่อนปุ่มอนุญาตกดได้ */}
+                        {ai && !r.approved && (
+                          <label className="mt-1 flex cursor-pointer items-center gap-1.5 text-[11px] text-red-300/90">
+                            <input
+                              type="checkbox"
+                              checked={acked}
+                              onChange={(e) =>
+                                setRiskAck((prev) => ({ ...prev, [r.domain]: e.target.checked }))
+                              }
+                              className="accent-red-500"
+                            />
+                            รับทราบความเสี่ยง: โดเมนนี้เกี่ยวกับ AI — อนุญาตให้นักเรียนเข้าถึงได้
+                          </label>
                         )}
                       </div>
-                      <div className="mt-0.5 truncate text-[11px] text-slate-500">
-                        เรียกจาก {r.topDomain} · {r.hits} ครั้ง
-                      </div>
-                    </div>
-                    {r.approved ? (
-                      <button
-                        type="button"
-                        onClick={() => void approveDomain(r.domain, false)}
-                        className="shrink-0 rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-400 transition hover:bg-slate-800"
-                      >
-                        ยกเลิก
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => void approveDomain(r.domain, true)}
-                        className="shrink-0 rounded-lg border border-emerald-800/60 px-2.5 py-1 text-xs text-emerald-300 transition hover:bg-emerald-950/60"
-                      >
-                        อนุญาต
-                      </button>
-                    )}
-                  </li>
-                ))}
+                      {r.approved ? (
+                        <button
+                          type="button"
+                          onClick={() => void approveDomain(r.domain, false)}
+                          className="shrink-0 rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-400 transition hover:bg-slate-800"
+                        >
+                          ยกเลิก
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={ai && !acked}
+                          title={ai && !acked ? 'ติ๊กรับทราบความเสี่ยงก่อนอนุญาต' : 'อนุญาตโดเมนนี้'}
+                          onClick={() => void approveDomain(r.domain, true)}
+                          className="shrink-0 rounded-lg border border-emerald-800/60 px-2.5 py-1 text-xs text-emerald-300 transition hover:bg-emerald-950/60 disabled:opacity-40"
+                        >
+                          อนุญาต
+                        </button>
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
             </div>
           )}
@@ -588,6 +862,22 @@ export default function HostPanel(): React.JSX.Element {
       <TriageDashboard students={students} summaries={summaries} canExport={examState === 'finished'} />
 
       {/* ---------- Attestations (Phase 4): DEV MODE banner + สวิตช์บังคับตรวจลายเซ็น ---------- */}
+      {/* NC-09: production (devMode=false) แสดงสถานะย่อด้วย — ครูเห็นว่ากำลังบังคับลายเซ็นจริงอยู่ */}
+      {attestation && !attestation.devMode && (
+        <div className="rounded-2xl border border-emerald-800/50 bg-emerald-950/20 p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <ShieldQuestion size={18} className="text-emerald-300" />
+            <span className="font-semibold text-emerald-200">
+              ✅ บังคับตรวจลายเซ็น Manifest (production)
+            </span>
+            <span className="ml-auto text-xs text-emerald-300/70">
+              {attestation.trackedStudents.length > 0
+                ? `ตรวจแล้ว ${attestation.trackedStudents.filter((t) => t.signed).length}/${attestation.trackedStudents.length} คน · platform: ${attestation.platform}`
+                : `platform: ${attestation.platform}`}
+            </span>
+          </div>
+        </div>
+      )}
       {attestation?.devMode && (
         <div
           className={`rounded-2xl border p-4 ${

@@ -19,7 +19,47 @@ import ProctorOverlay from '../core-student/ProctorOverlay'
 
 function timeSince(ms: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000))
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m`
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m`
+  return `${Math.floor(m / 60)}h`
+}
+
+/** แยก host:port จากช่อง manual — trim, ตัด scheme http(s)://, รองรับ IPv6 `[::1]:port`, เช็ค port 1–65535 (NC-05) */
+function parseManualHost(input: string): { ip: string; port: number } | null {
+  // ตัด scheme ที่ผู้ใช้เผลอวางมา (เช่น copy URL) + ตัด path/query ที่ติดมา
+  let host = input.trim().replace(/^(https?|wss?):\/\//i, '').trim()
+  const slash = host.search(/[/?#\s]/)
+  if (slash >= 0) host = host.slice(0, slash).trim()
+  let m = host.match(/^\[([^\]]+)\]:(\d+)$/)
+  if (!m) {
+    m = host.match(/^([^:[\]]+):(\d+)$/)
+  }
+  if (!m) return null
+  const port = Number.parseInt(m[2]!, 10)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null
+  return { ip: m[1]!, port }
+}
+
+/** แปลเหตุผลปฏิเสธการเข้าห้องเป็นไทย (NC-04) — รองรับทั้ง `JOIN_REJECTED:<reason>` (tls-client
+ * ตรง) และ `rejected: <reason>` (ผ่าน IPC network-handlers) */
+const JOIN_REJECTED_TH: Record<string, string> = {
+  'bad-auth': 'Room PIN ผิด — ตรวจ PIN จากจอครูแล้วลองใหม่อีกครั้ง',
+  'duplicate-id': 'รหัสนักเรียนนี้กำลังใช้งานอยู่ (เข้าห้องแล้วจากอีกเครื่อง) — แจ้งครู',
+  'room-full': 'ห้องเต็ม (ครบ 60 คนแล้ว) — แจ้งครู',
+  'unknown-message': 'เซสชันหมดอายุ — กดเข้าห้องใหม่อีกครั้ง'
+}
+
+function translateJoinError(raw: string): string {
+  if (!raw) return 'เข้าห้องไม่สำเร็จ'
+  if (raw.includes('bad-proof') || raw.includes('PIN ผิด')) return raw
+  if (raw.includes('SERVER_PROOF_MISMATCH')) return raw
+  const m = raw.match(/(?:JOIN_REJECTED|rejected)\s*:\s*([a-z-]+)/i)
+  const reason = m?.[1]?.toLowerCase() ?? raw.trim().toLowerCase()
+  const th = JOIN_REJECTED_TH[reason]
+  if (th) return th
+  if (raw.startsWith('JOIN_REJECTED:') || raw.startsWith('rejected:')) return `เข้าห้องไม่ได้ (${reason}) — แจ้งครูเพื่อตรวจสอบ`
+  return raw
 }
 
 export default function StudentPanel(): React.JSX.Element {
@@ -82,8 +122,13 @@ export default function StudentPanel(): React.JSX.Element {
       setJoinError('กรอก PIN 6 หลัก')
       return
     }
-    if (studentId.trim().length === 0 || studentName.trim().length === 0) {
-      setJoinError('กรอกรหัสและชื่อนักเรียน')
+    // NC-02: แยกข้อความรหัสว่าง vs ชื่อว่าง — ครูตามตัวง่ายกว่า
+    if (studentId.trim().length === 0) {
+      setJoinError('กรอกรหัสนักเรียน (ยังว่างอยู่)')
+      return
+    }
+    if (studentName.trim().length === 0) {
+      setJoinError('กรอกชื่อ-นามสกุล (ยังว่างอยู่)')
       return
     }
     setJoinError(null)
@@ -107,10 +152,10 @@ export default function StudentPanel(): React.JSX.Element {
         })
         notify({ severity: 'info', message: 'เข้าห้องสอบสำเร็จ — รอครูเริ่มข้อสอบ' })
       } else {
-        setJoinError(result.reason ?? 'เข้าห้องไม่สำเร็จ')
+        setJoinError(translateJoinError(result.reason ?? 'เข้าห้องไม่สำเร็จ'))
       }
     } catch (err) {
-      setJoinError(err instanceof Error ? err.message : 'เข้าห้องไม่สำเร็จ')
+      setJoinError(translateJoinError(err instanceof Error ? err.message : 'เข้าห้องไม่สำเร็จ'))
     } finally {
       setJoining(false)
     }
@@ -126,15 +171,18 @@ export default function StudentPanel(): React.JSX.Element {
       case 'frozen':
         return { icon: ShieldAlert, color: 'border-amber-700/50 bg-amber-950/40 text-amber-200', text: `ขาดการติดต่อกับเครื่องแม่ — กำลังเชื่อมต่อใหม่ (${connection.reason ?? ''})` }
       case 'rejected':
-        return { icon: ShieldAlert, color: 'border-red-800/60 bg-red-950/40 text-red-200', text: `เข้าห้องไม่ได้: ${connection.reason ?? 'unknown'}` }
+        return { icon: ShieldAlert, color: 'border-red-800/60 bg-red-950/40 text-red-200', text: `เข้าห้องไม่ได้: ${translateJoinError(connection.reason ?? 'unknown')}` }
       case 'closed':
-        return { icon: Clock, color: 'border-slate-700 bg-slate-900 text-slate-300', text: 'ห้องปิดแล้ว' }
+        return { icon: Clock, color: 'border-slate-700 bg-slate-900 text-slate-300', text: 'ห้องปิดแล้ว — แจ้งครูให้เปิดห้องใหม่ แล้วเลือกห้อง/กรอก IP เพื่อเข้าอีกครั้ง' }
       default:
         return null
     }
   }, [connection])
 
-  const frozenFull = connection.state === 'frozen'
+  // NC-06/10: เหลือ frozen overlay ชั้นเดียวตอน phase active/timeup — ExamView บังโจทย์อยู่แล้ว
+  // ชั้นนี้แสดงเฉพาะตอนยังไม่เข้าสอบ (idle/waiting) กันซ้อนกันสองชั้นเต็มจอ
+  const examPhase = useStudentExamStore((s) => s.phase)
+  const frozenFull = connection.state === 'frozen' && examPhase !== 'active' && examPhase !== 'timeup'
 
   return (
     <div className="relative h-full">
@@ -199,7 +247,7 @@ export default function StudentPanel(): React.JSX.Element {
                       {room.sourceIp}:{room.tcpPort} · {room.hostName} · นักเรียน {room.studentCount} คน
                     </div>
                     <div className="mt-1 font-mono text-[10px] text-slate-600">
-                      cert {room.certFpShort}…
+                      cert {room.certFpShort.length > 16 ? `${room.certFpShort}…` : room.certFpShort}
                     </div>
                   </button>
                 </li>
@@ -212,6 +260,18 @@ export default function StudentPanel(): React.JSX.Element {
           <div className="mb-4 flex items-center gap-2">
             <KeyRound size={18} className="text-emerald-400" />
             <h2 className="font-semibold">เข้าห้องสอบ</h2>
+            {selected && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelected(null)
+                  setManualRoomId('')
+                }}
+                className="ml-auto text-xs text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline"
+              >
+                ยกเลิกห้องที่เลือก ({selected.roomName})
+              </button>
+            )}
           </div>
 
           {!selected && !manualOpen && (
@@ -288,12 +348,16 @@ export default function StudentPanel(): React.JSX.Element {
               if (target) {
                 void join(target.sourceIp, target.tcpPort, target.roomId)
               } else if (manualOpen) {
-                const m = manualHost.match(/^(.+):(\d+)$/)
-                if (!m || !manualRoomId.trim()) {
-                  setJoinError('รูปแบบ IP:Port หรือ Room ID ไม่ถูกต้อง')
+                const parsed = parseManualHost(manualHost)
+                if (!parsed || !manualRoomId.trim()) {
+                  setJoinError(
+                    !parsed
+                      ? 'รูปแบบ IP:Port ไม่ถูกต้อง (ตัวอย่าง 192.168.1.10:44456 หรือ [::1]:44456, พอร์ต 1–65535)'
+                      : 'รูปแบบ IP:Port หรือ Room ID ไม่ถูกต้อง'
+                  )
                   return
                 }
-                void join(m[1]!, Number.parseInt(m[2]!, 10), manualRoomId.trim())
+                void join(parsed.ip, parsed.port, manualRoomId.trim())
               } else {
                 setJoinError('เลือกห้องก่อน หรือกรอก IP เครื่องแม่')
               }
@@ -312,6 +376,7 @@ export default function StudentPanel(): React.JSX.Element {
 /** ชั้นรวม view การสอบ (waiting banner + Kiosk ExamView ครอบทั้งหน้าเมื่อ phase เกิดขึ้น) */
 function StudentExamLayers(): React.JSX.Element {
   const phase = useStudentExamStore((s) => s.phase)
+  const connState = useStudentNetworkStore((s) => s.connection.state)
 
   if (phase === 'idle') return <></>
   return (
@@ -319,8 +384,17 @@ function StudentExamLayers(): React.JSX.Element {
       {phase === 'waiting' && (
         <div className="fixed inset-0 z-30 flex flex-col items-center justify-center bg-slate-950">
           <Lock size={40} className="mb-3 text-sky-400" />
-          <h2 className="text-lg font-semibold text-slate-200">เชื่อมต่อเครื่องแม่สำเร็จ</h2>
-          <p className="mt-2 text-sm text-slate-400">รอครูกดเริ่มการสอบ…</p>
+          {connState === 'closed' ? (
+            <>
+              <h2 className="text-lg font-semibold text-slate-200">ห้องปิดแล้ว</h2>
+              <p className="mt-2 text-sm text-slate-400">แจ้งครูให้เปิดห้องใหม่ แล้วเลือกห้อง/กรอก IP เพื่อเข้าอีกครั้ง</p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-lg font-semibold text-slate-200">เชื่อมต่อเครื่องแม่สำเร็จ</h2>
+              <p className="mt-2 text-sm text-slate-400">รอครูกดเริ่มการสอบ…</p>
+            </>
+          )}
         </div>
       )}
       <ExamView />
