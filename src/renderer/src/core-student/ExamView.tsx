@@ -1,5 +1,14 @@
 import { useEffect } from 'react'
-import { CircleCheck, CloudOff } from 'lucide-react'
+import {
+  AlarmClock,
+  CircleCheck,
+  CloudOff,
+  FileText,
+  ShieldCheck,
+  Timer,
+  WifiOff,
+  XCircle
+} from 'lucide-react'
 import WatermarkOverlay from './WatermarkOverlay'
 import HudBar from './HudBar'
 import QuestionRenderer from './QuestionRenderer'
@@ -9,6 +18,16 @@ import { useStudentNetworkStore } from '../store/network-store'
 import { useDocsStore } from '../store/docs-store'
 import { CODE_IDE_RENDERER_UI } from '@modules/code-ide/renderer/index'
 import { DYNAMIC_FORM_RENDERER_UI } from '@modules/dynamic-form/renderer/index'
+import { Badge } from '@renderer/components/ui/badge'
+import { Button } from '@renderer/components/ui/button'
+import { Card, CardContent } from '@renderer/components/ui/card'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger
+} from '@renderer/components/ui/tooltip'
+import { cn } from '@renderer/lib/utils'
 
 let subscribed = false
 
@@ -198,30 +217,61 @@ function ModuleAckBanner(): React.JSX.Element | null {
   if (!ack && draftAtMs === null && flushNote === null) return null
   const fresh = ack !== null && Date.now() - ack.atMs <= 10000
   const reasonTh = ack !== null && !ack.ok && ack.reason ? (MODULE_ACK_REJECT_TH[ack.reason] ?? `${ack.reason} — กดส่งใหม่อีกครั้ง ถ้ายังไม่ได้ให้แจ้งครู`) : ack?.reason
-  const ackText =
-    ack === null
-      ? null
-      : ack.ok
-        ? `✅ เครื่องแม่รับงานแล้ว (${ack.progressText ?? ack.kind})`
-        : `⛔ เครื่องแม่ปฏิเสธงาน: ${reasonTh}`
-  const draftText =
-    draftAtMs !== null
-      ? `📝 draft ล่าสุด [${draftModuleId ?? '?'}] ${new Date(draftAtMs).toLocaleTimeString('th-TH')} — เก็บในเครื่องแล้ว + ส่ง host แล้ว (รอยืนยัน ack)`
-      : null
+  const ackTime = ack !== null ? new Date(ack.atMs).toLocaleTimeString('th-TH') : ''
+  const detail =
+    'แถบนี้ไม่หายไปเอง — ack ใหม่จะขึ้นสีเข้ม 10 วินาทีแรก แล้วค้างเป็นสถานะจางๆ ต่อ ' +
+    'เน็ตหลุดให้ดู draft/flush ว่าส่งถึง host หรือยัง' +
+    (ack !== null && !ack.ok && reasonTh ? ` เหตุผล: ${reasonTh}` : '')
   return (
-    <div
-      title="แถบนี้ไม่หายไปเอง — ack ใหม่จะขึ้นสีเข้ม 10 วินาทีแรก แล้วค้างเป็นสถานะจางๆ ต่อ เน็ตหลุดให้ดูบรรทัด draft/flush ว่าส่งถึง host หรือยัง"
-      className={`border-b px-4 py-1.5 text-center text-xs ${ack && !ack.ok ? 'border-red-800/60 bg-red-950/40 text-red-200' : fresh ? 'border-emerald-800/60 bg-emerald-950/40 text-emerald-200' : 'border-slate-800 bg-slate-900/60 text-slate-400'}`}
-    >
-      <div>{fresh ? ackText : ackText !== null ? `ล่าสุด: ${ackText} (${ack !== null ? new Date(ack.atMs).toLocaleTimeString('th-TH') : ''})` : 'ยังไม่มี ack จากเครื่องแม่'}</div>
-      {draftText !== null && <div className="mt-0.5 opacity-90">{draftText}</div>}
-      {flushNote !== null && flushAtMs !== null && (
-        <div className="mt-0.5 opacity-90">⏱ flush: {flushNote}</div>
-      )}
-      {offline && (
-        <div className="mt-0.5 font-semibold text-amber-200">⚠️ เน็ตหลุด — draft ยังอยู่ในเครื่อง ไม่หาย กดส่งใหม่หลัง reconnect แล้วดู ack ยืนยันอีกครั้ง</div>
-      )}
-    </div>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div
+            className={cn(
+              'flex flex-wrap items-center justify-center gap-1.5 border-b border-border bg-card px-4 py-1.5',
+              !fresh && 'opacity-70'
+            )}
+          >
+            {ack !== null ? (
+              ack.ok ? (
+                <Badge className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
+                  <ShieldCheck />
+                  เครื่องแม่รับงานแล้ว ({ack.progressText ?? ack.kind}) · {ackTime}
+                </Badge>
+              ) : (
+                <Badge variant="destructive">
+                  <XCircle />
+                  เครื่องแม่ปฏิเสธงาน · {ackTime}
+                </Badge>
+              )
+            ) : (
+              <Badge variant="secondary">ยังไม่มี ack จากเครื่องแม่</Badge>
+            )}
+            {draftAtMs !== null && (
+              <Badge variant="secondary">
+                <FileText />
+                draft [{draftModuleId ?? '?'}] {new Date(draftAtMs).toLocaleTimeString('th-TH')}
+              </Badge>
+            )}
+            {flushNote !== null && flushAtMs !== null && (
+              <Badge variant="outline">
+                <Timer />
+                flush: {flushNote}
+              </Badge>
+            )}
+            {offline && (
+              <Badge variant="secondary" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                <WifiOff />
+                เน็ตหลุด — draft อยู่ในเครื่อง
+              </Badge>
+            )}
+          </div>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">
+          <p>{detail}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 
@@ -320,34 +370,30 @@ export default function ExamView(): React.JSX.Element | null {
 
   if (phase === 'completed') {
     return (
-      <div className="fixed inset-0 z-40 flex flex-col items-center justify-center bg-slate-950">
+      <div className="fixed inset-0 z-40 flex flex-col items-center justify-center bg-background/95">
         <WatermarkOverlay
           studentId={identity.studentId}
           studentName={identity.studentName}
           deviceLabel={navigator.platform || 'desktop'}
         />
-        <CircleCheck size={56} className="mb-4 text-emerald-400" />
-        <h2 className="text-xl font-semibold text-emerald-200">
-          การสอบเสร็จสมบูรณ์{' '}
-          {finishReason === 'time-up' ? '(หมดเวลา)' : finishReason === 'completed' ? '(ทำครบทุกข้อ)' : '(จบตามคำสั่งครู)'}
-        </h2>
-        <p className="mt-2 text-sm text-slate-400">โปรดแจ้งครูก่อนออกจากเครื่อง</p>
-        <div className="mt-6 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => void backToLobby(false)}
-            className="rounded-xl border border-slate-700 px-5 py-2.5 text-sm text-slate-200 transition hover:bg-slate-800"
-          >
-            กลับหน้าแรก
-          </button>
-          <button
-            type="button"
-            onClick={() => void backToLobby(true)}
-            className="rounded-xl bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-500"
-          >
-            ออกจากห้องสอบ
-          </button>
-        </div>
+        <Card className="w-full max-w-md">
+          <CardContent className="flex flex-col items-center p-6 text-center">
+            <CircleCheck size={56} className="mb-4 text-emerald-500" />
+            <h2 className="text-xl font-semibold">
+              การสอบเสร็จสมบูรณ์{' '}
+              {finishReason === 'time-up' ? '(หมดเวลา)' : finishReason === 'completed' ? '(ทำครบทุกข้อ)' : '(จบตามคำสั่งครู)'}
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">โปรดแจ้งครูก่อนออกจากเครื่อง</p>
+            <div className="mt-6 flex items-center gap-3">
+              <Button type="button" variant="outline" onClick={() => void backToLobby(false)}>
+                กลับหน้าแรก
+              </Button>
+              <Button type="button" onClick={() => void backToLobby(true)}>
+                ออกจากห้องสอบ
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -357,7 +403,7 @@ export default function ExamView(): React.JSX.Element | null {
   const timeup = phase === 'timeup'
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-slate-950">
+    <div className="fixed inset-0 z-40 flex flex-col bg-background text-foreground">
       {/* Dynamic watermark ระบุตัวตนรายแอป */}
       <WatermarkOverlay
         studentId={identity.studentId}
@@ -370,57 +416,65 @@ export default function ExamView(): React.JSX.Element | null {
 
       {/* Fail-closed overlay: ชั้นเดียวตอนสอบ (NC-06/10 — StudentPanel ซ่อนชั้นของตัวเองเมื่อ phase active/timeup) */}
       {closedRoom ? (
-        <div className="flex flex-1 flex-col items-center justify-center">
-          <CloudOff size={48} className="mb-4 text-slate-400" />
-          <h2 className="text-lg font-semibold text-slate-200">ห้องปิดแล้ว</h2>
-          <p className="mt-2 max-w-md text-center text-sm text-slate-400">
+        <div className="flex flex-1 flex-col items-center justify-center bg-background/95 px-6 text-center">
+          <CloudOff size={48} className="mb-4 text-muted-foreground" />
+          <h2 className="text-lg font-semibold">ห้องปิดแล้ว</h2>
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">
             ครูปิดห้องสอบแล้ว — คำตอบที่ส่งไปแล้วยังอยู่ แจ้งครูให้เปิดห้องใหม่ แล้วกลับหน้าแรกเพื่อเข้าห้องอีกครั้ง
           </p>
-          <button
-            type="button"
-            onClick={() => void backToLobby(false)}
-            className="mt-4 rounded-xl border border-slate-700 px-5 py-2.5 text-sm text-slate-200 transition hover:bg-slate-800"
-          >
+          <Button type="button" variant="outline" className="mt-4" onClick={() => void backToLobby(false)}>
             กลับหน้าแรก
-          </button>
+          </Button>
         </div>
       ) : frozen ? (
-        <div className="flex flex-1 flex-col items-center justify-center">
-          <CloudOff size={48} className="mb-4 text-amber-400" />
-          <h2 className="text-lg font-semibold text-amber-200">ขาดการติดต่อกับเครื่องแม่</h2>
-          <p className="mt-2 max-w-md text-center text-sm text-slate-400">
+        <div className="flex flex-1 flex-col items-center justify-center bg-background/95 px-6 text-center">
+          <WifiOff size={48} className="mb-4 text-amber-500" />
+          <h2 className="text-lg font-semibold">ขาดการติดต่อกับเครื่องแม่</h2>
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">
             ระบบซ่อนโจทย์ชั่วคราวเพื่อความปลอดภัยของข้อสอบ รอสักครู่จะกู้คืนข้อเดิมพร้อมคำตอบที่พิมพ์ค้างไว้ให้โดยอัตโนมัติ
           </p>
+          <Button type="button" variant="outline" className="mt-4" disabled>
+            กำลังกู้คืนข้อสอบ…
+          </Button>
         </div>
       ) : timeup ? (
-        <div className="flex flex-1 flex-col items-center justify-center">
-          <CloudOff size={48} className="mb-4 text-red-400" />
-          <h2 className="text-lg font-semibold text-red-200">หมดเวลาสอบ</h2>
-          <p className="mt-2 text-sm text-slate-400">กำลังบันทึกคำตอบล่าสุดของข้อนี้…</p>
+        <div className="flex flex-1 flex-col items-center justify-center bg-background/95 px-6 text-center">
+          <AlarmClock size={48} className="mb-4 text-destructive" />
+          <h2 className="text-lg font-semibold">หมดเวลาสอบ</h2>
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">
+            กำลังบันทึกคำตอบล่าสุดของข้อนี้…
+          </p>
+          <Button type="button" variant="outline" className="mt-4" disabled>
+            กำลังบันทึกคำตอบ…
+          </Button>
         </div>
       ) : (
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex flex-1 overflow-hidden">
           {hasCodeIdeModule ? (
-            <div className="w-full h-full overflow-hidden p-2">
+            <div className="h-full w-full overflow-hidden p-2">
               <CodeIdeExamSlot studentId={identity.studentId} />
             </div>
           ) : hasFormModule ? (
-            <div className="w-full h-full overflow-hidden p-2">
+            <div className="h-full w-full overflow-hidden p-2">
               <DynamicFormExamSlot studentId={identity.studentId} />
             </div>
           ) : examMode === 'in-app-docs' ? (
             docsPanel !== null && !docsPanel.open ? (
               /* R5: แผงเอกสารถูกปิดอยู่ — โจทย์ขยายเต็มจอชัดเจน + แถบบอกวิธิเปิดกลับ */
-              <div className="w-full h-full overflow-hidden flex flex-col">
-                <div className="flex items-center gap-2 border-b border-amber-800/60 bg-amber-950/40 px-4 py-1.5 text-xs text-amber-200">
-                  <span className="flex-1">แผงเอกสารถูกปิดอยู่ — โจทย์ขยายเต็มจอแล้ว (การปิดถูกบันทึกแจ้งครู)</span>
-                  <button
+              <div className="flex h-full w-full flex-col overflow-hidden">
+                <div className="flex items-center gap-2 border-b border-border bg-card px-4 py-1.5 text-xs">
+                  <Badge variant="secondary" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                    แผงเอกสารปิดอยู่
+                  </Badge>
+                  <span className="flex-1 text-muted-foreground">โจทย์ขยายเต็มจอแล้ว (การปิดถูกบันทึกแจ้งครู)</span>
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => void window.ztExam.docsToggle({ open: true })}
-                    className="shrink-0 rounded-lg border border-amber-700/60 px-2.5 py-1 text-xs text-amber-100 transition hover:bg-amber-900/60"
                   >
                     เปิดเอกสารอีกครั้ง
-                  </button>
+                  </Button>
                 </div>
                 <div className="flex-1 overflow-hidden">
                   <QuestionRenderer />
@@ -428,16 +482,16 @@ export default function ExamView(): React.JSX.Element | null {
               </div>
             ) : (
               <>
-                <div className="w-1/2 h-full overflow-hidden">
+                <div className="h-full w-1/2 overflow-hidden">
                   <QuestionRenderer />
                 </div>
-                <div className="w-1/2 h-full overflow-hidden border-l border-slate-800">
+                <div className="h-full w-1/2 overflow-hidden border-l border-border">
                   <DocsPanel />
                 </div>
               </>
             )
           ) : (
-            <div className="w-full h-full overflow-hidden">
+            <div className="h-full w-full overflow-hidden">
               <QuestionRenderer />
             </div>
           )}
@@ -446,7 +500,7 @@ export default function ExamView(): React.JSX.Element | null {
 
       {/* แถบนับถอยหลังสแตนดี้ บนจอ (สีเปลี่ยนเมื่อเวลาจะหมด) */}
       {remaining <= 0 && !frozen && !timeup && !closedRoom && (
-        <div className="border-t border-amber-800/60 bg-amber-950/40 px-4 py-2 text-center text-xs text-amber-200">
+        <div className="border-t border-border bg-card px-4 py-2 text-center text-xs text-muted-foreground">
           รอข้อมูลเวลาจากเครื่องแม่…
         </div>
       )}

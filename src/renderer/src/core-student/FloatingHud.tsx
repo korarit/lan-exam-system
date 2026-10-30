@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
-import { AlarmClock, ExternalLink, Signal, FileCode2, BookMarked } from 'lucide-react'
+import { AlarmClock, ExternalLink, Signal, SignalHigh, FileCode2, BookMarked } from 'lucide-react'
 import { useStudentExamStore } from '../store/exam-store'
 import { useStudentNetworkStore } from '../store/network-store'
 import { useDocsStore } from '../store/docs-store'
 import WatermarkOverlay from './WatermarkOverlay'
+import { Badge } from '@renderer/components/ui/badge'
+import { Button } from '@renderer/components/ui/button'
+import { cn } from '@renderer/lib/utils'
 
 /* ============================================================
  * FloatingHud (Phase 5 — Mode 3): หน้าต่างจิ๋ว always-on-top
@@ -63,14 +66,14 @@ export default function FloatingHud(): React.JSX.Element {
 
   const timerClass =
     displayRemaining <= 60
-      ? 'text-red-300'
+      ? 'text-red-600 dark:text-red-400'
       : displayRemaining <= 300
-        ? 'text-orange-200'
-        : 'text-emerald-200'
+        ? 'text-orange-600 dark:text-orange-400'
+        : 'text-emerald-700 dark:text-emerald-400'
   const frozen = connection.state === 'frozen' || connection.state === 'reconnecting'
 
   return (
-    <div className="flex h-[76px] select-none items-center gap-3 border-b-2 border-sky-900/70 bg-slate-950/98 px-4 drag-none">
+    <div className="flex h-[76px] select-none items-center gap-3 border-b border-border bg-card px-4">
       {identity && (
         <WatermarkOverlay
           studentId={identity.studentId}
@@ -78,63 +81,66 @@ export default function FloatingHud(): React.JSX.Element {
           deviceLabel={navigator.platform || 'desktop'}
         />
       )}
-      <div className={`items-center gap-1.5 text-2xl font-bold tabular-nums ${timerClass} flex`}>
+      <div className={cn('flex items-center gap-1.5 text-2xl font-bold tabular-nums', timerClass)} aria-live="off">
         <AlarmClock size={18} />
         {approx ? '≈' : ''}{formatClock(displayRemaining)}
       </div>
 
       {question && (
-        <div className="text-xs text-slate-400">
-          ข้อ <span className="font-mono text-slate-200">{question.cursorIndex + 1}</span>
+        <div className="text-xs tabular-nums text-muted-foreground">
+          ข้อ <span className="font-mono text-foreground">{question.cursorIndex + 1}</span>
           /<span className="font-mono">{question.questionCount}</span>
         </div>
       )}
 
       {examMode && (
-        <div className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
+        <Badge variant="secondary">
           {examMode === 'in-app-docs' ? 'โหมดเอกสาร' : examMode === 'external-tools' ? 'โหมดเครื่องมือภายนอก' : examMode}
-        </div>
+        </Badge>
       )}
 
       {examMode === 'in-app-docs' && docsOpen && (
-        <div className="flex items-center gap-1 rounded-full border border-sky-800/60 bg-sky-950/40 px-2 py-0.5 text-[11px] text-sky-200">
-          <BookMarked size={12} />
+        <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary">
+          <BookMarked />
           เปิดเอกสารอยู่
-        </div>
+        </Badge>
       )}
 
-      <div
-        className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${
+      <Badge
+        variant="outline"
+        className={cn(
           frozen
-            ? 'border-red-800/60 bg-red-950/50 text-red-200'
-            : 'border-emerald-800/60 bg-emerald-950/40 text-emerald-200'
-        }`}
+            ? 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400'
+            : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+        )}
       >
-        <Signal size={12} />
+        {frozen ? <Signal /> : <SignalHigh />}
         {frozen ? 'ขาดการติดต่อ' : 'เชื่อมแม่'}
-      </div>
+      </Badge>
 
       <div className="ml-auto flex items-center gap-2">
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="sm"
           onClick={() => void window.ztExam.openVsCode()}
-          className="flex items-center gap-1.5 rounded-lg border border-sky-800/70 bg-sky-950/60 px-2.5 py-1.5 text-xs text-sky-200 hover:bg-sky-900/60"
         >
-          <FileCode2 size={13} />
+          <FileCode2 />
           เปิด VS Code
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={() => void window.ztExam.focusExam()}
-          className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
         >
-          <ExternalLink size={13} />
+          <ExternalLink />
           ดูโจทย์
-        </button>
+        </Button>
       </div>
 
       {phase === 'timeup' && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-950/95 text-sm text-red-300">
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/95 text-sm text-destructive">
           หมดเวลาสอบ — กลับไปที่หน้าข้อสอบเพื่อบันทึกคำตอบสุดท้าย
         </div>
       )}

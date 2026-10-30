@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
-import { AlarmClock, BookOpenText, Signal, Save, BookMarked } from 'lucide-react'
+import { AlarmClock, BookOpenText, BookMarked, Save, Signal, SignalHigh } from 'lucide-react'
 import { useStudentExamStore } from '../store/exam-store'
 import { useDocsStore } from '../store/docs-store'
+import { Badge } from '@renderer/components/ui/badge'
+import { Button } from '@renderer/components/ui/button'
+import { cn } from '@renderer/lib/utils'
 
 export interface HudBarProps {
   connectionOk: boolean
@@ -25,6 +28,7 @@ function timeAgo(ms: number): string {
 /**
  * Top HUD Bar (checklist 2.5.3):
  * ชื่อวิชา • ข้าที่กำลังทำ • สถานะการบันทึกอัตโนมัติ • เวลาหน่วยที่เหลือ (สีเปลี่ยนตามเวลา)
+ * สูงไม่เกิน 48px (h-12)
  */
 export default function HudBar(props: HudBarProps): React.JSX.Element {
   const examTitle = useStudentExamStore((s) => s.examTitle)
@@ -48,61 +52,66 @@ export default function HudBar(props: HudBarProps): React.JSX.Element {
   // เวลาประมาณเมื่อ tick ล่าสุดนานเกิน 2 วิ
   const approx = lastTickAtMs !== null && tickAgeMs > 2000
 
-  const timerClass =
+  const timerTone =
     displayRemaining <= 60
-      ? 'text-red-400 border-red-800/60 bg-red-950/50'
+      ? 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400'
       : displayRemaining <= 300
-        ? 'text-orange-300 border-orange-800/50 bg-orange-950/40'
-        : 'text-emerald-300 border-emerald-800/50 bg-emerald-950/30'
+        ? 'border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400'
+        : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
 
   return (
-    <div className="flex items-center gap-4 border-b border-slate-800 bg-slate-950/90 px-6 py-3 text-sm">
-      <div className="flex items-center gap-2 font-semibold text-slate-200">
-        <BookOpenText size={16} className="text-sky-400" />
-        <span className="max-w-[16rem] truncate">{examTitle ?? 'ข้อสอบ'}</span>
+    <div className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-card px-4 text-sm">
+      {/* ซ้าย: ชื่อวิชา + ข้อที่ทำ (truncate) */}
+      <div className="flex min-w-0 items-center gap-2 font-semibold">
+        <BookOpenText size={16} className="shrink-0 text-primary" />
+        <span className="max-w-40 truncate xl:max-w-56">{examTitle ?? 'ข้อสอบ'}</span>
+        {question && (
+          <span className="shrink-0 font-normal text-muted-foreground">
+            ข้อที่ <span className="font-mono tabular-nums text-foreground">{question.cursorIndex + 1}</span>
+            {' / '}
+            <span className="font-mono tabular-nums">{question.questionCount}</span>
+          </span>
+        )}
       </div>
 
-      {question && (
-        <div className="text-slate-400">
-          ข้อที่ <span className="font-mono text-slate-100">{question.cursorIndex + 1}</span>
-          {' / '}
-          <span className="font-mono">{question.questionCount}</span>
+      {/* กลาง: docs toggle (ถ้า in-app-docs) + autosave status */}
+      <div className="flex min-w-0 items-center gap-3">
+        {examMode === 'in-app-docs' && (
+          <Button
+            type="button"
+            variant={docsOpen ? 'secondary' : 'outline'}
+            size="sm"
+            onClick={() => void window.ztExam.docsToggle({ open: !docsOpen })}
+          >
+            <BookMarked />
+            {docsOpen ? 'ปิดเอกสาร' : 'เปิดเอกสาร'}
+          </Button>
+        )}
+        <div className="hidden items-center gap-1.5 text-xs text-muted-foreground md:flex">
+          <Save size={14} className="shrink-0" />
+          <span className="truncate">
+            {lastDraftSavedAtMs ? `บันทึกอัตโนมัติ ${timeAgo(lastDraftSavedAtMs)}` : 'ยังไม่มีการบันทึก'}
+          </span>
         </div>
-      )}
+      </div>
 
-      {/* Phase 5 (Mode 2): ปุ่มเปิด/ปิดแผงเอกสารครึ่งขวา */}
-      {examMode === 'in-app-docs' && (
-        <button
-          type="button"
-          onClick={() => void window.ztExam.docsToggle({ open: !docsOpen })}
-          className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
-            docsOpen
-              ? 'border-sky-700/60 bg-sky-950/50 text-sky-200'
-              : 'border-slate-700 bg-slate-900/70 text-slate-300 hover:border-slate-500'
-          }`}
+      {/* ขวา: connection Badge + timer Badge */}
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+        <Badge
+          variant="outline"
+          className={cn(
+            props.connectionOk
+              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+              : 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400'
+          )}
         >
-          <BookMarked size={13} />
-          {docsOpen ? 'ปิดเอกสาร' : 'เปิดเอกสาร'}
-        </button>
-      )}
-
-      <div className="ml-auto flex items-center gap-1.5 text-slate-400">
-        <Save size={14} />
-        <span>{lastDraftSavedAtMs ? `บันทึกอัตโนมัติ ${timeAgo(lastDraftSavedAtMs)}` : 'ยังไม่มีการบันทึก'}</span>
-      </div>
-
-      <div
-        className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
-          props.connectionOk ? 'text-emerald-300 border-emerald-800/60 bg-emerald-950/40' : 'text-red-300 border-red-800/60 bg-red-950/50'
-        }`}
-      >
-        <Signal size={13} />
-        {props.connectionOk ? 'เครื่องแม่' : 'ขาดการติดต่อ'}
-      </div>
-
-      <div className={`flex items-center gap-2 rounded-full border px-3 py-1 font-mono text-base font-bold tabular-nums ${timerClass}`}>
-        <AlarmClock size={16} />
-        {approx ? '≈' : ''}{formatClock(displayRemaining)}
+          {props.connectionOk ? <SignalHigh /> : <Signal />}
+          {props.connectionOk ? 'เครื่องแม่' : 'ขาดการติดต่อ'}
+        </Badge>
+        <Badge variant="outline" className={cn('font-mono tabular-nums', timerTone)} aria-live="off">
+          <AlarmClock />
+          {approx ? '≈' : ''}{formatClock(displayRemaining)}
+        </Badge>
       </div>
     </div>
   )

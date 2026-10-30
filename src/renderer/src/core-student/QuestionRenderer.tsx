@@ -1,6 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Check, Lock, Type, TriangleAlert } from 'lucide-react'
+import { ArrowLeft, Check, Lock, TriangleAlert } from 'lucide-react'
 import { useStudentExamStore, stashLocalAnswer } from '../store/exam-store'
+import { Button } from '@renderer/components/ui/button'
+import { Card, CardContent } from '@renderer/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@renderer/components/ui/dialog'
+import { Input } from '@renderer/components/ui/input'
+import { ScrollArea } from '@renderer/components/ui/scroll-area'
+import { cn } from '@renderer/lib/utils'
 
 /** แปลเหตุผล submit-rejected จากเครื่องแม่เป็นภาษาไทย (TC-S27) */
 const SUBMIT_REJECTED_TH: Record<string, string> = {
@@ -188,109 +201,139 @@ export default function QuestionRenderer(): React.JSX.Element | null {
     e.preventDefault()
   }
 
+  const isBlank =
+    (question.type === 'short-answer' || question.type === 'essay') && textContent.trim().length === 0
+  const confirmTitle = isBlank ? 'ส่งกระดาษเปล่า?' : 'ไปข้อนี้แล้วแก้ไม่ได้'
+  const confirmDescription = isBlank
+    ? `ข้อ ${question.cursorIndex + 1} ยังไม่มีคำตอบ ยืนยันส่งเป็นกระดาษเปล่า?`
+    : `ข้อ ${question.cursorIndex + 1} จะถูกส่งและข้ามไปข้อถัดไปทันที ย้อนกลับมาแก้ไม่ได้`
+
   return (
-    <div className="relative mx-auto flex h-full w-full max-w-3xl flex-col px-6 py-6">
-      <div className="mb-4 flex items-center gap-3">
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <Type size={14} />
-          <button type="button" onClick={() => setFontScale(fontScale - 0.1)} className="rounded border border-slate-700 px-2 py-0.5 hover:bg-slate-800">A−</button>
-          <button type="button" onClick={() => setFontScale(fontScale + 0.1)} className="rounded border border-slate-700 px-2 py-0.5 hover:bg-slate-800">A+</button>
+    <div className="mx-auto flex h-full w-full max-w-3xl flex-col px-6 py-6">
+      <div className="mb-4 flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => setFontScale(fontScale - 0.1)}
+            aria-label="ลดขนาดตัวอักษร"
+          >
+            A−
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => setFontScale(fontScale + 0.1)}
+            aria-label="เพิ่มขนาดตัวอักษร"
+          >
+            A+
+          </Button>
         </div>
-        <div className="ml-auto text-xs text-slate-500">
+        <div className="ml-auto text-xs tabular-nums text-muted-foreground">
           ตอบแล้ว {answered + 1} / {question.questionCount}
         </div>
       </div>
 
-      <div
-        className="flex-1 overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900/70 p-6 select-none"
-        onCopy={blockClipboard}
-        onCut={blockClipboard}
-        onPaste={blockClipboard}
-        onDragStart={blockDrag}
-      >
-        <div className="mb-2 text-xs text-slate-500">
-          ข้อที่ {question.cursorIndex + 1} · {question.points} คะแนน ·{' '}
-          {question.allowBackNavigation ? 'แก้กลับได้' : 'ส่งแล้วไปข้อถัดไป'}
-        </div>
-        <p className="whitespace-pre-line leading-relaxed text-slate-100" style={{ fontSize: promptScale }}>
-          {question.prompt}
-        </p>
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <ScrollArea className="h-full flex-1">
+          <CardContent
+            className="select-none p-6"
+            onCopy={blockClipboard}
+            onCut={blockClipboard}
+            onPaste={blockClipboard}
+            onDragStart={blockDrag}
+          >
+            <div className="mb-2 text-xs text-muted-foreground">
+              ข้อที่ {question.cursorIndex + 1} · {question.points} คะแนน ·{' '}
+              {question.allowBackNavigation ? 'แก้กลับได้' : 'ส่งแล้วไปข้อถัดไป'}
+            </div>
+            <p className="whitespace-pre-line leading-relaxed" style={{ fontSize: promptScale }}>
+              {question.prompt}
+            </p>
 
-        {question.type === 'mcq' && question.choices && (
-          <ul className="mt-6 space-y-3">
-            {question.choices.map((choice, index) => (
-              <li key={index}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedChoiceIndex(index)
-                    markEdited({ type: 'mcq', choiceIndex: index })
-                  }}
-                  className={`flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition ${
-                    selectedChoiceIndex === index
-                      ? 'border-sky-500 bg-sky-950/40'
-                      : 'border-slate-700 bg-slate-950/60 hover:border-slate-500'
-                  }`}
-                  style={{ fontSize: choiceScale }}
-                >
-                  <span
-                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs ${
-                      selectedChoiceIndex === index
-                        ? 'border-sky-400 bg-sky-500 text-white'
-                        : 'border-slate-600 text-slate-400'
-                    }`}
-                  >
-                    {String.fromCharCode(65 + index)}
-                  </span>
-                  <span className="whitespace-pre-line">{choice.text}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+            {question.type === 'mcq' && question.choices && (
+              <ul className="mt-6 space-y-3">
+                {question.choices.map((choice, index) => (
+                  <li key={index}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setSelectedChoiceIndex(index)
+                        markEdited({ type: 'mcq', choiceIndex: index })
+                      }}
+                      className={cn(
+                        'h-auto w-full justify-start whitespace-normal px-4 py-3 text-left',
+                        selectedChoiceIndex === index && 'border-primary bg-primary/10 hover:bg-primary/15'
+                      )}
+                      style={{ fontSize: choiceScale }}
+                    >
+                      <span
+                        className={cn(
+                          'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs',
+                          selectedChoiceIndex === index
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border text-muted-foreground'
+                        )}
+                      >
+                        {String.fromCharCode(65 + index)}
+                      </span>
+                      <span className="whitespace-pre-line">{choice.text}</span>
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
 
-        {question.type === 'short-answer' && (
-          <input
-            value={textContent}
-            onChange={(e) => {
-              setTextContent(e.target.value)
-              markEdited({ type: 'text', content: e.target.value })
-            }}
-            onKeyDown={trackTypingRhythm}
-            placeholder="พิมพ์คำตอบสั้น"
-            className="mt-6 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 focus:border-sky-500 focus:outline-none"
-            style={{ fontSize: choiceScale }}
-          />
-        )}
+            {question.type === 'short-answer' && (
+              <Input
+                value={textContent}
+                onChange={(e) => {
+                  setTextContent(e.target.value)
+                  markEdited({ type: 'text', content: e.target.value })
+                }}
+                onKeyDown={trackTypingRhythm}
+                placeholder="พิมพ์คำตอบสั้น"
+                className="mt-6"
+                style={{ fontSize: choiceScale }}
+              />
+            )}
 
-        {question.type === 'essay' && (
-          <textarea
-            value={textContent}
-            onChange={(e) => {
-              setTextContent(e.target.value)
-              markEdited({ type: 'text', content: e.target.value })
-            }}
-            onKeyDown={trackTypingRhythm}
-            placeholder="พิมพ์คำตอบอัตนัย…"
-            rows={10}
-            className="mt-6 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 focus:border-sky-500 focus:outline-none"
-            style={{ fontSize: choiceScale }}
-          />
-        )}
-      </div>
+            {question.type === 'essay' && (
+              <textarea
+                value={textContent}
+                onChange={(e) => {
+                  setTextContent(e.target.value)
+                  markEdited({ type: 'text', content: e.target.value })
+                }}
+                onKeyDown={trackTypingRhythm}
+                placeholder="พิมพ์คำตอบอัตนัย…"
+                rows={10}
+                className="mt-6 flex min-h-36 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                style={{ fontSize: choiceScale }}
+              />
+            )}
+          </CardContent>
+        </ScrollArea>
+      </Card>
 
       <div className="mt-4 flex items-center gap-3">
-        <button
+        <Button
           type="button"
+          variant="ghost"
           disabled={!question.allowBackNavigation || question.cursorIndex === 0}
           onClick={() => void goBack()}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-300 transition hover:bg-slate-800 disabled:opacity-30"
         >
-          <ArrowLeft size={16} /> ย้อนกลับ
-        </button>
+          <ArrowLeft /> ย้อนกลับ
+        </Button>
 
-        <button
+        <Button
           type="button"
+          className="ml-auto"
           disabled={question.type === 'mcq' && selectedChoiceIndex === null}
           onClick={() => {
             const blank =
@@ -302,73 +345,56 @@ export default function QuestionRenderer(): React.JSX.Element | null {
             }
             void confirmSubmit()
           }}
-          className="ml-auto inline-flex items-center gap-2 rounded-xl bg-sky-600 px-5 py-2.5 font-semibold text-white transition hover:bg-sky-500 disabled:opacity-30"
         >
-          <Check size={16} /> ยืนยันคำตอบและไปข้อถัดไป
-        </button>
+          <Check /> ยืนยันคำตอบและไปข้อถัดไป
+        </Button>
       </div>
 
       {/* TC-S27: แสดงเหตุผลที่เครื่องแม่ปฏิเสธ + ปุ่มส่งอีกครั้ง */}
       {submitRejectedReason && (
-        <div className="mt-3 rounded-xl border border-red-800/60 bg-red-950/40 px-4 py-3 text-sm">
-          <div className="flex items-start gap-2 text-red-200">
-            <TriangleAlert size={16} className="mt-0.5 shrink-0" />
-            <span>ส่งคำตอบไม่สำเร็จ: {SUBMIT_REJECTED_TH[submitRejectedReason] ?? submitRejectedReason}</span>
-          </div>
-          <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              disabled={question.type === 'mcq' && selectedChoiceIndex === null}
-              onClick={() => void confirmSubmit()}
-              className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-red-500 disabled:opacity-40"
-            >
-              ส่งอีกครั้ง
-            </button>
-            <button
-              type="button"
-              onClick={() => clearSubmitRejected()}
-              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800"
-            >
-              ปิด
-            </button>
-          </div>
-        </div>
+        <Card className="mt-3 border-destructive/60">
+          <CardContent className="flex flex-col gap-2 p-4 text-sm">
+            <div className="flex items-start gap-2 text-destructive">
+              <TriangleAlert size={16} className="mt-0.5 shrink-0" />
+              <span>ส่งคำตอบไม่สำเร็จ: {SUBMIT_REJECTED_TH[submitRejectedReason] ?? submitRejectedReason}</span>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                disabled={question.type === 'mcq' && selectedChoiceIndex === null}
+                onClick={() => void confirmSubmit()}
+              >
+                ส่งอีกครั้ง
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => clearSubmitRejected()}>
+                ปิด
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
-      {showConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80">
-          <div className="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-900 p-6">
-            <div className="mb-3 flex items-center gap-2 font-semibold text-amber-300">
-              {(question.type === 'short-answer' || question.type === 'essay') && textContent.trim().length === 0 ? (
-                <><TriangleAlert size={18} /> ส่งกระดาษเปล่า?</>
-              ) : (
-                <><Lock size={18} /> ไปข้อนี้แล้วแก้ไม่ได้</>
-              )}
-            </div>
-            <p className="text-sm text-slate-400">
-              {(question.type === 'short-answer' || question.type === 'essay') && textContent.trim().length === 0
-                ? `ข้อ ${question.cursorIndex + 1} ยังไม่มีคำตอบ ยืนยันส่งเป็นกระดาษเปล่า?`
-                : `ข้อ ${question.cursorIndex + 1} จะถูกส่งและข้ามไปข้อถัดไปทันที ย้อนกลับมาแก้ไม่ได้`}
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowConfirm(false)}
-                className="rounded-lg border border-slate-700 px-3 py-2 text-sm hover:bg-slate-800"
-              >
-                ยกเลิก
-              </button>
-              <button
-                type="button"
-                onClick={() => void confirmSubmit()}
-                className="rounded-lg bg-sky-600 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-500"
-              >
-                ยืนยันและไปข้อถัดไป
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Dialog open={showConfirm} onOpenChange={setShowConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {isBlank ? <TriangleAlert size={18} /> : <Lock size={18} />}
+              {confirmTitle}
+            </DialogTitle>
+            <DialogDescription>{confirmDescription}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setShowConfirm(false)}>
+              ยกเลิก
+            </Button>
+            <Button type="button" onClick={() => void confirmSubmit()}>
+              ยืนยันและไปข้อถัดไป
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

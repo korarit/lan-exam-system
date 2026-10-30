@@ -62,22 +62,24 @@ export default function ProctorOverlay(): React.JSX.Element {
       {/* Privacy: ไฟสถานะ/consent banner — บอกนักเรียนชัดว่ากำลังถูกดูจอ + ลง audit แล้ว */}
       {inspectMode && (
         <div className="fixed inset-x-0 top-0 z-[55] flex justify-center p-3">
-          <div className="flex items-center gap-2 rounded-xl border border-red-600/70 bg-red-950/95 px-4 py-2 text-sm text-red-100 shadow-lg">
+          <div className="flex items-center gap-2 rounded-xl border border-destructive/60 bg-card px-4 py-2 text-sm shadow-lg">
             <span className="relative flex size-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-              <span className="relative inline-flex size-2.5 rounded-full bg-red-500" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75" />
+              <span className="relative inline-flex size-2.5 rounded-full bg-destructive" />
             </span>
             <span>
               <strong className="mr-1">ครูกำลังดูหน้าจอของคุณ</strong>
-              ({inspectMode === 'live' ? 'สด' : 'ย้อนหลัง'} · บันทึก audit แล้ว)
+              <span className="text-muted-foreground">
+                ({inspectMode === 'live' ? 'สด' : 'ย้อนหลัง'} · บันทึก audit แล้ว)
+              </span>
             </span>
           </div>
         </div>
       )}
       {warning && !frozen && (
         <div className="fixed inset-x-0 top-0 z-50 flex justify-center p-3">
-          <div className="flex items-center gap-2 rounded-xl border border-amber-600/70 bg-amber-950/95 px-4 py-3 text-sm text-amber-100 shadow-lg">
-            <MessageSquareWarning size={16} className="shrink-0 text-amber-400" />
+          <div className="flex items-center gap-2 rounded-xl border border-amber-500/50 bg-card px-4 py-3 text-sm shadow-lg">
+            <MessageSquareWarning size={16} className="shrink-0 text-amber-500" />
             <span>
               <strong className="mr-1">ข้อความจากผู้คุมสอบ:</strong>
               {warning}
@@ -87,15 +89,15 @@ export default function ProctorOverlay(): React.JSX.Element {
       )}
 
       {frozen && (
-        <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-slate-950/98 backdrop-blur-sm">
-          <Snowflake size={56} className="mb-4 text-sky-400" />
-          <h2 className="text-xl font-semibold text-slate-100">เครื่องถูกแช่แข็งชั่วคราว</h2>
-          <p className="mt-2 max-w-md text-center text-sm text-slate-400">
+        <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-background/95 px-6 text-center backdrop-blur-sm">
+          <Snowflake size={56} className="mb-4 text-primary" />
+          <h2 className="text-xl font-semibold">เครื่องถูกแช่แข็งชั่วคราว</h2>
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">
             {freezeReason || 'ผู้คุมสอบสั่งหยุดการทำข้อสอบชั่วคราว'}
           </p>
-          <p className="mt-4 text-xs text-slate-500">รอผู้คุมสอบปลดล็อก… ห้ามปิดแอป</p>
+          <p className="mt-4 text-xs text-muted-foreground">รอผู้คุมสอบปลดล็อก… ห้ามปิดแอป</p>
           {queuedWarning && (
-            <p className="mt-2 max-w-md text-center text-xs text-amber-300">
+            <p className="mt-2 max-w-md text-xs text-amber-600 dark:text-amber-400">
               มีข้อความจากผู้คุมสอบค้างอยู่ 1 ข้อความ — จะแสดงหลังปลด Freeze
             </p>
           )}
