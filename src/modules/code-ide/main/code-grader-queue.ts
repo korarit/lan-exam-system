@@ -21,7 +21,7 @@ import { runCliTest } from './runners/cli-runner'
 import { bundleFrontend } from './runners/frontend-runner'
 import { documentHtmlFor, runDomTest } from './runners/dom-runner'
 import { allocateEphemeralPort, killProcessTree, runHttpTests, spawnServer, waitForPort } from './runners/backend-api-runner'
-import { compareSqlResult, runSqliteTest } from './runners/sql-runner'
+import { compareSqlResult, runSqliteTestWithTimeout } from './runners/sql-runner'
 import { checkRuntime, getRuntimePathEntries, runtimesForLanguage } from './runtime-locator'
 
 /* ============================================================
@@ -412,7 +412,7 @@ async function compileProgram(
   }
   if (language === 'go' || language === 'go-backend') {
     const outBin = path.join(runDir, process.platform === 'win32' ? 'app.exe' : 'app')
-    const r = await runCommand('go', ['build', '-o', outBin, '.'], runDir, env, 90_000)
+    const r = await runCommand('go', ['build', '-o', outBin, '.'], runDir, goToolEnv(env), 90_000)
     if (!r.ok) return null
     return { cmd: outBin, args: () => [], builtInDir: runDir }
   }
@@ -437,6 +437,20 @@ async function compileProgram(
     }
   }
   return null
+}
+
+/** env เสริมสำหรับ Go toolchain ใน sandbox:
+ * buildSandboxEnv ตัด HOME/USERPROFILE ออก (กันรั่วพาธ vault) แต่ `go build`
+ * ต้องมี GOCACHE ที่เขียนได้ — จึงชี้ไป tmp รวมของแอป (นอก vault) พร้อมล็อก
+ * ไม่ให้ดาวน์โหลดอะไรจากเน็ต (GOTOOLCHAIN=local + GOPROXY=off) */
+function goToolEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  let cache = path.join(os.tmpdir(), 'ztcode-gocache')
+  try {
+    fs.mkdirSync(cache, { recursive: true })
+  } catch {
+    cache = os.tmpdir()
+  }
+  return { ...base, GOCACHE: cache, GOTOOLCHAIN: 'local', GOPROXY: 'off' }
 }
 
 function listSourcesRecursive(dir: string, exts: string[]): string[] {
@@ -705,7 +719,7 @@ function backendServerCommand(
       return {
         cmd: outBin,
         args: [],
-        build: async (env) => (await runCommand('go', ['build', '-o', outBin, '.'], runDir, env, 90_000)).ok
+        build: async (env) => (await runCommand('go', ['build', '-o', outBin, '.'], runDir, goToolEnv(env), 90_000)).ok
       }
     }
     case 'java-backend':
@@ -919,8 +933,9 @@ async function gradeSqlTests(
   for (const t of tests) {
     const t0 = Date.now()
     try {
-      // spawn ฐานข้อมูลจำลองลูกใหม่ทุก test (Master Seed ไม่ถูกแตะ — กัน DELETE/DROP ค้างข้ามข้อ)
-      const r = await runSqliteTest(seedSql, studentSql, t)
+      // spawn ฐานข้อมูลจำลองลูกใหม่ทุก test ใน worker แยก (Master Seed ไม่ถูกแตะ —
+      // กัน DELETE/DROP ค้างข้ามข้อ + ตัดจบ query หนักเกิน timeout โดยไม่ค้างโปรเซสหลัก)
+      const r = await runSqliteTestWithTimeout(seedSql, studentSql, t)
       results.push({
         testId: t.testId,
         kind: t.kind,

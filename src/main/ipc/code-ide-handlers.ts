@@ -14,7 +14,7 @@ import {
   SupportedCodeLanguageSchema
 } from '@modules/code-ide/shared/code-schema'
 import { runCliTest } from '@modules/code-ide/main/runners/cli-runner'
-import { runSqliteTest } from '@modules/code-ide/main/runners/sql-runner'
+import { runSqliteTestWithTimeout } from '@modules/code-ide/main/runners/sql-runner'
 import {
   discoverRuntimes,
   runtimesForLanguage,
@@ -70,7 +70,8 @@ export function registerCodeIdeHandlers(router: IpcRouter): void {
 
   router.register('code-ide:run-sql', async (req): Promise<CodeIdeRunSqlResponse> => {
     const test = SqlTestCaseSchema.parse(req.test)
-    const r = await runSqliteTest(req.seedSql, req.studentSql, test)
+    // Phase 11: รันใน worker แยก + ตัดจบตาม timeoutMs — กัน query หนักค้างหน้าจอนักเรียน
+    const r = await runSqliteTestWithTimeout(req.seedSql, req.studentSql, test)
     const rows = r.actualRows.slice(0, 200).map((row) => row.slice(0, 64).map(toCell))
     return {
       testId: r.testId,
