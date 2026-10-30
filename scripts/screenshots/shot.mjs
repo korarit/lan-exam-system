@@ -1,6 +1,6 @@
 // Screenshot + tour-video harness: serves out/renderer, mocks window.ztExam.
 // Run: node scripts/screenshots/shot.mjs
-// Video is stitched from step screenshots with system ffmpeg (no playwright video).
+// window.__emit[channel] = array of subscribed callbacks -> harness drives events.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -43,9 +43,11 @@ function serve(port) {
 function mockInit(scenario) {
   const now = Date.now();
   const withRoom = scenario.withRoom === true;
-  const room = withRoom
-    ? { roomId: '11111111-1111-4111-8111-111111111111', roomName: 'ห้องสอบ 401', roomPin: '482913', tcpPort: 44456, certFpShort: 'AB12CD34EF56GH78', certFingerprint: 'AB12CD34EF56GH78AB12CD34EF56GH78', mode: 'closed', enforcement: 'report-only' }
-    : null;
+  const noRoom = scenario.noRoom === true;
+  const roomMode = scenario.roomMode || 'closed';
+  const room = noRoom
+    ? null
+    : { roomId: '11111111-1111-4111-8111-111111111111', roomName: 'ห้องสอบ 401', roomPin: '482913', tcpPort: 44456, certFpShort: 'AB12CD34EF56GH78', certFingerprint: 'AB12CD34EF56GH78AB12CD34EF56GH78', mode: roomMode, enforcement: 'report-only' };
   const beacon = { magic: 'ZTEXAM_V1', roomId: '11111111-1111-4111-8111-111111111111', roomName: 'ห้องสอบ 401', hostName: 'TEACHER-PC', examMode: 'closed', tcpPort: 44456, certFpShort: 'AB12CD34EF56GH78', studentCount: 12, examStatus: 'lobby', timestamp: now, sourceIp: '192.168.1.10', lastSeenAtMs: now };
   const students = withRoom
     ? [
@@ -69,6 +71,37 @@ function mockInit(scenario) {
       { studentId: 'S003', activeSuspicionScore: 0, unacknowledgedCriticalCount: 0, unacknowledgedWarningCount: 0, triageLevel: 'normal', disconnected: true, frozen: false, lastEventAtMs: null, latestSummary: null, alerts: [] }
     ]
   };
+  const examState = scenario.examState || { state: 'idle', title: null, questionCount: 0, durationSeconds: 0 };
+  const domains = scenario.domains === 'docs-ai'
+    ? [
+        { domain: 'docs.example.com', topDomain: 'docs.example.com', source: 'top-url', hits: 42, approved: true, lastSeenAtMs: now },
+        { domain: 'cdn.example.net', topDomain: 'docs.example.com', source: 'script', hits: 17, approved: false, lastSeenAtMs: now - 10000 },
+        { domain: 'claude.ai', topDomain: 'cdn.example.net', source: 'fetch', hits: 5, approved: false, lastSeenAtMs: now - 20000 }
+      ]
+    : scenario.domains === 'docs-clean'
+      ? [
+          { domain: 'docs.example.com', topDomain: 'docs.example.com', source: 'top-url', hits: 42, approved: true, lastSeenAtMs: now },
+          { domain: 'cdn.example.net', topDomain: 'docs.example.com', source: 'script', hits: 17, approved: false, lastSeenAtMs: now - 10000 },
+          { domain: 'fonts.example.org', topDomain: 'docs.example.com', source: 'stylesheet', hits: 9, approved: false, lastSeenAtMs: now - 15000 }
+        ]
+      : [];
+  const attestation = scenario.attestationDev
+    ? { devMode: true, signatureEnforced: false, platform: 'win32', trackedStudents: [] }
+    : { devMode: false, signatureEnforced: true, platform: 'win32', trackedStudents: [] };
+
+  window.__emit = {};
+  const emitReg = window.__emit;
+  function reg(channel, cb) {
+    (emitReg[channel] = emitReg[channel] || []).push(cb);
+  }
+
+  // Fake screen thumbnail (SVG) for triage cards + screen inspector modal
+  function fakeThumb() {
+    try {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200"><rect width="320" height="200" fill="#0f172a"/><rect x="12" y="12" width="296" height="28" rx="4" fill="#1e293b"/><rect x="12" y="52" width="180" height="120" rx="4" fill="#1e3a5f"/><rect x="200" y="52" width="108" height="56" rx="4" fill="#134e4a"/><rect x="200" y="116" width="108" height="56" rx="4" fill="#4a1e1e"/><text x="16" y="30" font-size="11" fill="#94a3b8">Desktop S001</text></svg>`;
+      return { studentId: 'S001', displayIndex: 0, displayCount: 1, mode: 'thumbnail', mimeType: 'image/svg+xml', imageBase64: btoa(unescape(encodeURIComponent(svg))), timestampMs: Date.now(), displayId: 'd0' };
+    } catch { return null; }
+  }
 
   window.ztExam = new Proxy(
     {
@@ -76,33 +109,67 @@ function mockInit(scenario) {
       onRoleChanged: () => () => {},
       selectRole: async () => ({ ok: true }),
       getRoom: async () => ({ room }),
-      getExamState: async () => ({ state: 'idle', title: null, questionCount: 0, durationSeconds: 0 }),
+      getExamState: async () => examState,
       getStudents: async () => ({ students }),
       getSummaries: async () => ({ summaries }),
       getTriageOverview: async () => overview,
-      getAttestationConfig: async () => ({ devMode: false, signatureEnforced: true, platform: 'win32', trackedStudents: [] }),
-      listRecordedDomains: async () => ({ records: [] }),
+      getAttestationConfig: async () => attestation,
+      setAttestationEnforce: async () => ({ ok: true }),
+      listRecordedDomains: async () => ({ records: domains }),
+      approveDomain: async () => ({ ok: true }),
+      clearRecordedDomains: async () => ({ ok: true }),
+      setDomainEnforcement: async () => ({ ok: true }),
+      openDocPreview: async () => ({ ok: true }),
+      setStudentFreeze: async () => ({ ok: true }),
+      resolveTriage: async () => ({ ok: true, affectedAlerts: 3 }),
+      exportIncidentReport: async () => ({ ok: false, reason: 'CANCELLED' }),
+      exportAuditBundle: async () => ({ ok: false, reason: 'CANCELLED' }),
+      getStudentEvidence: async () => ({
+        info: { studentId: 'S001', studentName: 'เด็กชายทดสอบ หนึ่ง', online: true, status: 'สอบอยู่ ข้อ 3/10', focusState: 'focused', joinedAtMs: now - 1800000, lastSeenAtMs: now - 3000, frozen: false, vmSuspected: false, remoteSuspected: true },
+        entries: [
+          { seqNo: 41, studentId: 'S001', eventCode: 'WINDOW_BLUR', severity: 'warning', summaryText: 'สลับหน้าต่างออก (ครั้งที่ 3)', scoreDelta: 10, serverTimestampMs: now - 300000, evidence: { count: 3 }, entryHash: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2' },
+          { seqNo: 42, studentId: 'S001', eventCode: 'ABNORMAL_TYPING_PATTERN', severity: 'critical', summaryText: 'จังหวะพิมพ์สม่ำเสมอผิดมนุษย์ (bot-like)', scoreDelta: 25, serverTimestampMs: now - 60000, evidence: { cv: 0.04 }, entryHash: 'f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5' }
+        ],
+        chain: { valid: true, totalEntries: 42 }
+      }),
+      sendProctorWarning: async () => ({ ok: true }),
+      screenInspect: async () => ({ ok: true }),
+      startDiscovery: async () => undefined,
+      stopDiscovery: async () => undefined,
+      enterKiosk: async () => undefined,
+      exitKiosk: async () => undefined,
+      joinRoom: async () => ({ ok: true }),
+      docsToggle: async () => ({ ok: true }),
+      docsNavigate: async () => ({ ok: true }),
+      autosaveDraft: async () => ({ ok: true }),
+      submitAnswer: async () => ({ ok: true }),
+      navigate: async () => ({ ok: true }),
+      moduleSend: async () => ({ ok: true }),
+      sendTypingMetrics: async () => undefined,
       listSavedForms: async () => ({ forms: [] }),
+      saveZtform: async () => ({ ok: false, reason: 'CANCELLED' }),
+      loadZtform: async () => ({ ok: false, reason: 'CANCELLED' }),
       getFormResponses: async () => ({ kind: 'database', roomId: '11111111-1111-4111-8111-111111111111', roomName: 'ห้องสอบ 401', formTitle: 'แบบฟอร์มตัวอย่าง', form: { items: [] }, startedAtMs: null, endedAtMs: null, students: [], itemStats: [], distribution: [], summary: { mean: 0, median: 0, min: 0, max: 0, studentCount: 0, needsManualCount: 0 }, regradeHistory: [] }),
       getFormState: async () => ({ formTitle: null }),
       checkRuntimes: async () => ({ runtimes: [] }),
       getCodeSubmissions: async () => ({ ok: true, roomId: null, roomName: null, packageTitle: null, category: null, language: null, questionSlug: null, maxPoints: 0, queue: { active: 0, pending: 0 }, depsUnsupported: [], submissions: [] }),
       getCodeWorkspaceState: async () => ({ rootPath: null }),
-      saveZtform: async () => ({ ok: false, reason: 'CANCELLED' }),
-      loadZtform: async () => ({ ok: false, reason: 'CANCELLED' }),
       onEvent: (channel, cb) => {
         try {
-          if (channel === 'network:rooms-updated') setTimeout(() => { try { cb({ rooms: scenario.role === 'student' ? [beacon] : [] }); } catch {} }, 60);
+          reg(channel, cb);
+          if (channel === 'network:rooms-updated') setTimeout(() => { try { cb({ rooms: scenario.role === 'student' ? [{ magic: 'ZTEXAM_V1', roomId: '11111111-1111-4111-8111-111111111111', roomName: 'ห้องสอบ 401', hostName: 'TEACHER-PC', examMode: 'closed', tcpPort: 44456, certFpShort: 'AB12CD34EF56GH78', studentCount: 12, examStatus: 'lobby', timestamp: Date.now(), sourceIp: '192.168.1.10', lastSeenAtMs: Date.now() }] : [] }); } catch {} }, 60);
           else if (channel === 'host:students-updated') setTimeout(() => { try { cb({ students }); } catch {} }, 60);
           else if (channel === 'host:exam-summaries') setTimeout(() => { try { cb({ summaries }); } catch {} }, 60);
           else if (channel === 'host:triage-updated') setTimeout(() => { try { cb(overview); } catch {} }, 80);
-          else if (channel === 'host:recorded-domains-updated') setTimeout(() => { try { cb({ records: [] }); } catch {} }, 60);
+          else if (channel === 'host:recorded-domains-updated') setTimeout(() => { try { cb({ records: domains }); } catch {} }, 60);
+          else if (channel === 'host:screen-thumbnail' && scenario.screenThumb) setTimeout(() => { try { const t = fakeThumb(); if (t) cb(t); } catch {} }, 400);
         } catch {}
         return () => {};
       }
     },
     {
       get(t, p) {
+        if (p === '__emit') return emitReg;
         if (p in t) return t[p];
         if (typeof p === 'string' && (p.startsWith('on') || p.startsWith('subscribe'))) return () => () => {};
         return async () => ({ ok: true, records: [], students: [], summaries: [], events: [], entries: [], chain: { ok: true } });
@@ -117,56 +184,275 @@ function mockInit(scenario) {
   } catch {}
 }
 
+// ---- payload builders (shared with page.evaluate via JSON) ----
+const MCQ = { moduleId: 'stepping-runner', questionId: 'q1', cursorIndex: 2, questionCount: 10, type: 'mcq', prompt: 'จงหาค่าของ 15 × 4 + 20 ÷ 5', points: 5, allowBackNavigation: true, choices: [{ text: '64' }, { text: '68' }, { text: '60' }, { text: '72' }] };
+const ESSAY = { moduleId: 'stepping-runner', questionId: 'q2', cursorIndex: 3, questionCount: 10, type: 'essay', prompt: 'จงอธิบายหลักการทำงานของ hash chain ในระบบตรวจจับการทุจริต พร้อมยกตัวอย่างว่าเหตุการณ์ใดบ้างที่ควรบันทึก', points: 10, allowBackNavigation: false };
+const STARTED_CLOSED = { examTitle: 'สอบกลางภาค คณิตศาสตร์ ม.4', questionCount: 10, remainingSeconds: 3540 };
+const STARTED_DOCS = { examTitle: 'สอบกลางภาค สังคมศึกษา ม.5', questionCount: 8, remainingSeconds: 5320, examMode: 'in-app-docs' };
+const DOCS_OPEN = { open: true, url: 'https://docs.example.com/exam-material', allowedDomains: ['docs.example.com'], enforcement: 'warn', blockedUrl: null, warnUrl: null, viewError: null };
+
 const server = await serve(8901);
 const CHROME = 'C:\\Users\\MSI_GAMING\\AppData\\Local\\ms-playwright\\chromium-1243\\chrome-win64\\chrome.exe';
 const browser = await chromium.launch({ executablePath: CHROME, headless: true });
 let failed = 0;
 
-async function shot(name, scenario, opts = {}) {
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+async function emit(page, channel, payload) {
+  await page.evaluate(([ch, p]) => { (window.__emit[ch] || []).slice().forEach((cb) => { try { cb(p); } catch (e) { console.error('emit-err', e); } }); }, [channel, payload]);
+  await page.waitForTimeout(450);
+}
+
+async function newPage(scenario, viewport) {
+  const ctx = await browser.newContext({ viewport: viewport || { width: 1440, height: 900 } });
   await ctx.addInitScript(mockInit, scenario);
   const page = await ctx.newPage();
   const errors = [];
-  page.on('pageerror', (e) => errors.push(String(e).slice(0, 160)));
+  page.on('pageerror', (e) => errors.push(String(e).split('\n')[0].slice(0, 200)));
   await page.goto('http://127.0.0.1:8901/', { waitUntil: 'load' });
-  await page.waitForTimeout(opts.wait ?? 1500);
+  await page.waitForTimeout(1300);
+  return { ctx, page, errors };
+}
+
+async function finish(name, ctx, page, errors, opts = {}) {
   const kids = await page.evaluate(() => document.getElementById('root')?.children.length ?? -1);
-  if (kids === 0) { console.log('RETRY-EMPTY', name); await page.waitForTimeout(1500); }
+  if (kids === 0) { await page.waitForTimeout(1200); }
   await page.screenshot({ path: path.join(OUT, name), fullPage: opts.fullPage ?? false });
-  if (errors.length > 0) { failed += 1; console.log('saved', name, 'WITH-PAGEERRORS:', errors.join(' | ')); }
-  else console.log('saved', name, 'clean, rootKids=', await page.evaluate(() => document.getElementById('root')?.children.length ?? -1));
+  const tag = errors.length > 0 ? `WITH-PAGEERRORS: ${errors.join(' | ')}` : 'clean';
+  if (errors.length > 0) failed += 1;
+  console.log('saved', name, tag);
   await ctx.close();
 }
 
-await shot('01-role-dark.png', { role: 'unselected', theme: 'dark' });
-await shot('02-role-light.png', { role: 'unselected', theme: 'light' });
-await shot('03-host-room-dark.png', { role: 'host', theme: 'dark', withRoom: true }, { fullPage: true, wait: 2000 });
-await shot('04-student-lobby-dark.png', { role: 'student', theme: 'dark' }, { wait: 1800 });
+// join flow helper (student lobby -> waiting)
+async function doJoin(page) {
+  await page.getByText('ห้องสอบ 401', { exact: false }).first().click({ timeout: 3000 });
+  await page.waitForTimeout(300);
+  const inputs = page.locator('input');
+  await inputs.nth(0).fill('S001');
+  await inputs.nth(1).fill('เด็กชายทดสอบ หนึ่ง');
+  await inputs.nth(2).fill('482913');
+  await page.getByText('เข้าห้องสอบ', { exact: false }).last().click({ timeout: 3000 });
+  await page.waitForTimeout(900);
+}
 
-// Tour steps for video: host room -> click each tab -> back to room
+// ---- HOST ----
+{
+  let s = await newPage({ role: 'unselected', theme: 'dark' });
+  await finish('01-role-dark.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'unselected', theme: 'light' });
+  await finish('02-role-light.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true }, { width: 1440, height: 900 });
+  await finish('03-host-room-dark.png', s.ctx, s.page, s.errors, { fullPage: true });
+}
+{
+  let s = await newPage({ role: 'host', theme: 'light', withRoom: true });
+  await finish('14-host-room-light.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'host', theme: 'dark', noRoom: true });
+  await finish('05-host-no-room.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true, examState: { state: 'running', title: 'สอบกลางภาค คณิตศาสตร์ ม.4', questionCount: 10, durationSeconds: 3600 } });
+  await finish('06-host-running.png', s.ctx, s.page, s.errors, { fullPage: true });
+}
+{
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true, examState: { state: 'finished', title: 'สอบกลางภาค คณิตศาสตร์ ม.4', questionCount: 10, durationSeconds: 3600 } });
+  await finish('09-host-finished.png', s.ctx, s.page, s.errors, { fullPage: true });
+}
+{
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true, roomMode: 'in-app-docs', domains: 'docs-ai' });
+  await finish('07-host-docs-ai.png', s.ctx, s.page, s.errors, { fullPage: true });
+}
+{
+  // approve-all confirm dialog (clean domains, no AI rows)
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true, roomMode: 'in-app-docs', domains: 'docs-clean' });
+  try {
+    await s.page.getByText('อนุญาตทั้งหมด', { exact: false }).first().click({ timeout: 3000 });
+    await s.page.waitForTimeout(700);
+  } catch (e) { console.log('miss approve-all'); }
+  await finish('08-host-approve-dialog.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true, attestationDev: true });
+  await finish('13-host-attestation-dev.png', s.ctx, s.page, s.errors, { fullPage: true });
+}
+{
+  // evidence drawer: open first card
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true });
+  try {
+    await s.page.getByText('ดูหลักฐาน', { exact: false }).first().click({ timeout: 3000 });
+    await s.page.waitForTimeout(900);
+  } catch (e) { console.log('miss evidence'); }
+  await finish('10-host-evidence.png', s.ctx, s.page, s.errors);
+}
+{
+  // freeze confirm dialog on first triage card
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true });
+  try {
+    await s.page.getByText('Dashboard คัดกรอง', { exact: false }).first().scrollIntoViewIfNeeded({ timeout: 5000 });
+    await s.page.waitForTimeout(400);
+    const clicked = await s.page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button')).filter((b) => b.textContent && b.textContent.includes('Freeze') && !b.disabled);
+      const t = btns[0];
+      if (!t) return 'none-found';
+      t.scrollIntoView({ block: 'center' });
+      t.click();
+      return 'clicked:' + (t.textContent || '').trim().slice(0, 20);
+    });
+    console.log('freeze:', clicked);
+    await s.page.waitForTimeout(700);
+  } catch (e) { console.log('miss freeze:', String(e).split('\n').slice(0, 6).join(' | ').slice(0, 400)); }
+  await finish('11-host-freeze-dialog.png', s.ctx, s.page, s.errors);
+}
+{
+  // screen inspector modal with fake thumbnail (card button "ดูหน้าจอ" always rendered)
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true, screenThumb: true }, { width: 1440, height: 900 });
+  try {
+    await s.page.getByText('Dashboard คัดกรอง', { exact: false }).first().scrollIntoViewIfNeeded({ timeout: 5000 });
+    await s.page.getByRole('button', { name: 'ดูหน้าจอ' }).first().click({ timeout: 5000 });
+    await s.page.waitForTimeout(1200);
+  } catch (e) { console.log('miss screen-inspect:', String(e).split('\n').slice(1, 2).join(' ').slice(0, 160)); }
+  await finish('12-host-screen-modal.png', s.ctx, s.page, s.errors);
+}
+
+// ---- STUDENT ----
+{
+  let s = await newPage({ role: 'student', theme: 'dark' });
+  await finish('04-student-lobby-dark.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'student', theme: 'dark' });
+  try {
+    await s.page.getByText('กรอก IP', { exact: false }).first().click({ timeout: 3000 });
+    await s.page.waitForTimeout(600);
+  } catch (e) { console.log('miss manual'); }
+  await finish('15-student-manual-dialog.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'student', theme: 'dark' });
+  await doJoin(s.page);
+  await finish('16-student-waiting.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'student', theme: 'dark' });
+  await doJoin(s.page);
+  await emit(s.page, 'exam:started', STARTED_CLOSED);
+  await emit(s.page, 'exam:question', MCQ);
+  await emit(s.page, 'exam:tick', { remainingSeconds: 3532 });
+  await emit(s.page, 'exam:module-ack', { moduleId: 'stepping-runner', kind: 'autosave', ok: true, progressText: 'บันทึกแล้ว' });
+  await finish('17-student-exam-mcq.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'student', theme: 'light' });
+  await doJoin(s.page);
+  await emit(s.page, 'exam:started', STARTED_CLOSED);
+  await emit(s.page, 'exam:question', MCQ);
+  await emit(s.page, 'exam:tick', { remainingSeconds: 3532 });
+  await finish('23-student-exam-light.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'student', theme: 'dark' });
+  await doJoin(s.page);
+  await emit(s.page, 'exam:started', STARTED_CLOSED);
+  await emit(s.page, 'exam:question', ESSAY);
+  await emit(s.page, 'exam:submit-rejected', { reason: 'cursor-mismatch' });
+  await finish('18-student-exam-essay-reject.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'student', theme: 'dark' });
+  await doJoin(s.page);
+  await emit(s.page, 'exam:started', STARTED_DOCS);
+  await emit(s.page, 'exam:question', MCQ);
+  await emit(s.page, 'exam:docs-state', DOCS_OPEN);
+  await finish('19-student-exam-docs.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'student', theme: 'dark' });
+  await doJoin(s.page);
+  await emit(s.page, 'exam:started', STARTED_CLOSED);
+  await emit(s.page, 'exam:question', MCQ);
+  await emit(s.page, 'network:connection-state', { state: 'frozen', reason: 'timeout' });
+  await finish('20-student-frozen.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'student', theme: 'dark' });
+  await doJoin(s.page);
+  await emit(s.page, 'exam:started', STARTED_CLOSED);
+  await emit(s.page, 'exam:question', MCQ);
+  await emit(s.page, 'exam:completed', { reason: 'completed' });
+  await finish('21-student-completed.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'student', theme: 'dark' });
+  await doJoin(s.page);
+  await emit(s.page, 'exam:started', STARTED_CLOSED);
+  await emit(s.page, 'exam:question', MCQ);
+  await emit(s.page, 'exam:time-up', {});
+  await finish('22-student-timeup.png', s.ctx, s.page, s.errors);
+}
+
+// ---- MODULE STILLS ----
+{
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true });
+  try {
+    await s.page.getByText('Dynamic Form Builder', { exact: false }).first().click({ timeout: 3000 });
+    await s.page.waitForTimeout(800);
+  } catch {}
+  await finish('24-module-form-builder.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true });
+  try {
+    await s.page.getByText('ผลตอบฟอร์ม', { exact: false }).first().click({ timeout: 3000 });
+    await s.page.waitForTimeout(900);
+  } catch {}
+  await finish('25-module-responses.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true });
+  try {
+    await s.page.getByText('Code IDE Builder', { exact: false }).first().click({ timeout: 3000 });
+    await s.page.waitForTimeout(900);
+  } catch {}
+  await finish('26-module-code-builder.png', s.ctx, s.page, s.errors);
+}
+{
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true });
+  const tabs = ['ผลตรวจ Code', 'ห้องสอบ'];
+  for (const t of tabs) {
+    try { await s.page.getByText(t, { exact: false }).first().click({ timeout: 3000 }); await s.page.waitForTimeout(800); } catch (e) { console.log('miss', t); }
+  }
+  await finish('27-module-code-submissions.png', s.ctx, s.page, s.errors);
+}
+
+// ---- TOUR VIDEO (stills stitched with ffmpeg) ----
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   await ctx.addInitScript(mockInit, { role: 'host', theme: 'dark', withRoom: true });
   const page = await ctx.newPage();
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(String(e).split('\n')[0]));
   await page.goto('http://127.0.0.1:8901/', { waitUntil: 'load' });
-  await page.waitForTimeout(1800);
+  await page.waitForTimeout(1500);
   const steps = [
     ['tour-01.png', null],
     ['tour-02.png', 'Dynamic Form Builder'],
     ['tour-03.png', 'ผลตอบฟอร์ม'],
     ['tour-04.png', 'Code IDE Builder'],
     ['tour-05.png', 'ผลตรวจ Code'],
-    ['tour-06.png', 'ห้องสอบ']
+    ['tour-06.png', 'ห้องสอบ & ผู้คุม']
   ];
-  let i = 0;
   for (const [file, tab] of steps) {
-    i += 1;
     if (tab) {
-      try { await page.getByText(tab, { exact: false }).first().click({ timeout: 2500 }); } catch (e) { console.log('tab miss:', tab); }
-      await page.waitForTimeout(1100);
+      try { await page.getByText(tab, { exact: false }).first().click({ timeout: 3000 }); } catch (e) { console.log('tour miss:', tab); }
+      await page.waitForTimeout(1000);
     }
     await page.screenshot({ path: path.join(OUT, file) });
-    console.log('step', i, file);
+    console.log('tour step', file, errs.length ? `ERR ${errs.join('|')}` : 'ok');
   }
   await ctx.close();
 }
@@ -174,10 +460,9 @@ await shot('04-student-lobby-dark.png', { role: 'student', theme: 'dark' }, { wa
 await browser.close();
 server.close();
 
-// Stitch tour video with system ffmpeg (2s per step, 1280x720 mp4)
 try {
   execFileSync('ffmpeg', ['-y', '-framerate', '1', '-i', path.join(OUT, 'tour-%02d.png'), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-vf', 'scale=1280:720', path.join(OUT, 'tour.mp4')], { stdio: 'pipe' });
-  console.log('video stitched: screenshots/tour.mp4');
+  console.log('video: screenshots/tour.mp4');
 } catch (e) {
   console.log('ffmpeg stitch failed:', String(e).slice(0, 300));
 }
