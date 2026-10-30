@@ -1,11 +1,17 @@
 import { useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, FilePlus2, FolderPlus, FileCode2, Folder, Lock, Package } from 'lucide-react'
+import { ChevronDown, ChevronRight, FilePlus2, FolderPlus, FileCode2, Folder, Lock, Package, Upload } from 'lucide-react'
 import type { DependencyBundle, VirtualEntry } from '../../shared/code-schema'
 import { buildExplorerTree, type ProjectTreeNode } from '../../shared/project-tree'
+import { Button } from '@renderer/components/ui/button'
+import { Input } from '@renderer/components/ui/input'
+import { Badge } from '@renderer/components/ui/badge'
+import { ScrollArea } from '@renderer/components/ui/scroll-area'
+import { Separator } from '@renderer/components/ui/separator'
+import { cn } from '@renderer/lib/utils'
 
 /* ============================================================
  * Phase 8 (8.2.1) — ProjectFileExplorerTree
- * Collapsible tree + ไอคอนตามนามสกุล + 🔒 readOnly
+ * Collapsible tree + ไอคอนตามนามสกุล + readOnly
  * + New File / New Folder / Rename / Delete / Duplicate
  * + Installed Libraries Inspector
  * ============================================================ */
@@ -34,12 +40,12 @@ const FILE_ICON_COLOR: Record<string, string> = {
   html: 'text-orange-500',
   css: 'text-blue-400',
   sql: 'text-emerald-300',
-  json: 'text-slate-300'
+  json: 'text-muted-foreground'
 }
 
 function iconColorFor(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() ?? ''
-  return FILE_ICON_COLOR[ext] ?? 'text-slate-400'
+  return FILE_ICON_COLOR[ext] ?? 'text-muted-foreground'
 }
 
 export default function ProjectFileExplorerTree(props: Props): React.JSX.Element {
@@ -80,34 +86,36 @@ export default function ProjectFileExplorerTree(props: Props): React.JSX.Element
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-1 border-b border-slate-800 px-2 py-1.5">
-        <span className="px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Project files</span>
+      <div className="flex items-center gap-1 border-b px-2 py-1.5">
+        <span className="px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Project files</span>
         <span className="flex-1" />
         {props.canCreate && (
           <>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               title="+ New File"
               onClick={() => setCreatingIn('')}
-              className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
             >
               <FilePlus2 size={14} />
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               title="+ New Folder"
               onClick={() => setCreatingIn('')}
-              className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
             >
               <FolderPlus size={14} />
-            </button>
+            </Button>
           </>
         )}
       </div>
 
       {creatingIn !== null && (
-        <div className="flex gap-1 border-b border-slate-800 p-2">
-          <input
+        <div className="flex gap-1 border-b p-2">
+          <Input
             autoFocus
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
@@ -116,70 +124,78 @@ export default function ProjectFileExplorerTree(props: Props): React.JSX.Element
               if (e.key === 'Escape') setCreatingIn(null)
             }}
             placeholder="components/cards/UserCard.tsx"
-            className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs focus:border-sky-500 focus:outline-none"
+            className="min-w-0 flex-1 font-mono text-xs"
+            aria-label="ชื่อไฟล์ใหม่"
           />
-          <button type="button" onClick={() => submitCreate('file')} className="rounded bg-sky-700 px-2 py-1 text-xs hover:bg-sky-600">ไฟล์</button>
-          <button type="button" onClick={() => submitCreate('folder')} className="rounded bg-slate-700 px-2 py-1 text-xs hover:bg-slate-600">โฟลเดอร์</button>
+          <Button type="button" size="sm" onClick={() => submitCreate('file')}>ไฟล์</Button>
+          <Button type="button" variant="secondary" size="sm" onClick={() => submitCreate('folder')}>โฟลเดอร์</Button>
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-1">
-        {roots.map((n) => (
-          <TreeNodeView
-            key={n.path}
-            node={n}
-            depth={0}
-            expanded={expanded}
-            selectedPath={props.selectedPath}
-            canDeleteRename={props.canDeleteRename}
-            renameTarget={renameTarget}
-            renameValue={renameValue}
-            onToggle={toggle}
-            onSelectFile={props.onSelectFile}
-            onStartRename={(p) => {
-              setRenameTarget(p)
-              setRenameValue(p.split('/').pop() ?? p)
-            }}
-            onSubmitRename={submitRename}
-            onRenameChange={setRenameValue}
-            onDelete={props.onDelete}
-            onCreateInside={(dir) => setCreatingIn(dir)}
-          />
-        ))}
-        {roots.length === 0 && <p className="p-3 text-xs text-slate-500">ไม่มีไฟล์ — สร้างไฟล์แรกด้วย + New File</p>}
-      </div>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="p-1">
+          {roots.map((n) => (
+            <TreeNodeView
+              key={n.path}
+              node={n}
+              depth={0}
+              expanded={expanded}
+              selectedPath={props.selectedPath}
+              canDeleteRename={props.canDeleteRename}
+              renameTarget={renameTarget}
+              renameValue={renameValue}
+              onToggle={toggle}
+              onSelectFile={props.onSelectFile}
+              onStartRename={(p) => {
+                setRenameTarget(p)
+                setRenameValue(p.split('/').pop() ?? p)
+              }}
+              onSubmitRename={submitRename}
+              onRenameChange={setRenameValue}
+              onDelete={props.onDelete}
+              onCreateInside={(dir) => setCreatingIn(dir)}
+            />
+          ))}
+          {roots.length === 0 && <p className="p-3 text-xs text-muted-foreground">ไม่มีไฟล์ — สร้างไฟล์แรกด้วย + New File</p>}
+        </div>
+      </ScrollArea>
 
-      <div className="border-t border-slate-800 p-2">
-        <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+      <div className="border-t p-2">
+        <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           <Package size={12} /> Libraries ({props.libraries.length})
         </div>
         {props.libraries.length === 0 ? (
-          <p className="text-[11px] text-slate-600">โจทย์ข้อนี้ไม่มีไลบรารีเสริม</p>
+          <p className="text-[11px] text-muted-foreground">โจทย์ข้อนี้ไม่มีไลบรารีเสริม</p>
         ) : (
-          <ul className="max-h-24 space-y-0.5 overflow-y-auto">
-            {props.libraries.map((lib, i) => (
-              <li key={i} className="font-mono text-[11px] text-slate-400">
-                <span className="text-slate-600">[{lib.ecosystem}]</span>{' '}
-                {lib.packages.map((p) => `${p.name}@${p.version}`).join(', ') || '(bundle)'}
-              </li>
-            ))}
-          </ul>
+          <ScrollArea className="max-h-24">
+            <ul className="space-y-0.5">
+              {props.libraries.map((lib, i) => (
+                <li key={i} className="font-mono text-[11px] text-muted-foreground">
+                  <Badge variant="outline" className="mr-1 font-mono">[{lib.ecosystem}]</Badge>
+                  {lib.packages.map((p) => `${p.name}@${p.version}`).join(', ') || '(bundle)'}
+                </li>
+              ))}
+            </ul>
+          </ScrollArea>
         )}
         {props.allowUpload && (
-          <label className="mt-2 block cursor-pointer rounded border border-dashed border-slate-700 px-2 py-1.5 text-center text-[11px] text-slate-400 hover:border-sky-500 hover:text-sky-300">
-            📤 Upload ไฟล์เข้าโปรเจกต์
-            <input
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files !== null) props.onUploadFiles?.(e.target.files)
-                e.target.value = ''
-              }}
-            />
-          </label>
+          <Button type="button" variant="outline" size="sm" asChild className="mt-2 w-full border-dashed">
+            <label className="cursor-pointer">
+              <Upload size={12} /> Upload ไฟล์เข้าโปรเจกต์
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files !== null) props.onUploadFiles?.(e.target.files)
+                  e.target.value = ''
+                }}
+              />
+            </label>
+          </Button>
         )}
       </div>
+      <Separator />
     </div>
   )
 }
@@ -209,20 +225,20 @@ function TreeNodeView(props: {
     return (
       <div>
         <div
-          className="group flex items-center gap-1 rounded px-1 py-0.5 text-[13px] text-slate-300 hover:bg-slate-800/60"
+          className="group flex items-center gap-1 rounded px-1 py-0.5 text-[13px] hover:bg-muted/60"
           style={{ paddingLeft: `${props.depth * 12 + 4}px` }}
         >
-          <button type="button" onClick={() => props.onToggle(node.path)} className="rounded p-0.5 text-slate-500 hover:text-slate-200">
+          <Button type="button" variant="ghost" size="icon" onClick={() => props.onToggle(node.path)} className="h-5 w-5">
             {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-          </button>
-          <Folder size={14} className="shrink-0 text-amber-400/80" />
+          </Button>
+          <Folder size={14} className="shrink-0 text-primary/70" />
           <span className="truncate font-medium">{node.name}</span>
-          {locked && <Lock size={11} className="shrink-0 text-slate-500" />}
+          {locked && <Lock size={11} className="shrink-0 text-muted-foreground" />}
           {props.canDeleteRename && !locked && (
             <span className="ml-auto hidden gap-0.5 group-hover:flex">
-              <button type="button" title="สร้างไฟล์ข้างใน" onClick={() => props.onCreateInside(node.path)} className="rounded px-1 text-[11px] text-slate-500 hover:text-sky-300">+</button>
-              <button type="button" title="เปลี่ยนชื่อ" onClick={() => props.onStartRename(node.path)} className="rounded px-1 text-[11px] text-slate-500 hover:text-slate-200">✎</button>
-              <button type="button" title="ลบ" onClick={() => props.onDelete(node.path)} className="rounded px-1 text-[11px] text-slate-500 hover:text-red-300">🗑</button>
+              <button type="button" title="สร้างไฟล์ข้างใน" onClick={() => props.onCreateInside(node.path)} className="rounded px-1 text-[11px] text-muted-foreground hover:text-primary">+</button>
+              <button type="button" title="เปลี่ยนชื่อ" onClick={() => props.onStartRename(node.path)} className="rounded px-1 text-[11px] text-muted-foreground hover:text-foreground">แก้ชื่อ</button>
+              <button type="button" title="ลบ" onClick={() => props.onDelete(node.path)} className="rounded px-1 text-[11px] text-muted-foreground hover:text-destructive">ลบ</button>
             </span>
           )}
         </div>
@@ -239,20 +255,19 @@ function TreeNodeView(props: {
   return (
     <div>
       <div
-        className={`group flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-[13px] ${
-          props.selectedPath === node.path ? 'bg-sky-950/60 text-sky-200' : 'text-slate-300 hover:bg-slate-800/60'
-        }`}
+        className={cn('group flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-[13px]',
+          props.selectedPath === node.path ? 'bg-primary/10 text-primary' : 'hover:bg-muted/60')}
         style={{ paddingLeft: `${props.depth * 12 + 20}px` }}
       >
         <button type="button" onClick={() => props.onSelectFile(node.path)} className="flex min-w-0 flex-1 items-center gap-1.5">
-          <FileCode2 size={14} className={`shrink-0 ${iconColorFor(node.path)}`} />
+          <FileCode2 size={14} className={cn('shrink-0', iconColorFor(node.path))} />
           <span className="truncate font-mono text-xs">{node.name}</span>
-          {locked && <Lock size={11} className="shrink-0 text-slate-500" />}
+          {locked && <Lock size={11} className="shrink-0 text-muted-foreground" />}
         </button>
         {props.canDeleteRename && !locked && (
           <span className="hidden gap-0.5 group-hover:flex">
-            <button type="button" title="เปลี่ยนชื่อ" onClick={() => props.onStartRename(node.path)} className="rounded px-1 text-[11px] text-slate-500 hover:text-slate-200">✎</button>
-            <button type="button" title="ลบ" onClick={() => props.onDelete(node.path)} className="rounded px-1 text-[11px] text-slate-500 hover:text-red-300">🗑</button>
+            <button type="button" title="เปลี่ยนชื่อ" onClick={() => props.onStartRename(node.path)} className="rounded px-1 text-[11px] text-muted-foreground hover:text-foreground">แก้ชื่อ</button>
+            <button type="button" title="ลบ" onClick={() => props.onDelete(node.path)} className="rounded px-1 text-[11px] text-muted-foreground hover:text-destructive">ลบ</button>
           </span>
         )}
       </div>
@@ -266,14 +281,15 @@ function TreeNodeView(props: {
 function RenameBox(props: { value: string; onChange: (v: string) => void; onSubmit: () => void; depth: number }): React.JSX.Element {
   return (
     <div className="py-0.5" style={{ paddingLeft: `${props.depth * 12 + 20}px` }}>
-      <input
+      <Input
         autoFocus
         value={props.value}
         onChange={(e) => props.onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') props.onSubmit()
         }}
-        className="w-full rounded border border-sky-600 bg-slate-950 px-1 py-0.5 font-mono text-xs focus:outline-none"
+        className="w-full font-mono text-xs"
+        aria-label="ชื่อใหม่"
       />
     </div>
   )

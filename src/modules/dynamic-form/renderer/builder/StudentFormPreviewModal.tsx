@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { X, Award, CheckCircle2, XCircle, PencilLine } from 'lucide-react'
+import { Award, CheckCircle2, XCircle, PencilLine } from 'lucide-react'
 import type { DynamicFormDefinition, StudentFormViewItem, FormAssetMap } from '../../shared/form-schema'
 import { isFormItemQuestion } from '../../shared/form-schema'
 import { stripAnswerKeyForStudent } from '../../shared/student-view'
@@ -11,6 +11,17 @@ import {
 } from '../../shared/form-validate'
 import { gradeAnsweredPoints } from '../../shared/form-grading'
 import { listQuestions } from './form-builder-store'
+import { Button } from '@renderer/components/ui/button'
+import { Card, CardContent } from '@renderer/components/ui/card'
+import { Badge } from '@renderer/components/ui/badge'
+import { ScrollArea } from '@renderer/components/ui/scroll-area'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle
+} from '@renderer/components/ui/dialog'
 
 /* ============================================================
  * Phase 6 (6.2.4) — โหมดจำลองทำข้อสอบของนักเรียน (Preview as Student)
@@ -22,6 +33,8 @@ export interface StudentFormPreviewModalProps {
   form: DynamicFormDefinition
   assets: FormAssetMap
   onClose(): void
+  open?: boolean
+  onOpenChange?(open: boolean): void
 }
 
 export default function StudentFormPreviewModal(props: StudentFormPreviewModalProps): React.JSX.Element {
@@ -55,8 +68,6 @@ export default function StudentFormPreviewModal(props: StudentFormPreviewModalPr
     }
     setErrors(nextErrors)
     setSubmitted(true)
-    if (Object.keys(nextErrors).length > 0) return
-    window.alert('ส่งทั้งหมดเรียบร้อย (จำลอง) — ดูคะแนนด้านล่าง')
   }
 
   const totalAutoEarned = questionIds.reduce((sum, itemId) => {
@@ -68,62 +79,56 @@ export default function StudentFormPreviewModal(props: StudentFormPreviewModalPr
     return sum + gradeAnsweredPoints(item, normalized, Object.keys(resolved).length > 0 ? resolved : undefined).earnedPoints
   }, 0)
   const totalMax = listQuestions(form.items).reduce((sum, q) => sum + q.points, 0)
+  const open = props.open ?? true
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 p-6">
-      <div className="mx-auto max-w-3xl rounded-2xl border border-slate-700 bg-slate-900 p-6">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-xs text-slate-400">
-              <PencilLine size={14} /> พรีวิวมุมมองนักเรียน (สลับข้อ/ตัวเลือกตาม seed จำลอง — ตัดเฉลยแน่นอน)
-            </div>
-            <h2 className="mt-1 text-xl font-semibold">{form.title}</h2>
-            {form.instructions.length > 0 && <p className="mt-1 text-sm text-slate-400">{form.instructions}</p>}
-            <p className="mt-1 text-xs text-slate-500">
-              {listQuestions(form.items).length} ข้อ · เวลา {form.settings.durationMinutes} นาที ·{' '}
-              {form.settings.navigationPolicy === 'strict-one-way' ? 'ไปข้างหน้ากลับไม่ได้' : 'ย้อนกลับได้เฉพาะข้อที่เปิดแล้ว'}
-            </p>
+    <Dialog open={open} onOpenChange={(o) => { props.onOpenChange?.(o); if (!o) onClose() }}>
+      <DialogContent className="max-h-[90vh] max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-sm font-medium">
+            <PencilLine size={14} /> พรีวิวมุมมองนักเรียน
+          </DialogTitle>
+          <DialogDescription>
+            สลับข้อ/ตัวเลือกตาม seed จำลอง — ตัดเฉลยแน่นอน · {listQuestions(form.items).length} ข้อ · เวลา {form.settings.durationMinutes} นาที ·{' '}
+            {form.settings.navigationPolicy === 'strict-one-way' ? 'ไปข้างหน้ากลับไม่ได้' : 'ย้อนกลับได้เฉพาะข้อที่เปิดแล้ว'}
+          </DialogDescription>
+        </DialogHeader>
+        <h2 className="text-xl font-semibold">{form.title}</h2>
+        {form.instructions.length > 0 && <p className="text-sm text-muted-foreground">{form.instructions}</p>}
+
+        <ScrollArea className="max-h-[50vh] pr-4">
+          <div className="space-y-4">
+            {view.view.items.map((item, idx) => (
+              <PreviewItemBlock
+                key={item.itemId}
+                item={item}
+                viewItemIndex={idx}
+                assets={assets}
+                value={answers[item.itemId] ?? { kind: 'none' } satisfies FormAnswerValue}
+                error={errors[item.itemId]}
+                submitted={submitted}
+                onChange={(v) => setAnswer(item.itemId, v)}
+              />
+            ))}
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg border border-slate-700 p-2 text-slate-400 hover:bg-slate-800">
-            <X size={16} />
-          </button>
-        </div>
+        </ScrollArea>
 
-        <div className="mt-5 space-y-4">
-          {view.view.items.map((item, idx) => (
-            <PreviewItemBlock
-              key={item.itemId}
-              item={item}
-              viewItemIndex={idx}
-              assets={assets}
-              value={answers[item.itemId] ?? { kind: 'none' } satisfies FormAnswerValue}
-              error={errors[item.itemId]}
-              submitted={submitted}
-              onChange={(v) => setAnswer(item.itemId, v)}
-            />
-          ))}
-        </div>
-
-        <div className="mt-6 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={submit}
-            className="rounded-xl bg-sky-600 px-5 py-2.5 font-semibold text-white hover:bg-sky-500"
-          >
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="button" onClick={submit}>
             ส่งข้อสอบ (จำลอง)
-          </button>
+          </Button>
           {submitted && (
             <div className="flex items-center gap-2 text-sm">
-              <Award size={16} className="text-amber-300" />
-              <span className="text-slate-200">
-                ตรวจอัตโนมัติได้ <b>{totalAutoEarned}</b> / {totalMax} คะแนน
+              <Award size={16} className="text-primary" />
+              <span>
+                ตรวจอัตโนมัติได้ <b className="tabular-nums">{totalAutoEarned}</b> / <span className="tabular-nums">{totalMax}</span> คะแนน
               </span>
-              <span className="text-xs text-slate-500">(ข้อที่รอครูตรวจยังไม่นับ)</span>
+              <Badge variant="secondary">ข้อที่รอครูตรวจยังไม่นับ</Badge>
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -139,49 +144,55 @@ function PreviewItemBlock(props: {
   const { item, viewItemIndex, assets, value, error, submitted, onChange } = props
   if (item.inputType === 'section_header') {
     return (
-      <div className="rounded-xl border border-indigo-800/40 bg-indigo-950/20 p-4">
-        <h3 className="font-semibold text-indigo-200">{item.title}</h3>
-        {item.description.length > 0 && <p className="text-sm text-slate-400">{item.description}</p>}
-      </div>
+      <Card className="border-primary/30 bg-primary/5">
+        <CardContent className="pt-4">
+          <h3 className="font-semibold">{item.title}</h3>
+          {item.description.length > 0 && <p className="text-sm text-muted-foreground">{item.description}</p>}
+        </CardContent>
+      </Card>
     )
   }
   if (item.inputType === 'media_stimulus') {
     return (
-      <div className="rounded-xl border border-slate-800 p-4">
-        <MediaImage assets={assets} assetId={item.imageAssetId} />
-        {item.caption.length > 0 && <p className="mt-2 text-sm text-slate-400">{item.caption}</p>}
-      </div>
+      <Card>
+        <CardContent className="pt-4">
+          <MediaImage assets={assets} assetId={item.imageAssetId} />
+          {item.caption.length > 0 && <p className="mt-2 text-sm text-muted-foreground">{item.caption}</p>}
+        </CardContent>
+      </Card>
     )
   }
   return (
-    <section className={`rounded-2xl border p-5 ${!submitted || error === undefined ? 'border-slate-800 bg-slate-900/60' : 'border-red-800/60 bg-red-950/10'}`}>
-      <div className="mb-3 flex items-start gap-2">
-        <span className="mt-0.5 text-xs text-slate-500">{viewItemIndex + 1}.</span>
-        <p className={`flex-1 whitespace-pre-wrap text-sm text-slate-200 ${submitted === true && error !== undefined ? 'text-red-200' : ''}`}>{item.prompt}</p>
-      </div>
-      <FormAnswerInput item={item} value={value} onChange={onChange} assets={assets} />
-      {submitted && (
-        <div className="mt-2 flex items-center gap-1.5 text-xs">
-          {error !== undefined ? (
-            <>
-              <XCircle size={14} className="text-red-400" />
-              <span className="text-red-300">{error}</span>
-            </>
-          ) : (
-            <>
-              <CheckCircle2 size={14} className="text-emerald-400" />
-              <span className="text-emerald-300">ผ่านเงื่อนไขการตรวจ (คะแนนแสดงเมื่อครูปล่อย)</span>
-            </>
-          )}
+    <Card className={submitted && error !== undefined ? 'border-destructive/60' : undefined}>
+      <CardContent className="pt-5">
+        <div className="mb-3 flex items-start gap-2">
+          <Badge variant="outline" className="mt-0.5 tabular-nums">{viewItemIndex + 1}</Badge>
+          <p className={`flex-1 whitespace-pre-wrap text-sm ${submitted === true && error !== undefined ? 'text-destructive' : ''}`}>{item.prompt}</p>
         </div>
-      )}
-    </section>
+        <FormAnswerInput item={item} value={value} onChange={onChange} assets={assets} />
+        {submitted && (
+          <div className="mt-2 flex items-center gap-1.5 text-xs">
+            {error !== undefined ? (
+              <>
+                <XCircle size={14} className="text-destructive" />
+                <span className="text-destructive">{error}</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={14} className="text-primary" />
+                <span className="text-muted-foreground">ผ่านเงื่อนไขการตรวจ (คะแนนแสดงเมื่อครูปล่อย)</span>
+              </>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
 function MediaImage(props: { assets: FormAssetMap; assetId: string }): React.JSX.Element {
   const { assets, assetId } = props
   const asset = assets[assetId]
-  if (asset === undefined) return <span className="text-xs text-red-300">(ภาพไม่พบ)</span>
-  return <img src={`data:${asset.mimeType};base64,${asset.dataBase64}`} alt="" className="max-h-56 rounded-lg border border-slate-700" />
+  if (asset === undefined) return <span className="text-xs text-destructive">(ภาพไม่พบ)</span>
+  return <img src={`data:${asset.mimeType};base64,${asset.dataBase64}`} alt="" className="max-h-56 rounded-md border" />
 }

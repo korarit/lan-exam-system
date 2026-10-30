@@ -1,5 +1,8 @@
 import { useState } from 'react'
 import { FolderOpen } from 'lucide-react'
+import { Button } from '@renderer/components/ui/button'
+import { Input } from '@renderer/components/ui/input'
+import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/ui/card'
 
 /* Phase 8 (8.3.4) — TeacherWorkspaceFolderConfig
  * โฟลเดอร์หลักเก็บงานห้องสอบบนเครื่องครู
@@ -61,33 +64,39 @@ export default function TeacherWorkspaceFolderConfig(props: Props): React.JSX.El
   const preview = props.studentIds.slice(0, 3)
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-      <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">📂 โฟลเดอร์หลักเก็บงานห้องสอบ (เครื่องครู)</h4>
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void handlePick()}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 hover:border-emerald-500"
-        >
-          <FolderOpen size={14} className="text-emerald-400" /> เลือกโฟลเดอร์
-        </button>
-        <input
-          value={props.value}
-          onChange={(e) => props.onPick(e.target.value)}
-          placeholder="D:/ExamWorkspace/CS202_Final/"
-          className="min-w-52 flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs focus:border-emerald-500 focus:outline-none"
-        />
-      </div>
-      {error !== null && <p className="mt-1 text-[11px] text-amber-300">{error}</p>}
-      <div className="mt-2 font-mono text-[11px] text-slate-500">
-        <p>Subfolder อัตโนมัติตามรหัสนักเรียน:</p>
-        {preview.length === 0 ? (
-          <p className="text-slate-600">(ยังไม่มีรายชื่อนักเรียน — จะสร้าง &lt;root&gt;/&lt;studentId&gt;/ ให้ตอนส่งงาน)</p>
-        ) : (
-          preview.map((id) => <p key={id}>{props.value}{id}/</p>)
-        )}
-        {props.studentIds.length > 3 && <p>… และอีก {props.studentIds.length - 3} คน</p>}
-      </div>
-    </div>
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">โฟลเดอร์หลักเก็บงานห้องสอบ (เครื่องครู)</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void handlePick()}
+          >
+            <FolderOpen size={14} /> เลือกโฟลเดอร์
+          </Button>
+          <Input
+            value={props.value}
+            onChange={(e) => props.onPick(e.target.value)}
+            placeholder="D:/ExamWorkspace/CS202_Final/"
+            className="min-w-52 flex-1 font-mono text-xs"
+            aria-label="โฟลเดอร์เก็บงาน"
+          />
+        </div>
+        {error !== null && <p className="mt-1 text-[11px] text-destructive">{error}</p>}
+        <div className="mt-2 font-mono text-[11px] text-muted-foreground">
+          <p>Subfolder อัตโนมัติตามรหัสนักเรียน:</p>
+          {preview.length === 0 ? (
+            <p>(ยังไม่มีรายชื่อนักเรียน — จะสร้าง &lt;root&gt;/&lt;studentId&gt;/ ให้ตอนส่งงาน)</p>
+          ) : (
+            preview.map((id) => <p key={id}>{props.value}{id}/</p>)
+          )}
+          {props.studentIds.length > 3 && <p>… และอีก {props.studentIds.length - 3} คน</p>}
+        </div>
+      </CardContent>
+    </Card>
   )
 }

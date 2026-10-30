@@ -1,7 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { X, FolderOpen, GitCompare, History, Code2, ListChecks, MonitorPlay, Plug, Database, MessageSquare } from 'lucide-react'
+import { FolderOpen, GitCompare, History, Code2, ListChecks, MonitorPlay, Plug, Database, MessageSquare } from 'lucide-react'
 import type { CodeIdeSubmissionDetailResponse, CodeIdeSubmitProjectRequest } from '@shared/ipc-channels'
 import type { VirtualEntry } from '../../shared/code-schema'
+import { Button } from '@renderer/components/ui/button'
+import { Input } from '@renderer/components/ui/input'
+import { Card, CardContent } from '@renderer/components/ui/card'
+import { Badge } from '@renderer/components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@renderer/components/ui/tabs'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@renderer/components/ui/table'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle
+} from '@renderer/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@renderer/components/ui/select'
+import { ScrollArea } from '@renderer/components/ui/scroll-area'
 
 type IpcEntries = CodeIdeSubmitProjectRequest['entries']
 
@@ -191,13 +218,13 @@ export default function StudentProjectInspectorModal(props: Props): React.JSX.El
     try {
       const points = raw === '' ? null : Number(raw)
       if (points !== null && (!Number.isFinite(points) || points < 0 || points > props.maxPoints)) {
-        setMsg(`⛔ คะแนนต้องอยู่ระหว่าง 0–${props.maxPoints} (ว่าง = ล้างกลับไปใช้ auto)`)
+        setMsg(`คะแนนต้องอยู่ระหว่าง 0–${props.maxPoints} (ว่าง = ล้างกลับไปใช้ auto)`)
         return
       }
       const res = await window.ztExam.codeManualGrade({ studentId: props.studentId, points })
-      setMsg(res.ok ? '✅ บันทึกคะแนนแล้ว (manual ชนะ auto)' : `⛔ ${res.reason ?? 'failed'}`)
+      setMsg(res.ok ? 'บันทึกคะแนนแล้ว (manual ชนะ auto)' : `${res.reason ?? 'failed'}`)
     } catch (err) {
-      setMsg(`⛔ บันทึกไม่สำเร็จ: ${err instanceof Error ? err.message : 'unknown'}`)
+      setMsg(`บันทึกไม่สำเร็จ: ${err instanceof Error ? err.message : 'unknown'}`)
     } finally {
       setSaving(false)
     }
@@ -205,101 +232,126 @@ export default function StudentProjectInspectorModal(props: Props): React.JSX.El
 
   async function openFolder(): Promise<void> {
     const res = await window.ztExam.openCodeStudentFolder({ studentId: props.studentId })
-    if (!res.ok) setMsg(`⛔ เปิดโฟลเดอร์ไม่สำเร็จ: ${res.reason ?? 'unknown'}`)
+    if (!res.ok) setMsg(`เปิดโฟลเดอร์ไม่สำเร็จ: ${res.reason ?? 'unknown'}`)
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={props.onClose}>
-      <div
-        className="flex h-[86vh] w-[1100px] max-w-full flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-950"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* header */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 px-4 py-2.5">
-          <Code2 size={16} className="text-sky-400" />
-          <span className="font-mono text-sm font-semibold text-slate-100">{props.studentId}</span>
-          {detail && (
-            <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[11px] text-slate-300">
-              {detail.status}
-              {detail.blockedReason ? ` — ${detail.blockedReason.slice(0, 80)}` : ''}
-            </span>
-          )}
-          <span className="flex-1" />
-          <button type="button" onClick={() => void openFolder()} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs hover:border-emerald-500">
-            <FolderOpen size={13} /> เปิดโฟลเดอร์งาน
-          </button>
-          <button type="button" onClick={props.onClose} className="rounded-lg border border-slate-700 p-1.5 hover:border-slate-500">
-            <X size={14} />
-          </button>
-        </div>
+  const visibleModes: Array<{ id: ViewMode; label: string; icon: React.ReactNode }> = [
+    { id: 'code', label: 'Mirror IDE', icon: <Code2 size={13} /> },
+    { id: 'diff', label: 'Diff เฉลย', icon: <GitCompare size={13} /> },
+    { id: 'tests', label: `ผลตรวจ (${detail?.gradeResults?.length ?? 0})`, icon: <ListChecks size={13} /> },
+    { id: 'playback', label: 'Playback', icon: <History size={13} /> },
+    ...(props.category === 'frontend' || props.category === 'fullstack'
+      ? [{ id: 'preview' as ViewMode, label: 'Preview', icon: <MonitorPlay size={13} /> }]
+      : []),
+    ...(props.category === 'backend' || props.category === 'fullstack'
+      ? [{ id: 'api' as ViewMode, label: 'API', icon: <Plug size={13} /> }]
+      : []),
+    ...(props.category === 'database' || props.category === 'fullstack'
+      ? [{ id: 'sql' as ViewMode, label: 'SQL', icon: <Database size={13} /> }]
+      : []),
+    { id: 'comments', label: 'คอมเมนต์', icon: <MessageSquare size={13} /> }
+  ]
 
-        {loading && <p className="p-8 text-center text-sm text-slate-500">กำลังโหลดโปรเจกต์…</p>}
-        {error !== null && <p className="p-8 text-center text-sm text-red-300">⛔ {error}</p>}
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) props.onClose() }}>
+      <DialogContent className="flex h-[86vh] max-w-[1100px] flex-col overflow-hidden">
+        {/* header */}
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2 font-mono text-sm">
+            <Code2 size={16} className="text-primary" />
+            {props.studentId}
+            {detail && (
+              <Badge variant="secondary" className="font-mono text-[11px]">
+                {detail.status}
+                {detail.blockedReason ? ` — ${detail.blockedReason.slice(0, 80)}` : ''}
+              </Badge>
+            )}
+            <span className="flex-1" />
+            <Button type="button" variant="outline" size="sm" onClick={() => void openFolder()}>
+              <FolderOpen size={13} /> เปิดโฟลเดอร์งาน
+            </Button>
+          </DialogTitle>
+        </DialogHeader>
+
+        {loading && <p className="p-8 text-center text-sm text-muted-foreground">กำลังโหลดโปรเจกต์…</p>}
+        {error !== null && <p className="p-8 text-center text-sm text-destructive">{error}</p>}
 
         {detail && !loading && (
-          <>
+          <Tabs value={mode} onValueChange={(v) => setMode(v as ViewMode)} className="flex min-h-0 flex-1 flex-col">
             {/* mode tabs */}
-            <div className="flex flex-wrap items-center gap-1 border-b border-slate-800 px-3 pt-2 text-xs">
-              {(
-                [
-                  { id: 'code', label: '📁 Mirror IDE', icon: <Code2 size={13} />, show: true },
-                  { id: 'diff', label: '⚖️ Diff เฉลย', icon: <GitCompare size={13} />, show: true },
-                  { id: 'tests', label: `🧪 ผลตรวจ (${detail.gradeResults?.length ?? 0})`, icon: <ListChecks size={13} />, show: true },
-                  { id: 'playback', label: '⏳ Playback', icon: <History size={13} />, show: true },
-                  { id: 'preview', label: '▶ Preview', icon: <MonitorPlay size={13} />, show: props.category === 'frontend' || props.category === 'fullstack' },
-                  { id: 'api', label: '🔌 API', icon: <Plug size={13} />, show: props.category === 'backend' || props.category === 'fullstack' },
-                  { id: 'sql', label: '🗄️ SQL', icon: <Database size={13} />, show: props.category === 'database' || props.category === 'fullstack' },
-                  { id: 'comments', label: '💬 คอมเมนต์', icon: <MessageSquare size={13} />, show: true }
-                ] as const
-              )
-                .filter((t) => t.show)
-                .map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setMode(t.id)}
-                  className={`inline-flex items-center gap-1 rounded-t-lg px-3 py-2 font-medium ${mode === t.id ? 'border-b-2 border-sky-500 text-sky-300' : 'text-slate-500 hover:text-slate-200'}`}
-                >
-                  {t.icon} {t.label}
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center gap-1 border-b">
+              <TabsList>
+                {visibleModes.map((t) => (
+                  <TabsTrigger key={t.id} value={t.id}>
+                    {t.icon} {t.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
               <span className="flex-1" />
-              <div className="flex items-center gap-1 pb-1">
-                <span className="text-slate-500">Manual:</span>
-                <input
+              <div className="flex items-center gap-1 pb-1 text-xs">
+                <span className="text-muted-foreground">Manual:</span>
+                <Input
                   value={manual}
                   onChange={(e) => setManual(e.target.value)}
                   placeholder={`0–${props.maxPoints} / ว่าง=auto`}
-                  className="w-36 rounded border border-slate-700 bg-slate-900 px-2 py-1 font-mono text-xs focus:border-emerald-500 focus:outline-none"
+                  className="w-36 font-mono tabular-nums"
+                  aria-label="คะแนน manual"
                 />
-                <button type="button" onClick={() => void saveManual()} disabled={saving} className="rounded border border-slate-700 px-2 py-1 text-xs hover:border-emerald-500 disabled:opacity-40">
+                <Button type="button" variant="outline" size="sm" onClick={() => void saveManual()} disabled={saving}>
                   {saving ? '…' : 'บันทึก'}
-                </button>
+                </Button>
               </div>
             </div>
-            {msg !== null && <p className="border-b border-slate-800 bg-slate-900/60 px-4 py-1.5 text-xs text-slate-200">{msg}</p>}
+            {msg !== null && <p className="border-b bg-muted/40 px-4 py-1.5 text-xs">{msg}</p>}
 
             <div className="min-h-0 flex-1">
-              {(mode === 'code' || mode === 'playback') && (
+              <TabsContent value="code" className="mt-0 h-full">
+                <div className="flex h-full flex-col lg:flex-row">
+                  <div className="h-56 shrink-0 border-b lg:h-auto lg:w-64 lg:border-b-0 lg:border-r">
+                    <ProjectFileExplorerTree
+                      entries={shownEntries}
+                      selectedPath={activePath}
+                      canCreate={false}
+                      canDeleteRename={false}
+                      allowUpload={false}
+                      libraries={[]}
+                      onSelectFile={setActivePath}
+                      onCreateFile={() => undefined}
+                      onCreateFolder={() => undefined}
+                      onRename={() => undefined}
+                      onDelete={() => undefined}
+                    />
+                  </div>
+                  <div className="min-h-[320px] min-w-0 flex-1">
+                    <MonacoCodeWorkspace
+                      entries={shownEntries}
+                      activePath={activePath}
+                      readOnlyPaths={readOnlyAll}
+                      onSelectFile={setActivePath}
+                      onChangeContent={() => undefined}
+                    />
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="playback" className="mt-0 h-full">
                 <div className="flex h-full flex-col">
-                  {mode === 'playback' && (
-                    <div className="flex items-center gap-3 border-b border-slate-800 px-4 py-2 text-xs text-slate-300">
-                      <span>⏳</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={Math.max(0, playbackStages.length - 1)}
-                        value={Math.min(playbackIndex, Math.max(0, playbackStages.length - 1))}
-                        onChange={(e) => setPlaybackIndex(Number(e.target.value))}
-                        className="flex-1 accent-sky-500"
-                      />
-                      <span className="min-w-[220px] text-right font-medium text-sky-200">
-                        {playbackStages[Math.min(playbackIndex, Math.max(0, playbackStages.length - 1))]?.label ?? '—'}
-                      </span>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-3 border-b px-4 py-2 text-xs">
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.max(0, playbackStages.length - 1)}
+                      value={Math.min(playbackIndex, Math.max(0, playbackStages.length - 1))}
+                      onChange={(e) => setPlaybackIndex(Number(e.target.value))}
+                      className="flex-1 accent-primary"
+                      aria-label="ช่วงเวลา playback"
+                    />
+                    <span className="min-w-[220px] text-right font-medium text-primary">
+                      {playbackStages[Math.min(playbackIndex, Math.max(0, playbackStages.length - 1))]?.label ?? '—'}
+                    </span>
+                  </div>
                   <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-                    <div className="h-56 shrink-0 border-b border-slate-800 lg:h-auto lg:w-64 lg:border-b-0 lg:border-r">
+                    <div className="h-56 shrink-0 border-b lg:h-auto lg:w-64 lg:border-b-0 lg:border-r">
                       <ProjectFileExplorerTree
                         entries={shownEntries}
                         selectedPath={activePath}
@@ -325,12 +377,12 @@ export default function StudentProjectInspectorModal(props: Props): React.JSX.El
                     </div>
                   </div>
                 </div>
-              )}
+              </TabsContent>
 
-              {mode === 'diff' && (
+              <TabsContent value="diff" className="mt-0 h-full">
                 <div className="flex h-full flex-col lg:flex-row">
-                  <div className="h-48 shrink-0 overflow-y-auto border-b border-slate-800 p-2 lg:h-auto lg:w-64 lg:border-b-0 lg:border-r">
-                    <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  <ScrollArea className="h-48 shrink-0 border-b p-2 lg:h-auto lg:w-64 lg:border-b-0 lg:border-r">
+                    <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                       ไฟล์ ({studentFiles.length}) — [M]=แก้ [A]=สร้างใหม่
                     </p>
                     {studentFiles.map((p) => {
@@ -338,92 +390,106 @@ export default function StudentProjectInspectorModal(props: Props): React.JSX.El
                       const reference = fileContent(detail.referenceEntries, p)
                       const flag = reference === null ? '[A]' : student !== reference ? '[M]' : ''
                       return (
-                        <button
+                        <Button
                           key={p}
                           type="button"
+                          variant={activePath === p ? 'secondary' : 'ghost'}
+                          size="sm"
                           onClick={() => setActivePath(p)}
-                          className={`mb-0.5 block w-full truncate rounded px-2 py-1 text-left font-mono text-[11px] ${activePath === p ? 'bg-sky-900/60 text-sky-100' : 'text-slate-300 hover:bg-slate-800'}`}
+                          className="mb-0.5 w-full justify-start truncate font-mono text-[11px]"
                         >
-                          {flag && <span className="mr-1 text-amber-300">{flag}</span>}{p}
-                        </button>
+                          {flag && <Badge variant="outline" className="mr-1">{flag}</Badge>}{p}
+                        </Button>
                       )
                     })}
-                  </div>
-                  <div className="min-h-[320px] flex-1 overflow-y-auto bg-slate-950 p-3 font-mono text-[12px] leading-5">
-                    {activePath === null && <p className="text-slate-500">เลือกไฟล์ทางซ้ายเพื่อเทียบกับเฉลย</p>}
-                    {activePath !== null && diffResult?.kind === 'no-student' && <p className="text-slate-500">ไฟล์นี้ไม่มีในงานนักเรียน</p>}
+                  </ScrollArea>
+                  <ScrollArea className="min-h-[320px] flex-1 bg-muted/20 p-3 font-mono text-[12px] leading-5">
+                    {activePath === null && <p className="text-muted-foreground">เลือกไฟล์ทางซ้ายเพื่อเทียบกับเฉลย</p>}
+                    {activePath !== null && diffResult?.kind === 'no-student' && <p className="text-muted-foreground">ไฟล์นี้ไม่มีในงานนักเรียน</p>}
                     {activePath !== null && diffResult?.kind === 'added-by-student' && (
                       <div>
-                        <p className="mb-2 text-amber-300">[A] ไฟล์นี้นักเรียนสร้างเพิ่ม — ไม่มีในเฉลย</p>
-                        <pre className="whitespace-pre-wrap text-emerald-200">{diffResult.student}</pre>
+                        <p className="mb-2">[A] ไฟล์นี้นักเรียนสร้างเพิ่ม — ไม่มีในเฉลย</p>
+                        <pre className="whitespace-pre-wrap text-primary">{diffResult.student}</pre>
                       </div>
                     )}
-                    {activePath !== null && diffResult?.kind === 'identical' && <p className="text-emerald-300">✅ ตรงกับเฉลยทุกบรรทัด</p>}
+                    {activePath !== null && diffResult?.kind === 'identical' && <p className="text-primary">ตรงกับเฉลยทุกบรรทัด</p>}
                     {activePath !== null && diffResult?.kind === 'diff' && diffResult.lines === null && (
-                      <p className="text-slate-400">ไฟล์ใหญ่เกิน diff อัตโนมัติ — เปิดดูทีละฝั่งในโหมด Mirror IDE</p>
+                      <p className="text-muted-foreground">ไฟล์ใหญ่เกิน diff อัตโนมัติ — เปิดดูทีละฝั่งในโหมด Mirror IDE</p>
                     )}
                     {activePath !== null && diffResult?.kind === 'diff' && diffResult.lines !== null && (
                       <div>
-                        <p className="mb-2 text-slate-400">
-                          <span className="text-red-300">— ฝั่งเฉลย</span> / <span className="text-emerald-300">+ ฝั่งนักเรียน</span>
+                        <p className="mb-2 text-muted-foreground">
+                          <span className="text-destructive">— ฝั่งเฉลย</span> / <span className="text-primary">+ ฝั่งนักเรียน</span>
                         </p>
                         {diffResult.lines.slice(0, 1500).map((l, i) => (
                           <div
                             key={i}
                             className={
-                              l.type === 'del' ? 'bg-red-950/40 text-red-200' : l.type === 'add' ? 'bg-emerald-950/40 text-emerald-200' : 'text-slate-500'
+                              l.type === 'del' ? 'bg-destructive/10 text-destructive' : l.type === 'add' ? 'bg-primary/10 text-primary' : 'text-muted-foreground'
                             }
                           >
                             <span className="mr-2 inline-block w-4 select-none opacity-60">{l.type === 'del' ? '—' : l.type === 'add' ? '+' : ' '}</span>
                             {l.text || ' '}
                           </div>
                         ))}
-                        {diffResult.lines.length > 1500 && <p className="mt-2 text-slate-500">…แสดง 1500 บรรทัดแรกจากทั้งหมด {diffResult.lines.length} บรรทัด</p>}
+                        {diffResult.lines.length > 1500 && <p className="mt-2 text-muted-foreground">…แสดง 1500 บรรทัดแรกจากทั้งหมด {diffResult.lines.length} บรรทัด</p>}
                       </div>
                     )}
-                  </div>
+                  </ScrollArea>
                 </div>
-              )}
+              </TabsContent>
 
-              {mode === 'tests' && (
-                <div className="h-full overflow-y-auto p-3">
+              <TabsContent value="tests" className="mt-0 h-full">
+                <ScrollArea className="h-full p-3">
                   {(detail.gradeResults ?? []).length === 0 && (
-                    <p className="text-sm text-slate-500">ยังไม่มีผลตรวจ (งานอยู่ในคิว/กำลังตรวจ หรือตรวจล้มเหลว)</p>
+                    <p className="text-sm text-muted-foreground">ยังไม่มีผลตรวจ (งานอยู่ในคิว/กำลังตรวจ หรือตรวจล้มเหลว)</p>
                   )}
-                  <div className="space-y-2">
-                    {(detail.gradeResults ?? []).map((t) => (
-                      <div key={t.testId} className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 text-[13px]">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono font-semibold text-slate-100">{t.testId}</span>
-                          <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[11px] text-slate-400">{t.kind}</span>
-                          <span className={`rounded px-1.5 py-0.5 text-[11px] ${t.visibility === 'hidden' ? 'bg-purple-900/60 text-purple-200' : 'bg-slate-800 text-slate-400'}`}>
-                            {t.visibility}
-                          </span>
-                          <span className="ml-auto font-mono text-slate-200">
-                            {t.passed === true ? '✅' : t.passed === false ? '❌' : '⏳'} {t.earned}/{t.points}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs text-slate-400">{t.note}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                  <Card>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Test</TableHead>
+                          <TableHead>ชนิด</TableHead>
+                          <TableHead>การมองเห็น</TableHead>
+                          <TableHead>ผล</TableHead>
+                          <TableHead className="text-right">คะแนน</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(detail.gradeResults ?? []).map((t) => (
+                          <TableRow key={t.testId}>
+                            <TableCell className="font-mono font-semibold">{t.testId}</TableCell>
+                            <TableCell><Badge variant="secondary" className="font-mono text-[11px]">{t.kind}</Badge></TableCell>
+                            <TableCell><Badge variant="outline" className="text-[11px]">{t.visibility}</Badge></TableCell>
+                            <TableCell>
+                              <Badge variant={t.passed === true ? 'default' : t.passed === false ? 'destructive' : 'outline'}>
+                                {t.passed === true ? 'ผ่าน' : t.passed === false ? 'ไม่ผ่าน' : 'รอตรวจ'}
+                              </Badge>
+                              <p className="mt-1 text-xs text-muted-foreground">{t.note}</p>
+                            </TableCell>
+                            <TableCell className="text-right font-mono tabular-nums">{t.earned}/{t.points}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </Card>
+                </ScrollArea>
+              </TabsContent>
 
-              {mode === 'preview' && <PreviewTab studentId={props.studentId} />}
-              {mode === 'api' && <ApiProbeTab studentId={props.studentId} />}
-              {mode === 'sql' && <SqlWorkbenchTab studentId={props.studentId} />}
-              {mode === 'comments' && (
+              <TabsContent value="preview" className="mt-0 h-full"><PreviewTab studentId={props.studentId} /></TabsContent>
+              <TabsContent value="api" className="mt-0 h-full"><ApiProbeTab studentId={props.studentId} /></TabsContent>
+              <TabsContent value="sql" className="mt-0 h-full"><SqlWorkbenchTab studentId={props.studentId} /></TabsContent>
+              <TabsContent value="comments" className="mt-0 h-full">
                 <CommentsTab
                   studentId={props.studentId}
                   files={(detail.entries ?? []).filter((e) => e.kind === 'file').map((e) => e.path).sort()}
                 />
-              )}
+              </TabsContent>
             </div>
-          </>
+          </Tabs>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -439,7 +505,7 @@ function PreviewTab(props: { studentId: string }): React.JSX.Element {
     try {
       const res = await window.ztExam.runCodePreview({ studentId: props.studentId })
       if (!res.ok || !res.html || !res.js) {
-        setStatus(`⛔ ${res.reason ?? 'โหลดไม่สำเร็จ'}`)
+        setStatus(`${res.reason ?? 'โหลดไม่สำเร็จ'}`)
         return
       }
       // CSP ตัดเน็ต/ฟอร์ม/ปลั๊กอิน — เหลือแค่สคริปต์ inline ของ bundle เอง
@@ -451,9 +517,9 @@ function PreviewTab(props: { studentId: string }): React.JSX.Element {
         ? withCsp.replace('</body>', `<script>${res.js}</script></body>`)
         : `${withCsp}<script>${res.js}</script>`
       setSrcDoc(doc)
-      setStatus('✅ รันพรีวิวแล้ว — เหมือนที่นักเรียนเห็น (รูป/ฟอนต์ภายนอกถูก CSP ตัด เหลือโครง + สคริปต์)')
+      setStatus('รันพรีวิวแล้ว — เหมือนที่นักเรียนเห็น (รูป/ฟอนต์ภายนอกถูก CSP ตัด เหลือโครง + สคริปต์)')
     } catch (err) {
-      setStatus(`⛔ ${err instanceof Error ? err.message : 'unknown'}`)
+      setStatus(`${err instanceof Error ? err.message : 'unknown'}`)
     } finally {
       setLoading(false)
     }
@@ -461,20 +527,20 @@ function PreviewTab(props: { studentId: string }): React.JSX.Element {
 
   return (
     <div className="flex h-full flex-col p-3">
-      <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-        <button
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <Button
           type="button" onClick={() => void load()} disabled={loading}
-          className="rounded-lg bg-emerald-700 px-3 py-1.5 font-medium text-white hover:bg-emerald-600 disabled:opacity-40"
+          size="sm"
         >
-          {loading ? 'กำลัง bundle…' : '▶ โหลดพรีวิว'}
-        </button>
+          {loading ? 'กำลัง bundle…' : 'โหลดพรีวิว'}
+        </Button>
         <span className="flex-1">{status}</span>
       </div>
-      <div className="min-h-[320px] flex-1 overflow-hidden rounded-xl border border-slate-800 bg-white">
+      <div className="min-h-[320px] flex-1 overflow-hidden rounded-md border bg-white">
         {srcDoc !== null ? (
           <iframe title="student-preview" sandbox="allow-scripts" srcDoc={srcDoc} className="h-full w-full" />
         ) : (
-          <p className="p-8 text-center text-sm text-slate-500">ยังไม่โหลด</p>
+          <p className="p-8 text-center text-sm text-muted-foreground">ยังไม่โหลด</p>
         )}
       </div>
     </div>
@@ -490,7 +556,7 @@ function ApiProbeTab(props: { studentId: string }): React.JSX.Element {
 
   async function fire(): Promise<void> {
     setLoading(true)
-    setResult('⏳ กำลังรันเซิร์ฟเวอร์นักเรียนชั่วคราวแล้วยิง…')
+    setResult('กำลังรันเซิร์ฟเวอร์นักเรียนชั่วคราวแล้วยิง…')
     try {
       const res = await window.ztExam.probeCodeApi({
         studentId: props.studentId,
@@ -501,10 +567,10 @@ function ApiProbeTab(props: { studentId: string }): React.JSX.Element {
       setResult(
         res.ok
           ? `HTTP ${res.status ?? '?'} — ${res.note ?? ''}\n${res.body ?? ''}`.slice(0, 4000)
-          : `⛔ ${res.reason ?? res.note ?? 'failed'}`
+          : `${res.reason ?? res.note ?? 'failed'}`
       )
     } catch (err) {
-      setResult(`⛔ ${err instanceof Error ? err.message : 'unknown'}`)
+      setResult(`${err instanceof Error ? err.message : 'unknown'}`)
     } finally {
       setLoading(false)
     }
@@ -513,18 +579,21 @@ function ApiProbeTab(props: { studentId: string }): React.JSX.Element {
   return (
     <div className="flex h-full flex-col gap-2 p-3">
       <div className="flex flex-wrap items-center gap-1.5">
-        <select value={method} onChange={(e) => setMethod(e.target.value as typeof method)} className="rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs">
-          {(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const).map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-        <input value={apiPath} onChange={(e) => setApiPath(e.target.value)} placeholder="/api/users/1" className="min-w-40 flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs" />
-        <button type="button" onClick={() => void fire()} disabled={loading} className="rounded-lg bg-sky-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-600 disabled:opacity-40">
+        <Select value={method} onValueChange={(v) => setMethod(v as typeof method)}>
+          <SelectTrigger className="w-28 font-mono text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const).map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Input value={apiPath} onChange={(e) => setApiPath(e.target.value)} placeholder="/api/users/1" className="min-w-40 flex-1 font-mono text-xs" aria-label="พาธ API" />
+        <Button type="button" size="sm" onClick={() => void fire()} disabled={loading}>
           {loading ? 'กำลังยิง…' : 'ยิงทดสอบ'}
-        </button>
+        </Button>
       </div>
       {method !== 'GET' && (
-        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={3} placeholder='{"name": "Test"}' className="rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs" />
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={3} placeholder='{"name": "Test"}' className="rounded-md border border-input bg-background px-2 py-1.5 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring" />
       )}
-      <pre className="min-h-[200px] flex-1 overflow-auto whitespace-pre-wrap rounded-xl border border-slate-800 bg-slate-950 p-3 font-mono text-xs text-slate-200">
+      <pre className="min-h-[200px] flex-1 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 font-mono text-xs">
         {result ?? 'ผลจะขึ้นตรงนี้ (เซิร์ฟเวอร์ถูก teardown ทันทีหลังยิง — พอร์ตไม่ค้าง)'}
       </pre>
     </div>
@@ -543,14 +612,14 @@ function SqlWorkbenchTab(props: { studentId: string }): React.JSX.Element {
     try {
       const res = await window.ztExam.queryCodeSql({ studentId: props.studentId, sql })
       if (!res.ok) {
-        setNote(`⛔ ${res.reason ?? 'failed'}`)
+        setNote(`${res.reason ?? 'failed'}`)
         return
       }
       setColumns(res.columns ?? [])
       setRows(res.rows ?? [])
       setNote(res.note ?? '')
     } catch (err) {
-      setNote(`⛔ ${err instanceof Error ? err.message : 'unknown'}`)
+      setNote(`${err instanceof Error ? err.message : 'unknown'}`)
     } finally {
       setLoading(false)
     }
@@ -559,30 +628,30 @@ function SqlWorkbenchTab(props: { studentId: string }): React.JSX.Element {
   return (
     <div className="flex h-full flex-col gap-2 p-3">
       <div className="flex items-start gap-1.5">
-        <textarea value={sql} onChange={(e) => setSql(e.target.value)} rows={3} className="flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs" />
-        <button type="button" onClick={() => void run()} disabled={loading} className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-40">
-          {loading ? 'รัน…' : '▶ รัน'}
-        </button>
+        <textarea value={sql} onChange={(e) => setSql(e.target.value)} rows={3} className="flex-1 rounded-md border border-input bg-background px-2 py-1.5 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+        <Button type="button" size="sm" onClick={() => void run()} disabled={loading}>
+          {loading ? 'รัน…' : 'รัน'}
+        </Button>
       </div>
-      <p className="text-xs text-slate-500">{note}</p>
-      <div className="min-h-[200px] flex-1 overflow-auto rounded-xl border border-slate-800">
-        <table className="w-full text-left font-mono text-xs">
-          <thead>
-            <tr className="border-b border-slate-800 bg-slate-900/60">
-              {columns.map((c) => <th key={c} className="px-2 py-1.5 text-slate-300">{c}</th>)}
-              {columns.length === 0 && <th className="px-2 py-1.5 text-slate-600">(ยังไม่มีผล)</th>}
-            </tr>
-          </thead>
-          <tbody>
+      <p className="text-xs text-muted-foreground">{note}</p>
+      <div className="min-h-[200px] flex-1 overflow-auto rounded-md border">
+        <Table className="font-mono">
+          <TableHeader>
+            <TableRow>
+              {columns.map((c) => <TableHead key={c}>{c}</TableHead>)}
+              {columns.length === 0 && <TableHead>(ยังไม่มีผล)</TableHead>}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.map((r, i) => (
-              <tr key={i} className="border-b border-slate-800/50">
+              <TableRow key={i}>
                 {r.map((v, j) => (
-                  <td key={j} className="px-2 py-1 text-slate-200">{v === null ? <span className="text-slate-600">NULL</span> : String(v)}</td>
+                  <TableCell key={j}>{v === null ? <span className="text-muted-foreground">NULL</span> : String(v)}</TableCell>
                 ))}
-              </tr>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   )
@@ -628,14 +697,14 @@ function CommentsTab(props: { studentId: string; files: string[] }): React.JSX.E
     try {
       const res = await window.ztExam.saveCodeComment({ studentId: props.studentId, path: activeFile, comment: draft })
       if (res.ok) {
-        setMsg(draft.trim() === '' ? '🗑 ลบคอมเมนต์แล้ว' : '✅ บันทึกคอมเมนต์แล้ว')
+        setMsg(draft.trim() === '' ? 'ลบคอมเมนต์แล้ว' : 'บันทึกคอมเมนต์แล้ว')
         await reload()
         scrollRef.current?.scrollTo({ top: 0 })
       } else {
-        setMsg(`⛔ ${res.reason ?? 'failed'}`)
+        setMsg(`${res.reason ?? 'failed'}`)
       }
     } catch (err) {
-      setMsg(`⛔ ${err instanceof Error ? err.message : 'unknown'}`)
+      setMsg(`${err instanceof Error ? err.message : 'unknown'}`)
     } finally {
       setSaving(false)
     }
@@ -645,33 +714,37 @@ function CommentsTab(props: { studentId: string; files: string[] }): React.JSX.E
 
   return (
     <div ref={scrollRef} className="flex h-full flex-col gap-2 overflow-y-auto p-3 lg:flex-row">
-      <div className="h-48 shrink-0 overflow-y-auto rounded-xl border border-slate-800 p-2 lg:h-auto lg:w-64">
-        <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-          ไฟล์ ({props.files.length}) · มีคอมเมนต์ ({commented.length})
-        </p>
-        {props.files.map((p) => (
-          <button
-            key={p} type="button" onClick={() => selectFile(p)}
-            className={`mb-0.5 block w-full truncate rounded px-2 py-1 text-left font-mono text-[11px] ${activeFile === p ? 'bg-sky-900/60 text-sky-100' : 'text-slate-300 hover:bg-slate-800'}`}
-          >
-            {comments[p] !== undefined && <span className="mr-1 text-amber-300">💬</span>}{p}
-          </button>
-        ))}
-      </div>
+      <ScrollArea className="h-48 shrink-0 p-2 lg:h-auto lg:w-64">
+        <Card>
+          <CardContent className="pt-3">
+            <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground tabular-nums">
+              ไฟล์ ({props.files.length}) · มีคอมเมนต์ ({commented.length})
+            </p>
+            {props.files.map((p) => (
+              <Button
+                key={p} type="button" variant={activeFile === p ? 'secondary' : 'ghost'} size="sm" onClick={() => selectFile(p)}
+                className="mb-0.5 w-full justify-start truncate font-mono text-[11px]"
+              >
+                {comments[p] !== undefined && <MessageSquare size={11} className="text-primary" />}{p}
+              </Button>
+            ))}
+          </CardContent>
+        </Card>
+      </ScrollArea>
       <div className="flex min-h-[280px] flex-1 flex-col gap-2">
-        <p className="font-mono text-xs text-slate-400">💬 คอมเมนต์ไฟล์: <span className="text-sky-200">{activeFile || '— เลือกไฟล์ทางซ้าย'}</span></p>
+        <p className="font-mono text-xs text-muted-foreground">คอมเมนต์ไฟล์: <span className="text-primary">{activeFile || '— เลือกไฟล์ทางซ้าย'}</span></p>
         <textarea
           value={draft} onChange={(e) => setDraft(e.target.value)} rows={8}
           placeholder="เช่น ตรงนี้ควรแยกฟังก์ชัน validate ออกมา — หัก 2 คะแนน"
           disabled={activeFile === ''}
-          className="w-full flex-1 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-[13px] focus:border-sky-500 focus:outline-none disabled:opacity-40"
+          className="w-full flex-1 rounded-md border border-input bg-background px-3 py-2 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
         />
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => void save()} disabled={saving || activeFile === ''} className="rounded-lg bg-sky-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-600 disabled:opacity-40">
+          <Button type="button" size="sm" onClick={() => void save()} disabled={saving || activeFile === ''}>
             {saving ? '…' : 'บันทึกคอมเมนต์'}
-          </button>
-          <span className="text-[11px] text-slate-600">ล้างข้อความเป็นค่าว่างแล้วบันทึก = ลบคอมเมนต์</span>
-          {msg !== null && <span className="text-xs text-slate-300">{msg}</span>}
+          </Button>
+          <span className="text-[11px] text-muted-foreground">ล้างข้อความเป็นค่าว่างแล้วบันทึก = ลบคอมเมนต์</span>
+          {msg !== null && <span className="text-xs">{msg}</span>}
         </div>
       </div>
     </div>

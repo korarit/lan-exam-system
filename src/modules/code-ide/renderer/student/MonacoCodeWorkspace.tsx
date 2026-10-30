@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { X } from 'lucide-react'
+import { X, Lock } from 'lucide-react'
 import type * as monaco from 'monaco-editor'
 import { monacoLanguageForPath, type VirtualEntry } from '../../shared/code-schema'
+import { Card } from '@renderer/components/ui/card'
+import { Badge } from '@renderer/components/ui/badge'
+import { Button } from '@renderer/components/ui/button'
+import { cn } from '@renderer/lib/utils'
 
 /* ============================================================
  * Phase 8 (8.2.2) — MonacoCodeWorkspace (Multi-File & Cross-File)
@@ -208,41 +212,40 @@ export default function MonacoCodeWorkspace(props: Props): React.JSX.Element {
   const isReadOnly = props.activePath !== null && props.readOnlyPaths.has(props.activePath)
 
   return (
-    <div className="flex h-full flex-col">
+    <Card className="flex h-full flex-col overflow-hidden">
       {/* Multi-tab */}
-      <div className="flex items-center gap-0.5 overflow-x-auto border-b border-slate-800 bg-slate-950/60 px-1 pt-1">
+      <div className="flex items-center gap-0.5 overflow-x-auto border-b bg-muted/40 px-1 pt-1">
         {openPaths.map((p) => {
           const active = p === props.activePath
           return (
             <div
               key={p}
-              className={`group flex shrink-0 items-center gap-1 rounded-t-md border-x border-t px-2 py-1 font-mono text-xs ${
-                active ? 'border-slate-700 bg-slate-900 text-sky-200' : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
+              className={cn('group flex shrink-0 items-center gap-1 rounded-t-md border-x border-t px-2 py-1 font-mono text-xs',
+                active ? 'border-border bg-card text-primary' : 'border-transparent text-muted-foreground hover:text-foreground')}
             >
               <button type="button" onClick={() => props.onSelectFile(p)} title={p} className="max-w-40 truncate">
                 {p.split('/').pop()}
               </button>
-              <button type="button" onClick={() => closeTab(p)} className="rounded p-0.5 opacity-0 hover:bg-slate-700 group-hover:opacity-100">
+              <Button type="button" variant="ghost" size="icon" onClick={() => closeTab(p)} className="h-5 w-5 opacity-0 group-hover:opacity-100" aria-label={`ปิด ${p}`}>
                 <X size={12} />
-              </button>
+              </Button>
             </div>
           )
         })}
-        {openPaths.length === 0 && <span className="px-2 py-1 text-xs text-slate-600">เลือกไฟล์จาก Project Files เพื่อเริ่มเขียนโค้ด</span>}
+        {openPaths.length === 0 && <span className="px-2 py-1 text-xs text-muted-foreground">เลือกไฟล์จาก Project Files เพื่อเริ่มเขียนโค้ด</span>}
       </div>
 
       {activeModel === null ? (
-        <div className="flex flex-1 items-center justify-center p-8 text-center text-sm text-slate-500">
+        <div className="flex flex-1 items-center justify-center p-8 text-center text-sm text-muted-foreground">
           ยังไม่ได้เปิดไฟล์ — คลิกไฟล์ในต้นไม้โปรเจกต์ หรือสร้างไฟล์ใหม่
         </div>
       ) : (
         <>
-          <div className="flex items-center gap-2 border-b border-slate-800 px-3 py-1 text-[11px] text-slate-500">
-            <code className="font-mono text-slate-400">{activeModel.path}</code>
-            <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono">{activeModel.languageId}</span>
-            {isReadOnly && <span className="rounded bg-slate-800 px-1.5 py-0.5 text-amber-300">🔒 read-only</span>}
-            <span className="ml-auto hidden sm:inline">models: {models.length} (cross-file IntelliSense พร้อม)</span>
+          <div className="flex items-center gap-2 border-b px-3 py-1 text-[11px] text-muted-foreground">
+            <code className="font-mono">{activeModel.path}</code>
+            <Badge variant="secondary" className="font-mono">{activeModel.languageId}</Badge>
+            {isReadOnly && <Badge variant="outline"><Lock size={10} /> read-only</Badge>}
+            <span className="ml-auto hidden tabular-nums sm:inline">models: {models.length} (cross-file IntelliSense พร้อม)</span>
           </div>
           {loadState === 'failed' ? (
             <TextareaFallback
@@ -256,7 +259,7 @@ export default function MonacoCodeWorkspace(props: Props): React.JSX.Element {
           )}
         </>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -269,7 +272,7 @@ function TextareaFallback(props: {
   const lines = props.content.split('\n').length
   return (
     <div className="flex min-h-0 flex-1">
-      <div aria-hidden className="select-none overflow-hidden border-r border-slate-800 bg-slate-950/60 px-2 py-3 text-right font-mono text-[13px] leading-6 text-slate-600">
+      <div aria-hidden className="select-none overflow-hidden border-r bg-muted/40 px-2 py-3 text-right font-mono text-[13px] leading-6 tabular-nums text-muted-foreground">
         {Array.from({ length: lines }, (_, i) => (
           <div key={i}>{i + 1}</div>
         ))}
@@ -281,7 +284,7 @@ function TextareaFallback(props: {
         onChange={(e) => {
           if (props.activePath !== null) props.onChangeContent(props.activePath, e.target.value)
         }}
-        className="min-h-0 flex-1 resize-none bg-slate-950 p-3 font-mono text-[13px] leading-6 text-slate-100 focus:outline-none"
+        className="min-h-0 flex-1 resize-none bg-background p-3 font-mono text-[13px] leading-6 outline-none"
       />
     </div>
   )

@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Play, RefreshCcw } from 'lucide-react'
 import type { DatabaseConfig, SqlTestCase } from '../../../shared/code-schema'
+import { Button } from '@renderer/components/ui/button'
+import { Card, CardContent } from '@renderer/components/ui/card'
+import { Badge } from '@renderer/components/ui/badge'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@renderer/components/ui/table'
 
 /* Phase 8 (8.2.3) + Phase 9 (9.4.4) โหมด 4: Database & SQL Workbench (SQLite เท่านั้น)
  * - Runtime: SQLite (better-sqlite3) ทั้งฝั่งครูและนักเรียน — ไม่ต้องตั้งเซิร์ฟเวอร์
@@ -73,7 +84,7 @@ export default function DatabaseWorkbenchPanel(props: Props): React.JSX.Element 
       // Fallback นอก Electron: ข้อความจำลองแบบเดิม
       setLastResult(
         destructive
-          ? `คำสั่งถูกส่งไป SQLite ephemeral (epoch ${epoch + 1}) — Spawn ใหม่พร้อมข้อมูลตั้งต้นเดิมแล้ว ✅`
+          ? `คำสั่งถูกส่งไป SQLite ephemeral (epoch ${epoch + 1}) — Spawn ใหม่พร้อมข้อมูลตั้งต้นเดิมแล้ว`
           : `รันบน SQLite ephemeral (epoch ${epoch + 1}) — ผลลัพธ์จริงตรวจด้วย better-sqlite3 ฝั่ง Main`
       )
       return
@@ -90,12 +101,12 @@ export default function DatabaseWorkbenchPanel(props: Props): React.JSX.Element 
           const r = await window.ztExam.runSqlTest({ seedSql: props.seedSql, studentSql: query, test: t })
           next[t.testId] = { passed: r.passed, actualColumns: r.actualColumns, actualRows: r.actualRows, note: r.note }
         } catch (err) {
-          next[t.testId] = { passed: null, actualColumns: [], actualRows: [], note: `⛔ รันไม่สำเร็จ: ${err instanceof Error ? err.message : 'IPC error'}` }
+          next[t.testId] = { passed: null, actualColumns: [], actualRows: [], note: `รันไม่สำเร็จ: ${err instanceof Error ? err.message : 'IPC error'}` }
         }
       }
       setSqlResults(next)
       const passedCount = Object.values(next).filter((r) => r.passed === true).length
-      setLastResult(`รันบน SQLite ephemeral (epoch ${epoch + 1}) — ผ่าน ${passedCount}/${props.tests.length} sample tests ✅`)
+      setLastResult(`รันบน SQLite ephemeral (epoch ${epoch + 1}) — ผ่าน ${passedCount}/${props.tests.length} sample tests`)
     } finally {
       setSqlRunning(false)
     }
@@ -104,7 +115,7 @@ export default function DatabaseWorkbenchPanel(props: Props): React.JSX.Element 
   function respawn(): void {
     setEpoch((e) => e + 1)
     setQuery(sqlMode === 'create-table' ? 'CREATE TABLE students (\n  id INTEGER PRIMARY KEY,\n  name TEXT NOT NULL\n);' : 'SELECT * FROM users;')
-    setLastResult(`🔄 Spawn Fresh DB แล้ว (epoch ${epoch + 1}) — คืนค่าตารางและข้อมูลตั้งต้นเดิมครบ`)
+    setLastResult(`Spawn Fresh DB แล้ว (epoch ${epoch + 1}) — คืนค่าตารางและข้อมูลตั้งต้นเดิมครบ`)
   }
 
   // Ctrl+Enter จาก workspace: รัน query ปัจจุบัน
@@ -120,131 +131,139 @@ export default function DatabaseWorkbenchPanel(props: Props): React.JSX.Element 
 
   return (
     <div className="space-y-3 p-3">
-      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
-        <div className="flex items-center gap-2">
-          <span className="rounded bg-emerald-900/50 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300">SQLite</span>
-          <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">epoch {epoch}</span>
-          <span className="text-[11px] text-slate-500">
-            {sqlMode === 'query' ? '📋 โหมด query — มี table+data ให้แล้ว' : '🏗️ โหมดสร้าง table — เริ่มจาก DB ว่าง'}
+      <Card className="bg-muted/30">
+        <CardContent className="flex items-center gap-2 pt-3">
+          <Badge variant="default" className="font-mono text-[10px]">SQLite</Badge>
+          <Badge variant="secondary" className="font-mono text-[10px] tabular-nums">epoch {epoch}</Badge>
+          <span className="text-[11px] text-muted-foreground">
+            {sqlMode === 'query' ? 'โหมด query — มี table+data ให้แล้ว' : 'โหมดสร้าง table — เริ่มจาก DB ว่าง'}
           </span>
-          <button type="button" onClick={respawn} className="ml-auto inline-flex items-center gap-1 rounded bg-slate-700 px-2 py-1 text-[11px] hover:bg-slate-600">
+          <Button type="button" variant="secondary" size="sm" onClick={respawn} className="ml-auto">
             <RefreshCcw size={12} /> Spawn Fresh DB
-          </button>
-        </div>
-      </div>
+          </Button>
+        </CardContent>
+      </Card>
 
       {canViewSchema ? (
-        <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
-          <div className="mb-1.5 flex items-center gap-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Schema Viewer {viewerRole === 'teacher' && <span className="text-amber-300">(ครู — เห็นตลอด)</span>}
-            </h3>
-            <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">{tables.length} tables</span>
-          </div>
-          {tables.length === 0 ? (
-            <p className="text-xs text-slate-500">
-              {sqlMode === 'create-table'
-                ? 'ยังไม่มีตาราง — เขียน CREATE TABLE ในช่อง SQL Editor ด้านล่าง ตารางจะขึ้นที่นี่'
-                : 'ไม่พบ CREATE TABLE ใน seed — อัปโหลด db/seed.sql ใน Builder'}
+        <Card className="bg-muted/30">
+          <CardContent className="pt-3">
+            <div className="mb-1.5 flex items-center gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Schema Viewer {viewerRole === 'teacher' && <span>(ครู — เห็นตลอด)</span>}
+              </h3>
+              <Badge variant="secondary" className="font-mono text-[10px] tabular-nums">{tables.length} tables</Badge>
+            </div>
+            {tables.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                {sqlMode === 'create-table'
+                  ? 'ยังไม่มีตาราง — เขียน CREATE TABLE ในช่อง SQL Editor ด้านล่าง ตารางจะขึ้นที่นี่'
+                  : 'ไม่พบ CREATE TABLE ใน seed — อัปโหลด db/seed.sql ใน Builder'}
+              </p>
+            ) : (
+              tables.map((t) => {
+                const fromSeed = seedTables.some((s) => s.name === t.name)
+                return (
+                  <div key={t.name} className="mb-1 rounded-md bg-muted p-1.5 font-mono text-[11px]">
+                    <span className="text-primary">{t.name}</span>
+                    <span className="text-muted-foreground"> ({t.columns.join(', ')})</span>
+                    {!fromSeed && <Badge variant="outline" className="ml-1 text-[10px]">สร้างเอง</Badge>}
+                  </div>
+                )
+              })
+            )}
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              {props.database.allowDestructiveQueries
+                ? 'โจทย์ข้อนี้อนุญาต DELETE / DROP / ALTER ได้เต็มที่ — ระบบเก็บ Master Seed แยกไว้เสมอ'
+                : 'โหมดอ่านอย่างเดียว'}
             </p>
-          ) : (
-            tables.map((t) => {
-              const fromSeed = seedTables.some((s) => s.name === t.name)
-              return (
-                <div key={t.name} className="mb-1 rounded bg-slate-900 p-1.5 font-mono text-[11px]">
-                  <span className="text-emerald-300">▦ {t.name}</span>
-                  <span className="text-slate-500"> ({t.columns.join(', ')})</span>
-                  {!fromSeed && <span className="ml-1 rounded bg-sky-900/60 px-1 text-[10px] text-sky-300">สร้างเอง</span>}
-                </div>
-              )
-            })
-          )}
-          <p className="mt-1.5 text-[11px] text-slate-500">
-            {props.database.allowDestructiveQueries
-              ? 'โจทย์ข้อนี้อนุญาต DELETE / DROP / ALTER ได้เต็มที่ — ระบบเก็บ Master Seed แยกไว้เสมอ'
-              : 'โหมดอ่านอย่างเดียว'}
-          </p>
-        </div>
+          </CardContent>
+        </Card>
       ) : (
-        <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
-          <p className="text-xs text-slate-500">🔒 ครูปิด Schema Viewer ไว้ — เขียน SQL จากโจทย์ได้เลย (รันแล้วดูผลในตารางด้านล่าง)</p>
-        </div>
+        <Card className="bg-muted/30">
+          <CardContent className="pt-3">
+            <p className="text-xs text-muted-foreground">ครูปิด Schema Viewer ไว้ — เขียน SQL จากโจทย์ได้เลย (รันแล้วดูผลในตารางด้านล่าง)</p>
+          </CardContent>
+        </Card>
       )}
 
-      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
-        <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">SQL Editor (SQLite)</h3>
-        <textarea
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          rows={4}
-          spellCheck={false}
-          className="w-full rounded border border-slate-700 bg-slate-900 p-2 font-mono text-xs focus:border-sky-500 focus:outline-none"
-        />
-        <button type="button" onClick={() => void runQuery()} disabled={sqlRunning} className="mt-1.5 inline-flex items-center gap-1 rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium hover:bg-emerald-600 disabled:opacity-40">
-          <Play size={12} /> {sqlRunning ? 'กำลังรัน…' : 'รัน Query (Ctrl+Enter)'}
-        </button>
-        {lastResult !== null && <p className="mt-1.5 text-[11px] text-amber-300">{lastResult}</p>}
-      </div>
+      <Card className="bg-muted/30">
+        <CardContent className="pt-3">
+          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">SQL Editor (SQLite)</h3>
+          <textarea
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            rows={4}
+            spellCheck={false}
+            className="w-full rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <Button type="button" size="sm" onClick={() => void runQuery()} disabled={sqlRunning} className="mt-1.5">
+            <Play size={12} /> {sqlRunning ? 'กำลังรัน…' : 'รัน Query (Ctrl+Enter)'}
+          </Button>
+          {lastResult !== null && <p className="mt-1.5 text-[11px] text-muted-foreground">{lastResult}</p>}
+        </CardContent>
+      </Card>
 
       <div>
-        <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Query Result — Expected vs Actual ({props.tests.length})</h3>
-        {props.tests.length === 0 && <p className="text-xs text-slate-500">ไม่มี sample SQL test</p>}
+        <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground tabular-nums">Query Result — Expected vs Actual ({props.tests.length})</h3>
+        {props.tests.length === 0 && <p className="text-xs text-muted-foreground">ไม่มี sample SQL test</p>}
         {props.tests.map((t) => {
           const actual = sqlResults[t.testId]
           return (
-          <div key={t.testId} className={`mb-1.5 overflow-x-auto rounded-lg border bg-slate-950/60 p-2 ${actual?.passed === true ? 'border-emerald-800/60' : actual?.passed === false ? 'border-red-800/60' : 'border-slate-800'}`}>
-            <div className="mb-1 flex items-center gap-2 text-[13px]">
-              <span className="font-medium text-slate-200">{t.title}</span>
-              {actual?.passed === true && <span className="text-[11px] text-emerald-300">✅ ผ่าน</span>}
-              {actual?.passed === false && <span className="text-[11px] text-red-300">❌ ไม่ผ่าน</span>}
-              <span className="ml-auto text-[11px] text-slate-500">{t.points} คะแนน</span>
-            </div>
-            <p className="mb-1 font-mono text-[10px] uppercase tracking-wide text-slate-500">expected</p>
-            <table className="w-full font-mono text-[11px]">
-              <thead>
-                <tr className="text-left text-slate-500">
-                  {t.expectedColumns.map((c) => <th key={c} className="border-b border-slate-800 px-1.5 py-1 font-medium">{c}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {t.expectedRows.slice(0, 5).map((row, i) => (
-                  <tr key={i} className="text-slate-300">
-                    {row.map((cell, j) => <td key={j} className="border-b border-slate-800/50 px-1.5 py-1">{cell ?? 'NULL'}</td>)}
-                  </tr>
-                ))}
-                {t.expectedRows.length === 0 && (
-                  <tr><td colSpan={Math.max(1, t.expectedColumns.length)} className="px-1.5 py-2 text-slate-600">(ตรวจผ่าน verificationQuery — ไม่มีแถวตัวอย่าง)</td></tr>
+            <Card key={t.testId} className="mb-1.5 bg-muted/30">
+              <CardContent className="overflow-x-auto pt-3">
+                <div className="mb-1 flex items-center gap-2 text-[13px]">
+                  <span className="font-medium">{t.title}</span>
+                  {actual?.passed === true && <Badge>ผ่าน</Badge>}
+                  {actual?.passed === false && <Badge variant="destructive">ไม่ผ่าน</Badge>}
+                  <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{t.points} คะแนน</span>
+                </div>
+                <p className="mb-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">expected</p>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      {t.expectedColumns.map((c) => <TableHead key={c}>{c}</TableHead>)}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {t.expectedRows.slice(0, 5).map((row, i) => (
+                      <TableRow key={i}>
+                        {row.map((cell, j) => <TableCell key={j}>{cell ?? 'NULL'}</TableCell>)}
+                      </TableRow>
+                    ))}
+                    {t.expectedRows.length === 0 && (
+                      <TableRow><TableCell colSpan={Math.max(1, t.expectedColumns.length)}>(ตรวจผ่าน verificationQuery — ไม่มีแถวตัวอย่าง)</TableCell></TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+                {actual !== undefined && (
+                  <>
+                    <p className="mb-1 mt-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">actual (SQLite จริง)</p>
+                    {actual.actualColumns.length > 0 ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            {actual.actualColumns.map((c) => <TableHead key={c} className="text-primary">{c}</TableHead>)}
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {actual.actualRows.slice(0, 5).map((row, i) => (
+                            <TableRow key={i}>
+                              {row.map((cell, j) => <TableCell key={j}>{cell ?? 'NULL'}</TableCell>)}
+                            </TableRow>
+                          ))}
+                          {actual.actualRows.length === 0 && (
+                            <TableRow><TableCell colSpan={Math.max(1, actual.actualColumns.length)}>(ไม่มีแถว)</TableCell></TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground">ไม่มีตารางผลลัพธ์ (โจทย์ DDL/คำสั่งเขียน — ตรวจด้วย verificationQuery)</p>
+                    )}
+                    <p className="mt-1 text-[11px] text-muted-foreground">{actual.note}</p>
+                  </>
                 )}
-              </tbody>
-            </table>
-            {actual !== undefined && (
-              <>
-                <p className="mb-1 mt-2 font-mono text-[10px] uppercase tracking-wide text-slate-500">actual (SQLite จริง)</p>
-                {actual.actualColumns.length > 0 ? (
-                  <table className="w-full font-mono text-[11px]">
-                    <thead>
-                      <tr className="text-left text-sky-400">
-                        {actual.actualColumns.map((c) => <th key={c} className="border-b border-slate-800 px-1.5 py-1 font-medium">{c}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {actual.actualRows.slice(0, 5).map((row, i) => (
-                        <tr key={i} className="text-slate-200">
-                          {row.map((cell, j) => <td key={j} className="border-b border-slate-800/50 px-1.5 py-1">{cell ?? 'NULL'}</td>)}
-                        </tr>
-                      ))}
-                      {actual.actualRows.length === 0 && (
-                        <tr><td colSpan={Math.max(1, actual.actualColumns.length)} className="px-1.5 py-2 text-slate-600">(ไม่มีแถว)</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                ) : (
-                  <p className="text-[11px] text-slate-500">ไม่มีตารางผลลัพธ์ (โจทย์ DDL/คำสั่งเขียน — ตรวจด้วย verificationQuery)</p>
-                )}
-                <p className="mt-1 text-[11px] text-amber-300">{actual.note}</p>
-              </>
-            )}
-          </div>
+              </CardContent>
+            </Card>
           )
         })}
       </div>

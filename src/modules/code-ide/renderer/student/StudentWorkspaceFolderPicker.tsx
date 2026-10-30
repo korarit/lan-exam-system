@@ -1,5 +1,15 @@
 import { useState } from 'react'
 import { FolderOpen } from 'lucide-react'
+import { Button } from '@renderer/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@renderer/components/ui/dialog'
+import { Input } from '@renderer/components/ui/input'
 
 /* ============================================================
  * Phase 8 (8.2.1) — StudentWorkspaceFolderPicker
@@ -22,6 +32,8 @@ export function defaultWorkspaceFolder(examId: string, studentId: string): strin
 export default function StudentWorkspaceFolderPicker(props: Props): React.JSX.Element {
   const [picking, setPicking] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [manualPath, setManualPath] = useState('')
 
   async function handlePick(): Promise<void> {
     setPicking(true)
@@ -36,8 +48,9 @@ export default function StudentWorkspaceFolderPicker(props: Props): React.JSX.El
         const dir = await picker()
         props.onPick(`<SelectedFolder>/${dir.name}/`)
       } else {
-        // Fallback: Electron sandbox ไม่มี File System Access API — ใช้พาธมาตรฐาน
-        props.onPick(defaultWorkspaceFolder(props.examId, props.studentId))
+        // Fallback: Electron sandbox ไม่มี File System Access API — ให้กรอกพาธเองใน Dialog
+        setManualPath(defaultWorkspaceFolder(props.examId, props.studentId))
+        setDialogOpen(true)
       }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
@@ -53,19 +66,42 @@ export default function StudentWorkspaceFolderPicker(props: Props): React.JSX.El
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button
+      <Button
         type="button"
+        variant="outline"
+        size="sm"
         onClick={() => void handlePick()}
         disabled={picking}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 transition hover:border-sky-500 disabled:opacity-40"
       >
-        <FolderOpen size={14} className="text-sky-400" />
-        {picking ? 'กำลังเลือก…' : '📂 เลือกโฟลเดอร์เก็บงาน'}
-      </button>
-      <code className="max-w-full truncate font-mono text-[11px] text-slate-400" title={props.value}>
+        <FolderOpen size={14} />
+        {picking ? 'กำลังเลือก…' : 'เลือกโฟลเดอร์เก็บงาน'}
+      </Button>
+      <code className="max-w-full truncate font-mono text-[11px] tabular-nums text-muted-foreground" title={props.value}>
         {props.value}
       </code>
-      {error !== null && <span className="text-[11px] text-amber-300">{error}</span>}
+      {error !== null && <span className="text-[11px] text-destructive">{error}</span>}
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>โฟลเดอร์เก็บงาน</DialogTitle>
+            <DialogDescription>เบราว์เซอร์รุ่นนี้เลือกโฟลเดอร์โดยตรงไม่ได้ — พิมพ์พาธเองหรือใช้ค่ามาตรฐาน</DialogDescription>
+          </DialogHeader>
+          <Input value={manualPath} onChange={(e) => setManualPath(e.target.value)} className="font-mono text-xs" aria-label="พาธโฟลเดอร์" />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>ยกเลิก</Button>
+            <Button
+              type="button"
+              onClick={() => {
+                props.onPick(manualPath.trim() || defaultWorkspaceFolder(props.examId, props.studentId))
+                setDialogOpen(false)
+              }}
+            >
+              ใช้พาธนี้
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

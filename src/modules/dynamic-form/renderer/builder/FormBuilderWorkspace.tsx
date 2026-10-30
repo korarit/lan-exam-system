@@ -13,6 +13,28 @@ import { useFormBuilderStore, collectFormIssues, listQuestions } from './form-bu
 import { QuestionCard } from './QuestionCard'
 import FloatingBuilderToolbar from './FloatingBuilderToolbar'
 import StudentFormPreviewModal from './StudentFormPreviewModal'
+import { Button } from '@renderer/components/ui/button'
+import { Input } from '@renderer/components/ui/input'
+import { Label } from '@renderer/components/ui/label'
+import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/ui/card'
+import { Badge } from '@renderer/components/ui/badge'
+import { Separator } from '@renderer/components/ui/separator'
+import { ScrollArea } from '@renderer/components/ui/scroll-area'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@renderer/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@renderer/components/ui/select'
 
 /* ============================================================
  * Phase 6 (6.2) — หน้าจอสร้างฟอร์มข้อสอบแบบ Google Forms ของครู
@@ -156,97 +178,122 @@ export default function FormBuilderWorkspace(): React.JSX.Element {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-        <FilePlus2 size={18} className="text-sky-400" />
-        <h2 className="font-semibold">โมดูล Dynamic Form — สร้างชุดข้อสอบสไตล์ Google Forms</h2>
-        <span className="ml-auto text-xs text-slate-500">
-          {questions.length} ข้อ · {Math.round(totalPoints * 100) / 100} คะแนน · {Object.keys(assets).length} รูปภาพฝังในไฟล์
-        </span>
-      </div>
+      <Card className="mb-4">
+        <CardContent className="flex flex-wrap items-center gap-3 py-4">
+          <FilePlus2 size={18} className="text-primary" />
+          <h2 className="font-semibold">โมดูล Dynamic Form — สร้างชุดข้อสอบสไตล์ Google Forms</h2>
+          <Badge variant="secondary" className="ml-auto tabular-nums">
+            {questions.length} ข้อ · {Math.round(totalPoints * 100) / 100} คะแนน · {Object.keys(assets).length} รูปภาพฝังในไฟล์
+          </Badge>
+        </CardContent>
+      </Card>
 
       {savedForms.length > 0 && (
-        <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/50 p-4">
-          <div className="mb-2 flex items-center gap-2 text-xs text-slate-500">
-            <History size={13} /> ฟอร์มที่เคยเปิดบนเครื่องนี้ (ล่าสุด)
-          </div>
-          <ul className="space-y-1.5">
-            {savedForms.slice(0, 5).map((fmt) => (
-              <li
-                key={fmt.formId}
-                className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm"
-              >
-                <span className="truncate font-medium text-slate-200">{fmt.title}</span>
-                <span className="text-xs text-slate-500">
-                  {fmt.totalQuestions} ข้อ · {fmt.totalPoints} คะแนน {fmt.encrypted ? '· เข้ารหัส' : ''}
-                </span>
-                <code className="ml-auto hidden truncate font-mono text-[10px] text-slate-600 sm:inline">{fmt.filePath}</code>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-[11px] text-slate-600">เปิดซ้ำจากปุ่ม "เปิดไฟล์ .ztform" ด้านขวา (ไฟล์เข้ารหัสต้องใช้รหัสผ่านที่ตั้งไว้)</p>
-        </div>
+        <Card className="mb-4">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <History size={13} /> ฟอร์มที่เคยเปิดบนเครื่องนี้ (ล่าสุด)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ScrollArea className="max-h-48">
+              <ul className="space-y-1.5">
+                {savedForms.slice(0, 5).map((fmt) => (
+                  <li
+                    key={fmt.formId}
+                    className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm"
+                  >
+                    <span className="truncate font-medium">{fmt.title}</span>
+                    <Badge variant="outline">
+                      {fmt.totalQuestions} ข้อ · {fmt.totalPoints} คะแนน {fmt.encrypted ? '· เข้ารหัส' : ''}
+                    </Badge>
+                    <code className="ml-auto hidden truncate font-mono text-[10px] text-muted-foreground sm:inline">{fmt.filePath}</code>
+                  </li>
+                ))}
+              </ul>
+            </ScrollArea>
+            <p className="mt-2 text-[11px] text-muted-foreground">เปิดซ้ำจากปุ่ม "เปิดไฟล์ .ztform" ด้านขวา (ไฟล์เข้ารหัสต้องใช้รหัสผ่านที่ตั้งไว้)</p>
+          </CardContent>
+        </Card>
       )}
 
       <div className="flex gap-4">
         <div className="min-w-0 flex-1 space-y-4">
-          <section className="rounded-2xl border border-sky-900/50 bg-slate-900/60 p-6">
-            <input
-              value={form.title}
-              maxLength={120}
-              onChange={(e) => useFormBuilderStore.getState().setTitle(e.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-lg font-semibold"
-              placeholder="ชื่อชุดข้อสอบ"
-            />
-            <textarea
-              value={form.instructions}
-              maxLength={4000}
-              rows={2}
-              onChange={(e) => useFormBuilderStore.getState().setInstructions(e.target.value)}
-              className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2 text-sm"
-              placeholder="คำชี้แจงก่อนเริ่มทำ (ถ้ามี)"
-            />
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <SettingsField icon={<Timer size={13} />} label="เวลาสอบ (นาที)">
-                <input
-                  type="number"
-                  min={1}
-                  max={480}
-                  value={form.settings.durationMinutes}
-                  onChange={(e) => useFormBuilderStore.getState().patchSettings({ durationMinutes: Math.min(480, Math.max(1, Number(e.target.value) || 1)) })}
-                  className="w-24 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-right font-mono text-sm"
-                />
-              </SettingsField>
-              <SettingsField icon={<ArrowUpDown size={13} />} label="สลับลำดับข้อรายคน">
-                <Check
-                  size={16}
-                  className={`cursor-pointer transition ${form.settings.shuffleQuestionsPerStudent ? 'text-sky-400' : 'text-slate-600'}`}
-                  onClick={() => useFormBuilderStore.getState().patchSettings({ shuffleQuestionsPerStudent: !form.settings.shuffleQuestionsPerStudent })}
-                />
-              </SettingsField>
-              <SettingsField icon={<Users size={13} />} label="การนำทาง">
-                <select
-                  value={form.settings.navigationPolicy}
-                  onChange={(e) => useFormBuilderStore.getState().patchSettings({ navigationPolicy: e.target.value as 'strict-one-way' | 'allow-visited-review' })}
-                  className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-xs"
-                >
-                  <option value="strict-one-way">ส่งข้อแล้วห้ามย้อนกลับ</option>
-                  <option value="allow-visited-review">ย้อนกลับเฉพาะข้อที่เคยเปิดได้</option>
-                </select>
-              </SettingsField>
-              <SettingsField icon={<Check size={13} />} label="แสดงคะแนนปรนัยหลังส่ง">
-                <Check
-                  size={16}
-                  className={`cursor-pointer transition ${form.settings.showScoreImmediatelyAfterSubmit ? 'text-sky-400' : 'text-slate-600'}`}
-                  onClick={() => useFormBuilderStore.getState().patchSettings({ showScoreImmediatelyAfterSubmit: !form.settings.showScoreImmediatelyAfterSubmit })}
-                />
-              </SettingsField>
-            </div>
-          </section>
+          <Card>
+            <CardContent className="space-y-2 pt-6">
+              <Input
+                value={form.title}
+                maxLength={120}
+                onChange={(e) => useFormBuilderStore.getState().setTitle(e.target.value)}
+                className="text-lg font-semibold"
+                placeholder="ชื่อชุดข้อสอบ"
+                aria-label="ชื่อชุดข้อสอบ"
+              />
+              <textarea
+                value={form.instructions}
+                maxLength={4000}
+                rows={2}
+                onChange={(e) => useFormBuilderStore.getState().setInstructions(e.target.value)}
+                className="w-full rounded-md border border-input bg-background px-4 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="คำชี้แจงก่อนเริ่มทำ (ถ้ามี)"
+                aria-label="คำชี้แจงก่อนเริ่มทำ"
+              />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <SettingsField icon={<Timer size={13} />} label="เวลาสอบ (นาที)">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={480}
+                    value={form.settings.durationMinutes}
+                    onChange={(e) => useFormBuilderStore.getState().patchSettings({ durationMinutes: Math.min(480, Math.max(1, Number(e.target.value) || 1)) })}
+                    className="w-24 text-right font-mono tabular-nums"
+                    aria-label="เวลาสอบนาที"
+                  />
+                </SettingsField>
+                <SettingsField icon={<ArrowUpDown size={13} />} label="สลับลำดับข้อรายคน">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-pressed={form.settings.shuffleQuestionsPerStudent}
+                    onClick={() => useFormBuilderStore.getState().patchSettings({ shuffleQuestionsPerStudent: !form.settings.shuffleQuestionsPerStudent })}
+                  >
+                    <Check size={16} className={form.settings.shuffleQuestionsPerStudent ? 'text-primary' : 'text-muted-foreground'} />
+                  </Button>
+                </SettingsField>
+                <SettingsField icon={<Users size={13} />} label="การนำทาง">
+                  <Select
+                    value={form.settings.navigationPolicy}
+                    onValueChange={(v) => useFormBuilderStore.getState().patchSettings({ navigationPolicy: v as 'strict-one-way' | 'allow-visited-review' })}
+                  >
+                    <SelectTrigger className="w-56 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="strict-one-way">ส่งข้อแล้วห้ามย้อนกลับ</SelectItem>
+                      <SelectItem value="allow-visited-review">ย้อนกลับเฉพาะข้อที่เคยเปิดได้</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </SettingsField>
+                <SettingsField icon={<Check size={13} />} label="แสดงคะแนนปรนัยหลังส่ง">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-pressed={form.settings.showScoreImmediatelyAfterSubmit}
+                    onClick={() => useFormBuilderStore.getState().patchSettings({ showScoreImmediatelyAfterSubmit: !form.settings.showScoreImmediatelyAfterSubmit })}
+                  >
+                    <Check size={16} className={form.settings.showScoreImmediatelyAfterSubmit ? 'text-primary' : 'text-muted-foreground'} />
+                  </Button>
+                </SettingsField>
+              </div>
+            </CardContent>
+          </Card>
 
           {form.items.length === 0 && (
-            <div className="rounded-2xl border border-dashed border-slate-700 p-10 text-center text-sm text-slate-500">
-              ยังไม่มีข้อ — กด "+ เพิ่มคำถาม / บล็อก" หรือนำเข้าจาก CSV / JSON
-            </div>
+            <Card className="border-dashed">
+              <CardContent className="p-10 text-center text-sm text-muted-foreground">
+                ยังไม่มีข้อ — กด "+ เพิ่มคำถาม / บล็อก" หรือนำเข้าจาก CSV / JSON
+              </CardContent>
+            </Card>
           )}
 
           {form.items.map((item, index) => (
@@ -279,61 +326,65 @@ export default function FormBuilderWorkspace(): React.JSX.Element {
       </div>
 
       {notice !== null && (
-        <div className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-sm text-slate-200 shadow-lg">
-          {notice}
-        </div>
+        <Card className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2 shadow-lg">
+          <CardContent className="px-4 py-2.5 text-sm">{notice}</CardContent>
+        </Card>
       )}
 
-      {previewOpen && <StudentFormPreviewModal form={form} assets={assets} onClose={() => setPreviewOpen(false)} />}
+      <StudentFormPreviewModal open={previewOpen} onOpenChange={setPreviewOpen} form={form} assets={assets} onClose={() => setPreviewOpen(false)} />
 
-      {passwordModal !== null && (
-        <PasswordAskModal
-          kind={passwordModal.kind}
-          onSubmit={(password) => {
-            setPasswordModal(null)
-            if (passwordModal.kind === 'save') void doSave(true, password)
-            else void handleLoad(password)
-          }}
-          onCancel={() => {
-            setPasswordModal(null)
-            setNotice(null)
-          }}
-        />
-      )}
+      <PasswordAskModal
+        state={passwordModal}
+        onSubmit={(password) => {
+          const kind = passwordModal?.kind ?? 'save'
+          setPasswordModal(null)
+          if (kind === 'save') void doSave(true, password)
+          else void handleLoad(password)
+        }}
+        onCancel={() => {
+          setPasswordModal(null)
+          setNotice(null)
+        }}
+      />
     </div>
   )
 }
 
 function SettingsField(props: { icon: React.ReactNode; label: string; children: React.ReactNode }): React.JSX.Element {
   return (
-    <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-400">
+    <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
       {props.icon}
-      {props.label}
+      <Label className="text-xs">{props.label}</Label>
       <div className="ml-auto flex items-center">{props.children}</div>
     </div>
   )
 }
 
 function PasswordAskModal(props: {
-  kind: 'load' | 'save'
+  state: { kind: 'load' | 'save' } | null
   onSubmit(password: string): void
   onCancel(): void
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const [password, setPassword] = useState('')
   const valid = password.length > 0 && password.length <= 200
+  if (props.state === null) return null
+  const kind = props.state.kind
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-6">
-      <div className="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-900 p-6">
-        <div className="mb-3 flex items-center gap-2">
-          <KeyRound size={18} className="text-amber-300" />
-          <h3 className="font-semibold">{props.kind === 'load' ? 'รหัสผ่านของไฟล์ .ztform' : 'ตั้งรหัสผ่านเข้ารหัสไฟล์'}</h3>
-        </div>
-        <p className="mb-3 text-xs text-slate-400">
-          {props.kind === 'load'
-            ? 'ไฟล์ถูกเข้ารหัสแบบ AES-256-GCM (PBKDF2) — ใส่รหัสผ่านที่ตั้งไว้ตอนบันทึก'
-            : 'รหัสผ่านจะแปลงเป็นคีย์ด้วย PBKDF2 (100,000 รอบ) แล้วเข้ารหัสเนื้อหาทั้งหมด — ห้ามลืมรหัสผ่าน!'}
-        </p>
-        <input
+    <Dialog open onOpenChange={(o) => { if (!o) props.onCancel() }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound size={18} className="text-primary" />
+            {kind === 'load' ? 'รหัสผ่านของไฟล์ .ztform' : 'ตั้งรหัสผ่านเข้ารหัสไฟล์'}
+          </DialogTitle>
+          <DialogDescription>
+            {kind === 'load'
+              ? 'ไฟล์ถูกเข้ารหัสแบบ AES-256-GCM (PBKDF2) — ใส่รหัสผ่านที่ตั้งไว้ตอนบันทึก'
+              : 'รหัสผ่านจะแปลงเป็นคีย์ด้วย PBKDF2 (100,000 รอบ) แล้วเข้ารหัสเนื้อหาทั้งหมด — ห้ามลืมรหัสผ่าน!'}
+          </DialogDescription>
+        </DialogHeader>
+        <Separator />
+        <Input
           type="password"
           autoFocus
           value={password}
@@ -342,23 +393,21 @@ function PasswordAskModal(props: {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && valid) props.onSubmit(password)
           }}
-          className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5"
+          aria-label="รหัสผ่านไฟล์"
         />
-        <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={props.onCancel} className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={props.onCancel}>
             ยกเลิก
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             disabled={!valid}
             onClick={() => props.onSubmit(password)}
-            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
           >
             ตกลง
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
-

@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { FolderOpen, FileArchive } from 'lucide-react'
 import type { VirtualEntry } from '../../shared/code-schema'
 import { isJunkPath, normalizeProjectPath } from '../../shared/project-tree'
+import { Button } from '@renderer/components/ui/button'
+import { Card } from '@renderer/components/ui/card'
+import { cn } from '@renderer/lib/utils'
 
 /* Phase 8 (8.3.2) — Upload โปรเจกต์ตั้งต้น (Folder/.zip) + Starter/Reference views
  * อ่านโฟลเดอร์ผ่าน File System Access / webkitdirectory, กรอง junk อัตโนมัติ,
@@ -61,15 +64,16 @@ export default function ProjectTemplateUploader(props: Props): React.JSX.Element
     <div>
       <div className="mb-2 flex gap-1 text-xs">
         {(['starter', 'reference'] as TemplateView[]).map((v) => (
-          <button
+          <Button
             key={v}
             type="button"
+            variant={props.view === v ? 'default' : 'outline'}
+            size="sm"
             onClick={() => props.onViewChange(v)}
-            className={`rounded-lg px-3 py-1.5 font-medium ${props.view === v ? 'bg-emerald-800 text-emerald-100' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}`}
             title={v === 'starter' ? 'สิ่งที่นักเรียนจะเห็นตอนเริ่มสอบ' : 'โปรเจกต์เฉลยของอาจารย์ (ไม่ส่งถึงนักเรียน)'}
           >
             {v === 'starter' ? 'Starter Project (นักเรียนเห็น)' : 'Reference Solution (เฉลย)'}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -81,46 +85,53 @@ export default function ProjectTemplateUploader(props: Props): React.JSX.Element
           setDragOver(false)
           if (e.dataTransfer.files.length > 0) void readFolderFiles(e.dataTransfer.files)
         }}
-        className={`rounded-xl border-2 border-dashed p-4 text-center transition ${dragOver ? 'border-sky-500 bg-sky-950/20' : 'border-slate-700 bg-slate-950/40'}`}
+        className={cn('rounded-md border-2 border-dashed p-4 text-center transition', dragOver ? 'border-primary bg-primary/10' : 'border-border bg-muted/30')}
       >
         <div className="flex flex-wrap items-center justify-center gap-2">
-          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-[13px] font-medium text-white hover:bg-sky-600">
-            <FolderOpen size={15} /> 📂 Upload โฟลเดอร์โปรเจกต์
-            <input
-              type="file"
-              /* @ts-expect-error webkitdirectory ไม่ได้อยู่ใน lib DOM มาตรฐาน */
-              webkitdirectory=""
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files !== null && e.target.files.length > 0) void readFolderFiles(e.target.files)
-                e.target.value = ''
-              }}
-            />
-          </label>
-          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-2 text-[13px] text-slate-300 hover:border-slate-500">
-            <FileArchive size={15} /> ไฟล์ .zip
-            <input
-              type="file"
-              accept=".zip"
-              className="hidden"
-              onChange={(e) => {
-                if ((e.target.files?.length ?? 0) > 0) {
-                  setLastNotices(['ไฟล์ .zip จะถูกแตกใน Phase 9 (ต้องมี zip parser) — ตอนนี้ให้ upload เป็นโฟลเดอร์แทน'])
-                }
-                e.target.value = ''
-              }}
-            />
-          </label>
+          <Button type="button" asChild>
+            <label className="cursor-pointer">
+              <FolderOpen size={15} /> Upload โฟลเดอร์โปรเจกต์
+              <input
+                type="file"
+                /* @ts-expect-error webkitdirectory ไม่ได้อยู่ใน lib DOM มาตรฐาน */
+                webkitdirectory=""
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files !== null && e.target.files.length > 0) void readFolderFiles(e.target.files)
+                  e.target.value = ''
+                }}
+              />
+            </label>
+          </Button>
+          <Button type="button" variant="outline" asChild>
+            <label className="cursor-pointer">
+              <FileArchive size={15} /> ไฟล์ .zip
+              <input
+                type="file"
+                accept=".zip"
+                className="hidden"
+                onChange={(e) => {
+                  if ((e.target.files?.length ?? 0) > 0) {
+                    setLastNotices(['ไฟล์ .zip จะถูกแตกใน Phase 9 (ต้องมี zip parser) — ตอนนี้ให้ upload เป็นโฟลเดอร์แทน'])
+                  }
+                  e.target.value = ''
+                }}
+              />
+            </label>
+          </Button>
         </div>
-        <p className="mt-2 text-[11px] text-slate-500">ลากโฟลเดอร์มาวางตรงนี้ก็ได้ — ระบบกรอง .git/dist/build ให้อัตโนมัติ</p>
+        <p className="mt-2 text-[11px] text-muted-foreground">ลากโฟลเดอร์มาวางตรงนี้ก็ได้ — ระบบกรอง .git/dist/build ให้อัตโนมัติ</p>
       </div>
 
       {lastNotices.length > 0 && (
-        <ul className="mt-2 space-y-0.5 rounded-lg border border-slate-800 bg-slate-950/60 p-2 text-[11px] text-slate-400">
-          {lastNotices.map((n, i) => <li key={i}>• {n}</li>)}
-        </ul>
+        <Card className="mt-2 bg-muted/40">
+          <ul className="space-y-0.5 p-2 text-[11px] text-muted-foreground">
+            {lastNotices.map((n, i) => <li key={i}>• {n}</li>)}
+          </ul>
+        </Card>
       )}
     </div>
   )
 }
+

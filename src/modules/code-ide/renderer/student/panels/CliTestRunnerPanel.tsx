@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Play } from 'lucide-react'
 import type { CliTestCase, SupportedCodeLanguage, VirtualEntry } from '../../../shared/code-schema'
 import type { CodeIdeRuntimeStatus } from '../../../../../shared/ipc-channels'
+import { Button } from '@renderer/components/ui/button'
+import { Card, CardContent } from '@renderer/components/ui/card'
+import { Badge } from '@renderer/components/ui/badge'
 
 /* Phase 8 (8.2.3) + Phase 9 (9.4.1) โหมด 1: CLI / Algorithm
  * - ปุ่มรันยิง IPC `code-ide:run-cli` ไปรันจริงใน Main (external runtime + Anti-Delete Guard)
@@ -76,14 +79,14 @@ export default function CliTestRunnerPanel(props: Props): React.JSX.Element {
       return false
     }
     setInstalling(true)
-    setInstallNote('📥 กำลังติดตั้งไลบรารีที่ครูอนุมัติ… (ครั้งแรกครั้งเดียว)')
+    setInstallNote('กำลังติดตั้งไลบรารีที่ครูอนุมัติ… (ครั้งแรกครั้งเดียว)')
     try {
       const r = await zt.installStudentDeps({ packageId: props.packageId, packages: approvedForEco })
       if (!r.ok) {
-        setInstallNote(`⛔ ติดตั้งไม่สำเร็จ (${r.reason ?? 'unknown'}) — รันด้วย runtime เครื่องตัวเองล้วน`)
+        setInstallNote(`ติดตั้งไม่สำเร็จ (${r.reason ?? 'unknown'}) — รันด้วย runtime เครื่องตัวเองล้วน`)
         return false
       }
-      setInstallNote(`✅ ติดตั้งแล้ว: ${r.installed.join(', ')}`)
+      setInstallNote(`ติดตั้งแล้ว: ${r.installed.join(', ')}`)
       // รายงาน manifest กลับ host (host เก็บลง grading report ให้ครูตรวจเทียบ)
       try {
         await window.ztExam.moduleSend({
@@ -96,7 +99,7 @@ export default function CliTestRunnerPanel(props: Props): React.JSX.Element {
       }
       return true
     } catch {
-      setInstallNote('⛔ ติดตั้งไม่สำเร็จ — รันด้วย runtime เครื่องตัวเองล้วน')
+      setInstallNote('ติดตั้งไม่สำเร็จ — รันด้วย runtime เครื่องตัวเองล้วน')
       return false
     } finally {
       setInstalling(false)
@@ -114,7 +117,7 @@ export default function CliTestRunnerPanel(props: Props): React.JSX.Element {
         setRuntimeNote(
           missing.length === 0
             ? null
-            : `⚠️ ไม่พบ ${missing.map((r) => `${r.name}${r.hint !== '' ? ` (${r.hint})` : ''}`).join(', ')} ในเครื่อง — ติดตั้งเองก่อนกดรัน`
+            : `ไม่พบ ${missing.map((r) => `${r.name}${r.hint !== '' ? ` (${r.hint})` : ''}`).join(', ')} ในเครื่อง — ติดตั้งเองก่อนกดรัน`
         )
       } catch {
         // เช็คไม่สำเร็จไม่ถือว่าพัง — กดรันแล้วจะเห็น error จริง
@@ -148,7 +151,7 @@ export default function CliTestRunnerPanel(props: Props): React.JSX.Element {
         ...(props.packageId !== undefined ? { packageId: props.packageId } : {})
       })
       const extra = [
-        r.timedOut ? '⏱ หมดเวลา (ถูกตัดจบ)' : '',
+        r.timedOut ? 'หมดเวลา (ถูกตัดจบ)' : '',
         r.exitCode !== null && r.exitCode !== 0 ? `exit code ${r.exitCode}` : '',
         r.blockedReason ?? '',
         r.stderr.trim() !== '' ? `stderr: ${r.stderr.slice(0, 500)}` : ''
@@ -168,7 +171,7 @@ export default function CliTestRunnerPanel(props: Props): React.JSX.Element {
         [t.testId]: {
           actualStdout: '',
           passed: null,
-          note: `⛔ รันไม่สำเร็จ: ${err instanceof Error ? err.message : 'IPC error'}`
+          note: `รันไม่สำเร็จ: ${err instanceof Error ? err.message : 'IPC error'}`
         }
       }))
     } finally {
@@ -204,12 +207,12 @@ export default function CliTestRunnerPanel(props: Props): React.JSX.Element {
         ...(props.packageId !== undefined ? { packageId: props.packageId } : {})
       })
       setCustomOutput(
-        [`▶ output:\n${r.actualStdout || '(ว่าง)'}`, r.stderr.trim() !== '' ? `stderr:\n${r.stderr.slice(0, 1000)}` : '', r.note]
+        [`output:\n${r.actualStdout || '(ว่าง)'}`, r.stderr.trim() !== '' ? `stderr:\n${r.stderr.slice(0, 1000)}` : '', r.note]
           .filter((s) => s !== '')
           .join('\n')
       )
     } catch (err) {
-      setCustomOutput(`⛔ รันไม่สำเร็จ: ${err instanceof Error ? err.message : 'IPC error'}`)
+      setCustomOutput(`รันไม่สำเร็จ: ${err instanceof Error ? err.message : 'IPC error'}`)
     } finally {
       setCustomRunning(false)
     }
@@ -230,93 +233,107 @@ export default function CliTestRunnerPanel(props: Props): React.JSX.Element {
 
   return (
     <div className="space-y-3 p-3">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Sample Test Cases ({props.tests.length})</h3>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground tabular-nums">Sample Test Cases ({props.tests.length})</h3>
       {runtimeNote !== null && (
-        <p className="rounded-lg border border-amber-800/60 bg-amber-950/30 px-2.5 py-2 text-[11px] leading-5 text-amber-200">{runtimeNote}</p>
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="px-2.5 py-2 text-[11px] leading-5">{runtimeNote}</CardContent>
+        </Card>
       )}
       {canSelfInstall && (
-        <div className="rounded-lg border border-sky-800/60 bg-sky-950/30 px-2.5 py-2 text-[11px] leading-5 text-sky-200">
-          🌐 ครูอนุญาตให้ติดตั้งไลบรารีเอง: <span className="font-mono">{approvedForEco.map((p) => `${p.name}@${p.version}`).join(', ')}</span>
-          <button
-            type="button"
-            onClick={() => void ensureInstalled()}
-            disabled={installing}
-            className="ml-2 rounded bg-sky-700 px-2 py-0.5 text-[11px] font-medium hover:bg-sky-600 disabled:opacity-40"
-          >
-            {installing ? 'กำลังติดตั้ง…' : '📥 ติดตั้งเลย'}
-          </button>
-          {installNote !== null && <p className="mt-1 text-sky-300/90">{installNote}</p>}
-        </div>
+        <Card>
+          <CardContent className="px-2.5 py-2 text-[11px] leading-5">
+            ครูอนุญาตให้ติดตั้งไลบรารีเอง: <span className="font-mono">{approvedForEco.map((p) => `${p.name}@${p.version}`).join(', ')}</span>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void ensureInstalled()}
+              disabled={installing}
+              className="ml-2"
+            >
+              {installing ? 'กำลังติดตั้ง…' : 'ติดตั้งเลย'}
+            </Button>
+            {installNote !== null && <p className="mt-1 text-muted-foreground">{installNote}</p>}
+          </CardContent>
+        </Card>
       )}
-      {props.tests.length === 0 && <p className="text-xs text-slate-500">ข้อนี้ไม่มี sample test — กดรันด้วย Custom Input ด้านล่าง</p>}
+      {props.tests.length === 0 && <p className="text-xs text-muted-foreground">ข้อนี้ไม่มี sample test — กดรันด้วย Custom Input ด้านล่าง</p>}
       {props.tests.map((t) => {
         const r = results[t.testId]
         const isRunning = running[t.testId] === true
         return (
-          <div key={t.testId} className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
-            <div className="flex items-center gap-2">
-              <span className="text-[13px] font-medium text-slate-200">{t.title}</span>
-              <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">{t.kind}</span>
-              <span className="ml-auto text-[11px] text-slate-500">{t.points} คะแนน</span>
-              <button
-                type="button"
-                onClick={() => void runSample(t)}
-                disabled={isRunning}
-                className="inline-flex items-center gap-1 rounded bg-emerald-700 px-2 py-1 text-[11px] font-medium hover:bg-emerald-600 disabled:opacity-40"
-              >
-                <Play size={12} /> {isRunning ? 'กำลังรัน…' : 'รัน'}
-              </button>
-            </div>
-            <div className="mt-2 grid grid-cols-1 gap-1.5 font-mono text-[11px]">
-              {(t.inputs ?? []).length > 0 && (
-                <div className="rounded bg-slate-900 p-1.5">
-                  <span className="text-slate-500">inputs:</span>
-                  <div className="mt-1 space-y-0.5">
-                    {(t.inputs ?? []).map((inp, ii) => (
-                      <div key={ii} className="flex gap-2">
-                        <span className="text-sky-300">{inp.name}</span>
-                        <span className="rounded bg-slate-800 px-1 text-[10px] text-slate-400">{inp.type}</span>
-                        <span className="text-slate-200">= {inp.value === '' ? '(ว่าง)' : inp.value}</span>
-                      </div>
-                    ))}
+          <Card key={t.testId} className="bg-muted/30">
+            <CardContent className="pt-3">
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] font-medium">{t.title}</span>
+                <Badge variant="secondary" className="font-mono text-[10px]">{t.kind}</Badge>
+                {r !== undefined && (
+                  <Badge variant={r.passed === true ? 'default' : r.passed === false ? 'destructive' : 'outline'}>
+                    {r.passed === true ? 'ผ่าน' : r.passed === false ? 'ไม่ผ่าน' : 'ยังไม่ตรวจ'}
+                  </Badge>
+                )}
+                <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{t.points} คะแนน</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void runSample(t)}
+                  disabled={isRunning}
+                >
+                  <Play size={12} /> {isRunning ? 'กำลังรัน…' : 'รัน'}
+                </Button>
+              </div>
+              <div className="mt-2 grid grid-cols-1 gap-1.5 font-mono text-[11px]">
+                {(t.inputs ?? []).length > 0 && (
+                  <div className="rounded-md bg-muted p-1.5">
+                    <span className="text-muted-foreground">inputs:</span>
+                    <div className="mt-1 space-y-0.5">
+                      {(t.inputs ?? []).map((inp, ii) => (
+                        <div key={ii} className="flex gap-2">
+                          <span className="text-primary">{inp.name}</span>
+                          <Badge variant="outline" className="text-[10px]">{inp.type}</Badge>
+                          <span>= {inp.value === '' ? '(ว่าง)' : inp.value}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
-              <div className="rounded bg-slate-900 p-1.5"><span className="text-slate-500">stdin:</span> <pre className="whitespace-pre-wrap text-slate-300">{t.stdin || '(ว่าง — ใช้ inputs ด้านบน)'}</pre></div>
-              <div className="rounded bg-slate-900 p-1.5"><span className="text-slate-500">expected output:</span> <pre className="whitespace-pre-wrap text-slate-300">{t.expectedStdout || '(ไม่มี — โจทย์ข้อนี้ไม่ตรวจอัตโนมัติ)'}</pre></div>
-              {r !== undefined && (
-                <div className={`rounded bg-slate-900 p-1.5 ${r.passed === true ? 'border border-emerald-800/60' : r.passed === false ? 'border border-red-800/60' : ''}`}>
-                  <span className="text-slate-500">actual{ r.passed === true ? ' ✅' : r.passed === false ? ' ❌' : ''}:</span>
-                  <pre className="whitespace-pre-wrap text-slate-300">{r.actualStdout || '(ว่าง)'}</pre>
-                  <p className="mt-1 font-sans text-[10px] text-amber-300">{r.note}</p>
-                </div>
-              )}
-            </div>
-          </div>
+                )}
+                <div className="rounded-md bg-muted p-1.5"><span className="text-muted-foreground">stdin:</span> <pre className="whitespace-pre-wrap">{t.stdin || '(ว่าง — ใช้ inputs ด้านบน)'}</pre></div>
+                <div className="rounded-md bg-muted p-1.5"><span className="text-muted-foreground">expected output:</span> <pre className="whitespace-pre-wrap">{t.expectedStdout || '(ไม่มี — โจทย์ข้อนี้ไม่ตรวจอัตโนมัติ)'}</pre></div>
+                {r !== undefined && (
+                  <div className="rounded-md bg-muted p-1.5">
+                    <span className="text-muted-foreground">actual:</span>
+                    <pre className="whitespace-pre-wrap">{r.actualStdout || '(ว่าง)'}</pre>
+                    <p className="mt-1 font-sans text-[10px] text-muted-foreground">{r.note}</p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
         )
       })}
 
-      <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5">
-        <h4 className="mb-1.5 text-xs font-semibold text-slate-300">Custom Input Console</h4>
-        <textarea
-          value={customInput}
-          onChange={(e) => setCustomInput(e.target.value)}
-          rows={3}
-          placeholder="พิมพ์ stdin ทดสอบเอง…"
-          className="w-full rounded border border-slate-700 bg-slate-900 p-2 font-mono text-xs focus:border-sky-500 focus:outline-none"
-        />
-        <div className="mt-1.5 flex gap-2">
-          <button
-            type="button"
-            onClick={() => void runCustom()}
-            disabled={customRunning}
-            className="inline-flex items-center gap-1 rounded bg-sky-700 px-2.5 py-1 text-xs font-medium hover:bg-sky-600 disabled:opacity-40"
-          >
-            <Play size={12} /> {customRunning ? 'กำลังรัน…' : 'รันด้วย input นี้ (Ctrl+Enter)'}
-          </button>
-        </div>
-        {customOutput !== null && <pre className="mt-1.5 whitespace-pre-wrap font-mono text-[11px] text-amber-300">{customOutput}</pre>}
-      </div>
+      <Card className="bg-muted/30">
+        <CardContent className="pt-3">
+          <h4 className="mb-1.5 text-xs font-semibold">Custom Input Console</h4>
+          <textarea
+            value={customInput}
+            onChange={(e) => setCustomInput(e.target.value)}
+            rows={3}
+            placeholder="พิมพ์ stdin ทดสอบเอง…"
+            className="w-full rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <div className="mt-1.5 flex gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void runCustom()}
+              disabled={customRunning}
+            >
+              <Play size={12} /> {customRunning ? 'กำลังรัน…' : 'รันด้วย input นี้ (Ctrl+Enter)'}
+            </Button>
+          </div>
+          {customOutput !== null && <pre className="mt-1.5 whitespace-pre-wrap font-mono text-[11px]">{customOutput}</pre>}
+        </CardContent>
+      </Card>
     </div>
   )
 }

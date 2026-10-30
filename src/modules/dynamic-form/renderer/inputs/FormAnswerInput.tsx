@@ -1,7 +1,28 @@
 import { useRef } from 'react'
+import { Paperclip, X } from 'lucide-react'
 import type { StudentFormItem, FormAssetMap } from '../../shared/form-schema'
 import type { FormAnswerValue } from '../../shared/form-validate'
 import { assetDataUrl } from '../builder/builder-assets'
+import { Button } from '@renderer/components/ui/button'
+import { Input } from '@renderer/components/ui/input'
+import { Badge } from '@renderer/components/ui/badge'
+import { Card } from '@renderer/components/ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@renderer/components/ui/select'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@renderer/components/ui/table'
+import { cn } from '@renderer/lib/utils'
 
 /* ============================================================
  * Phase 6 (6.2.4 / พร้อม Phase 7) — ตัวเรนเดอร์คำตอบของทั้ง 12 ชนิด
@@ -21,7 +42,7 @@ export function FormAnswerInput(props: FormAnswerInputProps): React.JSX.Element 
   const itemImage = assetDataUrl(assets, item.imageAssetId)
   return (
     <div className="space-y-3">
-      {itemImage && <img src={itemImage} alt="" className="max-h-64 rounded-xl border border-slate-700" />}
+      {itemImage && <img src={itemImage} alt="" className="max-h-64 rounded-md border" />}
       {renderValueInput(item, value, onChange, assets, disabled)}
     </div>
   )
@@ -100,19 +121,20 @@ function ChoiceList(props: {
         return (
           <label
             key={choice.choiceId}
-            className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 transition ${
-              checked ? 'border-sky-600 bg-sky-950/40' : 'border-slate-700 bg-slate-950/60 hover:border-slate-600'
-            }`}
+            className={cn(
+              'flex cursor-pointer items-center gap-3 rounded-md border px-4 py-3 transition',
+              checked ? 'border-primary bg-primary/10' : 'hover:border-muted-foreground/50'
+            )}
           >
             <input
               type={single ? 'radio' : 'checkbox'}
-              className={`h-4 w-4 ${single ? '' : 'rounded'}`}
+              className="h-4 w-4 accent-primary"
               checked={checked}
               onChange={toggle}
               disabled={disabled}
             />
-            <span className="text-sm text-slate-200">{choice.text}</span>
-            {image && <img src={image} alt="" className="ml-auto max-h-20 rounded-lg border border-slate-700" />}
+            <span className="text-sm">{choice.text}</span>
+            {image && <img src={image} alt="" className="ml-auto max-h-20 rounded-md border" />}
           </label>
         )
       })}
@@ -131,21 +153,18 @@ function DropdownInput(props: {
   const { item, value, onChange, disabled } = props
   const selected = value.kind === 'choice' ? value.choiceId : ''
   return (
-    <select
-      className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none"
+    <Select
       value={selected}
+      onValueChange={(v) => onChange({ kind: 'choice', choiceId: v })}
       disabled={disabled}
-      onChange={(e) =>
-        e.target.value === '' ? onChange({ kind: 'choice', choiceId: '' }) : onChange({ kind: 'choice', choiceId: e.target.value })
-      }
     >
-      <option value="">— เลือกตัวเลือก —</option>
-      {item.choices.map((c) => (
-        <option key={c.choiceId} value={c.choiceId}>
-          {c.text}
-        </option>
-      ))}
-    </select>
+      <SelectTrigger className="w-full max-w-md text-sm"><SelectValue placeholder="— เลือกตัวเลือก —" /></SelectTrigger>
+      <SelectContent>
+        {item.choices.map((c) => (
+          <SelectItem key={c.choiceId} value={c.choiceId}>{c.text}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
 
@@ -160,13 +179,13 @@ function ShortTextInput(props: {
   const { item, value, onChange, disabled } = props
   const text = value.kind === 'text' ? value.text : ''
   return (
-    <input
+    <Input
       type="text"
       value={text}
       disabled={disabled}
       maxLength={item.validation?.maxLength ?? 200}
       onChange={(e) => onChange({ kind: 'text', text: e.target.value })}
-      className="w-full max-w-xl rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none"
+      className="w-full max-w-xl text-sm"
     />
   )
 }
@@ -185,7 +204,7 @@ function LongTextInput(props: {
       disabled={disabled}
       rows={6}
       onChange={(e) => onChange({ kind: 'text', text: e.target.value })}
-      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none"
+      className="w-full rounded-md border border-input bg-background px-4 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
     />
   )
 }
@@ -202,7 +221,7 @@ function NumericInput(props: {
   const text: string = value.kind === 'numeric' ? String(value.numeric) : ''
   return (
     <div className="flex items-center gap-2">
-      <input
+      <Input
         inputMode="decimal"
         value={text}
         disabled={disabled}
@@ -214,9 +233,9 @@ function NumericInput(props: {
               : { kind: 'numeric', numeric: parsed }
           )
         }}
-        className="w-40 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm font-mono focus:border-sky-500 focus:outline-none"
+        className="w-40 font-mono tabular-nums"
       />
-      {item.unit.length > 0 && <span className="text-sm text-slate-400">{item.unit}</span>}
+      {item.unit.length > 0 && <span className="text-sm text-muted-foreground">{item.unit}</span>}
     </div>
   )
 }
@@ -237,32 +256,30 @@ function GridInput(props: {
     onChange({ kind: 'rows', rowAnswers: { ...rowAnswers, [rowId]: given } })
   }
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-[560px] border-separate border-spacing-x-2 text-sm">
-        <thead>
-          <tr>
-            <th className="w-40 text-left text-xs font-normal text-slate-500" />
+    <div className="overflow-x-auto rounded-md border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-40" />
             {item.columns.map((col) => (
-              <th key={col.columnId} className="px-1 pb-1 text-xs font-medium text-slate-300">
-                {col.label}
-              </th>
+              <TableHead key={col.columnId} className="px-1 text-center">{col.label}</TableHead>
             ))}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {item.rows.map((row) => (
-            <tr key={row.rowId}>
-              <td className="w-40 pr-2 align-middle text-slate-200">{row.label}</td>
+            <TableRow key={row.rowId}>
+              <TableCell className="w-40 pr-2 align-middle">{row.label}</TableCell>
               {item.columns.map((col) => {
                 const cellChecked =
                   single
                     ? rowAnswers[row.rowId] === col.columnId
                     : Array.isArray(rowAnswers[row.rowId]) && (rowAnswers[row.rowId] as string[]).includes(col.columnId)
                 return (
-                  <td key={col.columnId} className="px-1 py-1.5 text-center">
+                  <TableCell key={col.columnId} className="px-1 py-1.5 text-center">
                     <input
                       type={single ? 'radio' : 'checkbox'}
-                      className={`h-4 w-4 ${single ? '' : 'rounded'}`}
+                      className="h-4 w-4 accent-primary"
                       checked={cellChecked}
                       disabled={disabled}
                       onChange={() => {
@@ -276,13 +293,13 @@ function GridInput(props: {
                         }
                       }}
                     />
-                  </td>
+                  </TableCell>
                 )
               })}
-            </tr>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   )
 }
@@ -302,14 +319,15 @@ function ScaleInput(props: {
   const selected = value.kind === 'scale' ? value.value : undefined
   return (
     <div className="flex items-center gap-3">
-      {item.leftLabel !== undefined && <span className="text-xs text-slate-400">{item.leftLabel}</span>}
+      {item.leftLabel !== undefined && <span className="text-xs text-muted-foreground">{item.leftLabel}</span>}
       <div className="flex gap-1.5">
         {values.map((v) => (
           <label
             key={v}
-            className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border text-sm transition ${
-              selected === v ? 'border-sky-500 bg-sky-950/60 text-sky-200' : 'border-slate-700 bg-slate-950 text-slate-300'
-            }`}
+            className={cn(
+              'flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border text-sm tabular-nums transition',
+              selected === v ? 'border-primary bg-primary/10 text-primary' : ''
+            )}
           >
             <input
               type="radio"
@@ -322,7 +340,7 @@ function ScaleInput(props: {
           </label>
         ))}
       </div>
-      {item.rightLabel !== undefined && <span className="text-xs text-slate-400">{item.rightLabel}</span>}
+      {item.rightLabel !== undefined && <span className="text-xs text-muted-foreground">{item.rightLabel}</span>}
     </div>
   )
 }
@@ -339,12 +357,12 @@ function DateTimeInput(props: {
   const current = value.kind === 'text' ? value.text : ''
   const inputType = item.mode === 'date' ? 'date' : item.mode === 'time' ? 'time' : 'datetime-local'
   return (
-    <input
+    <Input
       type={inputType}
       value={current.replace(' ', 'T')}
       disabled={disabled}
       onChange={(e) => onChange({ kind: 'text', text: e.target.value.replace('T', ' ') })}
-      className="w-full max-w-xs rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none"
+      className="w-full max-w-xs text-sm"
     />
   )
 }
@@ -360,19 +378,17 @@ function CodeInput(props: {
   const { item, value, onChange, disabled } = props
   const text = value.kind === 'text' ? value.text : ''
   const lineCount = Math.max(1, text.split('\n').length)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
   return (
-    <div className="rounded-xl border border-slate-700 bg-slate-950">
-      <div className="flex items-center justify-between border-b border-slate-800 px-3 py-1.5 text-xs text-slate-500">
-        <span className="rounded bg-slate-900 px-2 py-0.5 font-mono">{item.language}</span>
-        <span>{lineCount} บรรทัด · Tab ย่อหน้าได้</span>
+    <Card>
+      <div className="flex items-center justify-between border-b px-3 py-1.5 text-xs text-muted-foreground">
+        <Badge variant="secondary" className="font-mono">{item.language}</Badge>
+        <span className="tabular-nums">{lineCount} บรรทัด · Tab ย่อหน้าได้</span>
       </div>
       <div className="flex">
-        <div className="select-none border-r border-slate-800 px-2 py-2 text-right font-mono text-xs leading-6 text-slate-600">
+        <div aria-hidden className="select-none overflow-hidden border-r px-2 py-2 text-right font-mono text-xs leading-6 text-muted-foreground">
           {Array.from({ length: Math.max(lineCount, item.starterCode.split('\n').length > lineCount ? item.starterCode.split('\n').length : lineCount) }, (_, i) => i + 1).join('\n')}
         </div>
         <textarea
-          ref={textareaRef}
           value={text || item.starterCode}
           disabled={disabled}
           spellCheck={false}
@@ -390,10 +406,10 @@ function CodeInput(props: {
               el.selectionStart = el.selectionEnd = pos + 4
             })
           }}
-          className="min-w-0 flex-1 resize-y bg-transparent px-3 py-2 font-mono text-sm leading-6 text-emerald-100 focus:outline-none"
+          className="min-w-0 flex-1 resize-y bg-transparent px-3 py-2 font-mono text-sm leading-6 outline-none"
         />
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -413,29 +429,33 @@ function FileUploadInput(props: {
   const maxSizeMb = Math.round((item.validation?.maxFileSizeBytes ?? 10 * 1024 * 1024) / 1024 / 1024)
   return (
     <div className="space-y-2">
-      <button
+      <Button
         type="button"
+        variant="outline"
         disabled={disabled}
         onClick={() => inputRef.current?.click()}
-        className="inline-flex items-center gap-2 rounded-xl border border-dashed border-slate-600 px-4 py-3 text-sm text-slate-300 transition hover:border-sky-600 hover:text-sky-200"
+        className="border-dashed"
       >
+        <Paperclip size={14} />
         เลือกไฟล์งาน{item.acceptMultiple ? ' (หลายไฟล์ได้)' : ''}
-      </button>
-      <p className="text-xs text-slate-500">
+      </Button>
+      <p className="text-xs text-muted-foreground tabular-nums">
         {exts.length > 0 ? `รับเฉพาะ: ${exts.join(', ')} · ` : ''}ขนาดไม่เกิน {maxSizeMb} MB ต่อไฟล์
       </p>
       {fileNames.length > 0 && (
         <ul className="space-y-1">
           {fileNames.map((name, idx) => (
-            <li key={`${name}-${idx}`} className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-1.5 text-sm">
-              <span className="truncate text-slate-200">{name}</span>
-              <button
+            <li key={`${name}-${idx}`} className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-1.5 text-sm">
+              <span className="truncate">{name}</span>
+              <Button
                 type="button"
-                className="ml-auto text-xs text-red-300 hover:text-red-200"
+                variant="ghost"
+                size="sm"
+                className="ml-auto text-destructive"
                 onClick={() => onChange({ kind: 'files', fileNames: fileNames.filter((_, i) => i !== idx) })}
               >
-                เอาออก
-              </button>
+                <X size={13} /> เอาออก
+              </Button>
             </li>
           ))}
         </ul>

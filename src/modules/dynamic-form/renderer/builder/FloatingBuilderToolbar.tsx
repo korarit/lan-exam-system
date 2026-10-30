@@ -24,6 +24,18 @@ import {
 } from 'lucide-react'
 import type { FormItem } from '../../shared/form-schema'
 import { useFormBuilderStore } from './form-builder-store'
+import { Button } from '@renderer/components/ui/button'
+import { Card } from '@renderer/components/ui/card'
+import { Separator } from '@renderer/components/ui/separator'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@renderer/components/ui/dialog'
+import { ScrollArea } from '@renderer/components/ui/scroll-area'
 
 /* ============================================================
  * Phase 6 (6.2.1) — แถบเครื่องมือลอยด้านขวาของหน้าสร้างฟอร์ม
@@ -68,68 +80,92 @@ export default function FloatingBuilderToolbar(props: FloatingBuilderToolbarProp
   const addItem = useFormBuilderStore((s) => s.addItem)
   const resetForm = useFormBuilderStore((s) => s.resetForm)
   const [menuOpen, setMenuOpen] = useState(false)
-
-  const actionClass =
-    'flex w-full items-center gap-2 rounded-xl border border-slate-700 px-3.5 py-2 text-xs text-slate-200 transition hover:bg-slate-800 disabled:opacity-40'
+  const [resetOpen, setResetOpen] = useState(false)
 
   return (
-    <aside className="sticky top-4 h-fit w-56 shrink-0 space-y-2 rounded-2xl border border-slate-800 bg-slate-900/80 p-3">
+    <Card className="sticky top-4 h-fit w-56 shrink-0 space-y-2 p-3">
       <div className="relative">
-        <button
+        <Button
           type="button"
           onClick={() => setMenuOpen((o) => !o)}
-          className="flex w-full items-center gap-2 rounded-xl bg-sky-600 px-3.5 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-500"
+          className="w-full"
         >
-          <Plus size={15} className="mr-0 hidden" />
-          + เพิ่มคำถาม / บล็อก
-        </button>
+          <Plus size={15} />
+          เพิ่มคำถาม / บล็อก
+        </Button>
         {menuOpen && (
-          <div className="absolute left-0 top-full z-30 mt-1 w-64 space-y-0.5 rounded-xl border border-slate-700 bg-slate-900 p-1.5 shadow-xl">
-            {MENU.map((entry) => (
-              <button
-                key={entry.type}
-                type="button"
-                onClick={() => {
-                  addItem(entry.type)
-                  setMenuOpen(false)
-                }}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-slate-200 hover:bg-slate-800"
-              >
-                <span className="text-slate-400">{entry.icon}</span>
-                {entry.label}
-              </button>
-            ))}
-          </div>
+          <Card className="absolute left-0 top-full z-30 mt-1 w-64 p-1.5 shadow-xl">
+            <ScrollArea className="max-h-72">
+              {MENU.map((entry) => (
+                <Button
+                  key={entry.type}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    addItem(entry.type)
+                    setMenuOpen(false)
+                  }}
+                  className="w-full justify-start"
+                >
+                  <span className="text-muted-foreground">{entry.icon}</span>
+                  {entry.label}
+                </Button>
+              ))}
+            </ScrollArea>
+          </Card>
         )}
       </div>
 
-      <button type="button" onClick={() => void onImportCsv()} className={actionClass}>
+      <Button type="button" variant="outline" size="sm" onClick={() => void onImportCsv()} className="w-full justify-start">
         <FileUp size={14} /> นำเข้าคำถามจาก CSV / JSON
-      </button>
-      <button type="button" onClick={onPreview} className={actionClass}>
+      </Button>
+      <Button type="button" variant="outline" size="sm" onClick={onPreview} className="w-full justify-start">
         <Eye size={14} /> ทดลองทำในมุมมองนักเรียน
-      </button>
+      </Button>
 
-      <div className="my-1 border-t border-slate-800" />
+      <Separator />
 
-      <button type="button" disabled={saving} onClick={() => void onSave(false)} className={actionClass}>
+      <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void onSave(false)} className="w-full justify-start">
         <Save size={14} /> {saving ? 'กำลังบันทึก…' : 'บันทึก .ztform (มาตรฐาน)'}
-      </button>
-      <button type="button" disabled={saving} onClick={() => void onSave(true)} className={`${actionClass} text-emerald-300`}>
+      </Button>
+      <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void onSave(true)} className="w-full justify-start">
         <Sigma size={14} /> บันทึกแบบเข้ารหัสรหัสผ่าน
-      </button>
-      <button type="button" disabled={loading} onClick={() => void onLoad()} className={actionClass}>
+      </Button>
+      <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => void onLoad()} className="w-full justify-start">
         <FolderOpen size={14} /> {loading ? 'กำลังเปิด…' : 'เปิดไฟล์ .ztform'}
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
-        onClick={() => {
-          if (window.confirm('ล้างฟอร์มปัจจุบันแล้วเริ่มใหม่ทั้งหมด?')) resetForm()
-        }}
-        className={`${actionClass} text-red-300`}
+        variant="destructive"
+        size="sm"
+        onClick={() => setResetOpen(true)}
+        className="w-full justify-start"
       >
         <FilePlus2 size={14} /> สร้างฟอร์มใหม่ (ล้างทั้งหมด)
-      </button>
-    </aside>
+      </Button>
+
+      <Dialog open={resetOpen} onOpenChange={setResetOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>สร้างฟอร์มใหม่</DialogTitle>
+            <DialogDescription>ล้างฟอร์มปัจจุบันแล้วเริ่มใหม่ทั้งหมด? การกระทำนี้ย้อนกลับไม่ได้</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setResetOpen(false)}>ยกเลิก</Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                resetForm()
+                setResetOpen(false)
+              }}
+            >
+              ล้างทั้งหมด
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
   )
 }

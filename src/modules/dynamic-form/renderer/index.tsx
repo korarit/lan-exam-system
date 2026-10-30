@@ -5,6 +5,7 @@ import type { StudentFormView } from '../shared/form-schema'
 import FormBuilderWorkspace from './builder/FormBuilderWorkspace'
 import ResponsesDashboard from './responses/ResponsesDashboard'
 import DynamicFormStudentWorkspace from './student/DynamicFormStudentWorkspace'
+import { Card, CardContent } from '@renderer/components/ui/card'
 
 /* ============================================================
  * Renderer side ของโมดูล dynamic-form
@@ -29,12 +30,14 @@ function DynamicFormStudentEntry(props: StudentWorkspaceProps): React.JSX.Elemen
   const parsed = StudentViewShapeSchema.safeParse(props.moduleState)
   if (!parsed.success) {
     return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-8 text-center">
-        <h2 className="font-semibold">ฟอร์มข้อสอบ — รอโจทย์จากเครื่องแม่</h2>
-        <p className="mt-2 text-sm text-slate-500">
-          เมื่อครูเริ่มข้อสอบ ฟอร์มจะปรากฏตรงนี้ (stripped view ไม่มีเฉลย)
-        </p>
-      </div>
+      <Card className="border-dashed">
+        <CardContent className="p-8 text-center">
+          <h2 className="font-semibold">ฟอร์มข้อสอบ — รอโจทย์จากเครื่องแม่</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            เมื่อครูเริ่มข้อสอบ ฟอร์มจะปรากฏตรงนี้ (stripped view ไม่มีเฉลย)
+          </p>
+        </CardContent>
+      </Card>
     )
   }
   return (

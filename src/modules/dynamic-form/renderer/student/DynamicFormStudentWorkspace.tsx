@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { Send, Save, ClipboardList } from 'lucide-react'
+import { Send, Save, ClipboardList, Paperclip } from 'lucide-react'
 import type { StudentWorkspaceProps } from '@shared/module-contract'
 import type {
   FormItem,
@@ -11,6 +11,10 @@ import { isFormItemQuestion } from '../../shared/form-schema'
 import type { FormAnswerValue } from '../../shared/form-validate'
 import type { StoredAnswerValue } from '../../shared/form-answer-schema'
 import { FormAnswerInput } from '../inputs/FormAnswerInput'
+import { Button } from '@renderer/components/ui/button'
+import { Card, CardContent } from '@renderer/components/ui/card'
+import { Badge } from '@renderer/components/ui/badge'
+import { ScrollArea } from '@renderer/components/ui/scroll-area'
 
 /* ============================================================
  * F-1 — หน้าทำข้อสอบ dynamic-form ของนักเรียน (ผ่านท่อ LAN)
@@ -94,7 +98,7 @@ export default function DynamicFormStudentWorkspace(
   async function submitOne(item: StudentFormItem): Promise<void> {
     const value = answersRef.current[item.itemId]
     if (!value) {
-      setNotice('⚠️ ตอบข้อนี้ก่อนกดส่ง')
+      setNotice('ตอบข้อนี้ก่อนกดส่ง')
       return
     }
     try {
@@ -102,9 +106,9 @@ export default function DynamicFormStudentWorkspace(
         type: 'dynamic-form.submit-item',
         submission: buildSubmission(item, value)
       })
-      setNotice(`✅ ส่งข้อ ${item.itemId} แล้ว — รอเครื่องแม่รับเข้า`)
+      setNotice(`ส่งข้อ ${item.itemId} แล้ว — รอเครื่องแม่รับเข้า`)
     } catch {
-      setNotice('⛔ ส่งไม่สำเร็จ — สายหลุด กดส่งใหม่หลัง reconnect')
+      setNotice('ส่งไม่สำเร็จ — สายหลุด กดส่งใหม่หลัง reconnect')
     }
   }
 
@@ -113,103 +117,108 @@ export default function DynamicFormStudentWorkspace(
       .filter((q) => answersRef.current[q.itemId] !== undefined)
       .map((q) => buildSubmission(q, answersRef.current[q.itemId]!))
     if (items.length === 0) {
-      setNotice('⚠️ ยังไม่มีข้อที่ตอบเลย')
+      setNotice('ยังไม่มีข้อที่ตอบเลย')
       return
     }
     try {
       await props.onDispatchAction({ type: 'dynamic-form.submit-all', items })
-      setNotice(`🚀 ส่งงานทั้งหมด ${items.length} ข้อแล้ว — รอเครื่องแม่รับเข้า`)
+      setNotice(`ส่งงานทั้งหมด ${items.length} ข้อแล้ว — รอเครื่องแม่รับเข้า`)
     } catch {
-      setNotice('⛔ ส่งไม่สำเร็จ — สายหลุด กดส่งใหม่หลัง reconnect')
+      setNotice('ส่งไม่สำเร็จ — สายหลุด กดส่งใหม่หลัง reconnect')
     }
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/40">
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 px-4 py-2.5">
-        <ClipboardList size={16} className="text-sky-300" />
-        <span className="font-semibold text-slate-100">{view.title}</span>
-        <span className="rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-300">
+    <Card className="flex h-full flex-col overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2.5">
+        <ClipboardList size={16} className="text-primary" />
+        <span className="font-semibold">{view.title}</span>
+        <Badge variant="secondary" className="tabular-nums">
           {questions.length} ข้อ
-        </span>
+        </Badge>
         <span className="flex-1" />
-        <button
+        <Button
           type="button"
+          size="sm"
           onClick={() => void submitAll()}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-sky-500"
         >
           <Send size={15} /> ส่งงานทั้งหมด
-        </button>
+        </Button>
       </div>
       {view.instructions && (
-        <p className="border-b border-slate-800 px-4 py-2 text-[13px] whitespace-pre-wrap text-slate-400">
+        <p className="border-b px-4 py-2 text-[13px] whitespace-pre-wrap text-muted-foreground">
           {view.instructions}
         </p>
       )}
       {hasFileUpload && (
         <div
           title="ข้อจำกัด F-1: ท่อ LAN ยังไม่ส่งไบนารีไฟล์แนบ ระบบส่งเฉพาะชื่อไฟล์/สถานะ ครูจะเก็บไฟล์จริงผ่านช่องทางอื่นที่นัดไว้"
-          className="border-b border-amber-800/60 bg-amber-950/40 px-4 py-2 text-xs text-amber-200"
+          className="border-b border-primary/30 bg-primary/5 px-4 py-2 text-xs"
         >
-          📎 <b>ข้อสอบนี้มีข้ออัปโหลดไฟล์ — ไฟล์แนบยังไม่ส่งผ่านเครือข่าย (F-1)</b>
-          <span className="mt-0.5 block text-amber-200/80">
+          <span className="flex items-center gap-1.5 font-medium"><Paperclip size={12} /> ข้อสอบนี้มีข้ออัปโหลดไฟล์ — ไฟล์แนบยังไม่ส่งผ่านเครือข่าย (F-1)</span>
+          <span className="mt-0.5 block text-muted-foreground">
             ระบบส่งเฉพาะชื่อไฟล์/สถานะให้เครื่องแม่ ครูจะเก็บไฟล์จริงผ่านช่องทางอื่นที่นัดไว้ — อย่าเข้าใจว่าอัปโหลดแล้วไฟล์ถึงครูทันที
           </span>
         </div>
       )}
-      <div className="flex items-center gap-2 border-b border-slate-800 bg-slate-900/40 px-4 py-1 text-[11px] text-slate-500">
+      <div className="flex items-center gap-2 border-b bg-muted/40 px-4 py-1 text-[11px] text-muted-foreground">
         <span title="draft เก็บในเครื่องทุกครั้งที่พิมพ์ + ส่ง host ทุก ≥5 วินาที (throttle) ดูยืนยันจากแถบ ack ด้านบน">
           {lastAutosaveAtMs === null
-            ? '💾 ยังไม่มี autosave — พิมพ์คำตอบแล้วระบบจะบันทึก draft อัตโนมัติ'
-            : `💾 draft ล่าสุด ${new Date(lastAutosaveAtMs).toLocaleTimeString('th-TH')} — เก็บในเครื่องแล้ว + ส่ง host แล้ว (รอยืนยัน ack)`}
+            ? 'ยังไม่มี autosave — พิมพ์คำตอบแล้วระบบจะบันทึก draft อัตโนมัติ'
+            : `draft ล่าสุด ${new Date(lastAutosaveAtMs).toLocaleTimeString('th-TH')} — เก็บในเครื่องแล้ว + ส่ง host แล้ว (รอยืนยัน ack)`}
         </span>
       </div>
       {notice !== null && (
-        <div className="flex items-center gap-2 border-b border-slate-800 bg-slate-900/70 px-4 py-1.5 text-xs text-amber-200">
+        <div className="flex items-center gap-2 border-b bg-muted/60 px-4 py-1.5 text-xs">
           <span className="flex-1">{notice}</span>
-          <button type="button" onClick={() => setNotice(null)} className="text-slate-500 hover:text-slate-200">
+          <Button type="button" variant="ghost" size="sm" onClick={() => setNotice(null)}>
             ปิด
-          </button>
+          </Button>
         </div>
       )}
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-        {questions.map((item, idx) => (
-          <section key={item.itemId} className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-            <div className="mb-2 flex items-start gap-2">
-              <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-300">
-                ข้อ {idx + 1}
-              </span>
-              <p className="flex-1 text-sm whitespace-pre-wrap text-slate-100">{item.prompt}</p>
-            </div>
-            <FormAnswerInput
-              item={item}
-              value={answers[item.itemId] ?? { kind: 'none' }}
-              onChange={(v) => setAnswer(item.itemId, v)}
-              assets={{}}
-            />
-            {item.inputType === 'file_upload' && (
-              <p
-                title="F-1: ท่อ LAN ยังไม่ส่งไบนารีไฟล์แนบ ระบบส่งเฉพาะชื่อไฟล์/สถานะ ไฟล์จริงครูเก็บผ่านช่องทางอื่น — กันเข้าใจผิดว่าส่งไฟล์แล้ว"
-                className="mt-2 rounded-lg border border-amber-800/60 bg-amber-950/30 px-2.5 py-1.5 text-[11px] text-amber-200"
-              >
-                📎 <b>ไฟล์แนบยังไม่ส่งผ่านเครือข่าย (F-1)</b> — ระบบบันทึกเฉพาะชื่อไฟล์/สถานะ ครูจะเก็บไฟล์ข้อนี้ด้วยช่องทางอื่นที่แจ้งไว้
-              </p>
-            )}
-            <div className="mt-3 flex justify-end">
-              <button
-                type="button"
-                onClick={() => void submitOne(item)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-700 px-3 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-900/40"
-              >
-                <Save size={13} /> ส่งข้อนี้
-              </button>
-            </div>
-          </section>
-        ))}
-        {questions.length === 0 && (
-          <p className="py-8 text-center text-sm text-slate-500">ฟอร์มนี้ไม่มีข้อคำถาม</p>
-        )}
-      </div>
-    </div>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-4 p-4">
+          {questions.map((item, idx) => (
+            <Card key={item.itemId} className="bg-muted/30">
+              <CardContent className="pt-4">
+                <div className="mb-2 flex items-start gap-2">
+                  <Badge variant="outline" className="font-mono tabular-nums">
+                    ข้อ {idx + 1}
+                  </Badge>
+                  <p className="flex-1 text-sm whitespace-pre-wrap">{item.prompt}</p>
+                </div>
+                <FormAnswerInput
+                  item={item}
+                  value={answers[item.itemId] ?? { kind: 'none' }}
+                  onChange={(v) => setAnswer(item.itemId, v)}
+                  assets={{}}
+                />
+                {item.inputType === 'file_upload' && (
+                  <p
+                    title="F-1: ท่อ LAN ยังไม่ส่งไบนารีไฟล์แนบ ระบบส่งเฉพาะชื่อไฟล์/สถานะ ไฟล์จริงครูเก็บผ่านช่องทางอื่น — กันเข้าใจผิดว่าส่งไฟล์แล้ว"
+                    className="mt-2 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-[11px]"
+                  >
+                    <b>ไฟล์แนบยังไม่ส่งผ่านเครือข่าย (F-1)</b> — ระบบบันทึกเฉพาะชื่อไฟล์/สถานะ ครูจะเก็บไฟล์ข้อนี้ด้วยช่องทางอื่นที่แจ้งไว้
+                  </p>
+                )}
+                <div className="mt-3 flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void submitOne(item)}
+                  >
+                    <Save size={13} /> ส่งข้อนี้
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+          {questions.length === 0 && (
+            <p className="py-8 text-center text-sm text-muted-foreground">ฟอร์มนี้ไม่มีข้อคำถาม</p>
+          )}
+        </div>
+      </ScrollArea>
+    </Card>
   )
 }

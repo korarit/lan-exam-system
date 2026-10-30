@@ -1,6 +1,11 @@
 import { useRef, useState } from 'react'
-import { Plus, Trash2, Paperclip } from 'lucide-react'
+import { Check, Plus, Trash2, Paperclip } from 'lucide-react'
 import type { DependencyBundle } from '../../shared/code-schema'
+import { Button } from '@renderer/components/ui/button'
+import { Input } from '@renderer/components/ui/input'
+import { Card, CardContent } from '@renderer/components/ui/card'
+import { Badge } from '@renderer/components/ui/badge'
+import { cn } from '@renderer/lib/utils'
 
 /** ไฟล์ lib จริงที่ครูแนบ (ฝังเป็น base64 blob ใน .ztcode — key = archiveRelativePath) */
 export interface LibFileAttachment {
@@ -101,12 +106,9 @@ export default function OfflineDependencyManager(props: Props): React.JSX.Elemen
     const name = customName.trim()
     if (name.length === 0) return
     const version = customVersion.trim() || '1.0.0'
-    let fileName = name
     let ecosystem: DependencyBundle['ecosystem'] = 'npm'
     if (/\.jar$/i.test(name)) ecosystem = 'maven-jar'
     else if (/\.whl$/i.test(name)) ecosystem = 'pip'
-    else fileName = name
-    void fileName
     const existing = props.bundles.find((b) => b.ecosystem === ecosystem)
     if (existing !== undefined) {
       props.onChange(props.bundles.map((b) => (b.ecosystem === ecosystem
@@ -128,21 +130,20 @@ export default function OfflineDependencyManager(props: Props): React.JSX.Elemen
     <div className="space-y-3">
       {groups.map((g) => (
         <div key={g}>
-          <h5 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{g}</h5>
+          <h5 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{g}</h5>
           <div className="flex flex-wrap gap-1.5">
             {BUILT_IN_PRESETS.filter((p) => p.group === g).map((p) => {
               const on = selected.has(presetKey(p))
               return (
-                <button
+                <Badge
                   key={presetKey(p)}
-                  type="button"
-                  onClick={() => togglePreset(p)}
-                  className={`rounded-full border px-2.5 py-1 font-mono text-[11px] transition ${
-                    on ? 'border-emerald-500/70 bg-emerald-950/40 text-emerald-200' : 'border-slate-800 text-slate-400 hover:border-slate-600 hover:text-slate-200'
-                  }`}
+                  variant={on ? 'default' : 'outline'}
+                  className={cn('cursor-pointer font-mono')}
                 >
-                  {on ? '✓ ' : '+ '}{p.name}@{p.version}
-                </button>
+                  <button type="button" onClick={() => togglePreset(p)} className="flex items-center gap-1">
+                    {on ? <Check size={11} /> : <Plus size={11} />}{p.name}@{p.version}
+                  </button>
+                </Badge>
               )
             })}
           </div>
@@ -150,7 +151,7 @@ export default function OfflineDependencyManager(props: Props): React.JSX.Elemen
       ))}
 
       <div>
-        <h5 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+        <h5 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           อัปโหลด Custom Library (.jar / .whl / .tgz / node_modules)
         </h5>
         <AttachRealFile
@@ -160,23 +161,25 @@ export default function OfflineDependencyManager(props: Props): React.JSX.Elemen
           onChangeBundles={props.onChange}
         />
         <div className="flex gap-1.5">
-          <input
+          <Input
             value={customName}
             onChange={(e) => setCustomName(e.target.value)}
             placeholder="gson-2.10.jar / numpy-2.0.whl / express-4.19.tgz"
-            className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1.5 font-mono text-xs focus:border-sky-500 focus:outline-none"
+            className="min-w-0 flex-1 font-mono text-xs"
+            aria-label="ชื่อไลบรารี"
           />
-          <input
+          <Input
             value={customVersion}
             onChange={(e) => setCustomVersion(e.target.value)}
             placeholder="version"
-            className="w-24 rounded border border-slate-700 bg-slate-950 px-2 py-1.5 font-mono text-xs focus:border-sky-500 focus:outline-none"
+            className="w-24 font-mono text-xs"
+            aria-label="เวอร์ชัน"
           />
-          <button type="button" onClick={addCustom} className="inline-flex items-center gap-1 rounded bg-sky-700 px-2.5 py-1.5 text-xs font-medium hover:bg-sky-600">
+          <Button type="button" size="sm" onClick={addCustom}>
             <Plus size={13} /> เพิ่ม
-          </button>
+          </Button>
         </div>
-        <p className="mt-1 text-[11px] text-slate-600">ไฟล์ binary จริงจะถูกฝังเป็น base64 blob ใน .ztcode ตอนกดบันทึก (Phase 8 เก็บ metadata + path; เนื้อหาไฟล์แนบตอน Save)</p>
+        <p className="mt-1 text-[11px] text-muted-foreground">ไฟล์ binary จริงจะถูกฝังเป็น base64 blob ใน .ztcode ตอนกดบันทึก (Phase 8 เก็บ metadata + path; เนื้อหาไฟล์แนบตอน Save)</p>
       </div>
 
       {props.files.length > 0 && (() => {
@@ -185,48 +188,54 @@ export default function OfflineDependencyManager(props: Props): React.JSX.Elemen
         const over = totalMb * 1.37 > 25
         const near = !over && totalMb * 1.37 > 18
         return (
-          <div className={`mt-2 rounded-lg border p-2 ${over ? 'border-red-800/60 bg-red-950/20' : near ? 'border-amber-800/60 bg-amber-950/20' : 'border-emerald-900/50 bg-emerald-950/20'}`}>
-            <h5 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-300/80">
-              ไฟล์จริงที่แนบ ({props.files.length} ไฟล์ · รวม {totalMb.toFixed(1)}MB → ประเมิน ~{(totalMb * 1.37).toFixed(1)}MB ใน .ztcode)
-            </h5>
-            {props.files
-              .slice()
-              .sort((a, b) => b.sizeBytes - a.sizeBytes)
-              .map((f) => (
-                <div key={f.blobPath} className="flex items-center gap-2 py-0.5 font-mono text-[11px] text-slate-200">
-                  <Paperclip size={11} className="text-emerald-400" />
-                  <span className="flex-1 truncate" title={`${f.fileName} — ${(f.sizeBytes / 1048576).toFixed(2)}MB`}>
-                    {f.fileName} ({(f.sizeBytes / 1024).toFixed(0)} KB → {f.blobPath})
-                  </span>
-                </div>
-              ))}
-            {(over || near) && (
-              <p className={`mt-1 text-[11px] font-medium ${over ? 'text-red-200' : 'text-amber-200'}`}>
-                {over ? '⛔ เกินขีดจำกัด ~25MB — ผูกห้องจะไม่ผ่าน' : '⚠️ ใกล้ขีดจำกัด ~25MB — ผูกห้องเสี่ยงไม่ผ่าน'}
-                {' '}วิธีลด: เอาไฟล์ใหญ่สุดออกก่อน (เรียงตามขนาดแล้วด้านบน), ลบ .jar/.whl ซ้ำ, แยก .zip หลายส่วน หรือใช้ห้อง lab ที่ลง lib ไว้แล้ว
-              </p>
-            )}
-          </div>
+          <Card className={cn(over && 'border-destructive/60', near && !over && 'border-primary/40')}>
+            <CardContent className="pt-3">
+              <h5 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground tabular-nums">
+                ไฟล์จริงที่แนบ ({props.files.length} ไฟล์ · รวม {totalMb.toFixed(1)}MB → ประเมิน ~{(totalMb * 1.37).toFixed(1)}MB ใน .ztcode)
+              </h5>
+              {props.files
+                .slice()
+                .sort((a, b) => b.sizeBytes - a.sizeBytes)
+                .map((f) => (
+                  <div key={f.blobPath} className="flex items-center gap-2 py-0.5 font-mono text-[11px]">
+                    <Paperclip size={11} className="text-primary" />
+                    <span className="flex-1 truncate" title={`${f.fileName} — ${(f.sizeBytes / 1048576).toFixed(2)}MB`}>
+                      {f.fileName} ({(f.sizeBytes / 1024).toFixed(0)} KB → {f.blobPath})
+                    </span>
+                  </div>
+                ))}
+              {(over || near) && (
+                <p className={cn('mt-1 text-[11px] font-medium', over ? 'text-destructive' : 'text-muted-foreground')}>
+                  {over ? 'เกินขีดจำกัด ~25MB — ผูกห้องจะไม่ผ่าน' : 'ใกล้ขีดจำกัด ~25MB — ผูกห้องเสี่ยงไม่ผ่าน'}
+                  {' '}วิธีลด: เอาไฟล์ใหญ่สุดออกก่อน (เรียงตามขนาดแล้วด้านบน), ลบ .jar/.whl ซ้ำ, แยก .zip หลายส่วน หรือใช้ห้อง lab ที่ลง lib ไว้แล้ว
+                </p>
+              )}
+            </CardContent>
+          </Card>
         )
       })()}
 
       {props.bundles.length > 0 && (
-        <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-          <h5 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Bundles ที่เลือก ({props.bundles.length})</h5>
-          {props.bundles.map((b) => (
-            <div key={b.bundleId} className="flex items-center gap-2 py-0.5 font-mono text-[11px] text-slate-300">
-              <span className="text-slate-500">[{b.ecosystem}]</span>
-              <span className="flex-1 truncate">{b.packages.map((p) => `${p.name}@${p.version}`).join(', ')}</span>
-              <button
-                type="button"
-          onClick={() => props.onChange(props.bundles.filter((x) => x.bundleId !== b.bundleId))}
-              className="rounded p-0.5 text-slate-500 hover:text-red-300"
-            >
-              <Trash2 size={12} />
-            </button>
-          </div>
-        ))}
-        </div>
+        <Card className="bg-muted/40">
+          <CardContent className="pt-3">
+            <h5 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Bundles ที่เลือก ({props.bundles.length})</h5>
+            {props.bundles.map((b) => (
+              <div key={b.bundleId} className="flex items-center gap-2 py-0.5 font-mono text-[11px]">
+                <Badge variant="outline">[{b.ecosystem}]</Badge>
+                <span className="flex-1 truncate">{b.packages.map((p) => `${p.name}@${p.version}`).join(', ')}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => props.onChange(props.bundles.filter((x) => x.bundleId !== b.bundleId))}
+                  aria-label="ลบบันเดิล"
+                >
+                  <Trash2 size={12} />
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
     </div>
   )
@@ -298,36 +307,39 @@ function AttachRealFile(props: {
   }
 
   return (
-    <div className="mb-2 rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 hover:border-emerald-500 disabled:opacity-40"
-        >
-          <Paperclip size={13} className="text-emerald-400" />
-          {busy ? 'กำลังอ่านไฟล์…' : 'แนบไฟล์ lib จริง (.jar / .whl / .zip)'}
-        </button>
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept=".jar,.whl,.zip,.sqlite,.sql,.d.ts"
-          className="hidden"
-          onChange={(e) => void onPick(e.target.files)}
-        />
-        <span title="รวมทุกไฟล์ + base64 (~1.37×) ต้องไม่เกิน ~25MB ไม่งั้นปุ่มผูกห้องจะไม่ผ่าน" className="text-[11px] text-slate-600">สูงสุดไฟล์ละ 24MB · รวมทุกไฟล์ต้องไม่เกิน ~25MB (ดูยอดรวมด้านล่าง) · ฝังใน .ztcode สอบออฟไลน์ได้เลย</span>
-      </div>
-      {error !== null && <p className="mt-1 text-[11px] text-amber-300">{error}</p>}
-      {props.files.map((f) => (
-        <div key={f.blobPath} className="mt-1 flex items-center gap-2 font-mono text-[11px] text-slate-300">
-          <span className="flex-1 truncate">📦 {f.fileName} ({(f.sizeBytes / 1024).toFixed(0)} KB)</span>
-          <button type="button" onClick={() => removeFile(f.blobPath)} className="text-slate-500 hover:text-red-300">
-            <Trash2 size={12} />
-          </button>
+    <Card className="mb-2 bg-muted/40">
+      <CardContent className="pt-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => inputRef.current?.click()}
+            disabled={busy}
+          >
+            <Paperclip size={13} />
+            {busy ? 'กำลังอ่านไฟล์…' : 'แนบไฟล์ lib จริง (.jar / .whl / .zip)'}
+          </Button>
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept=".jar,.whl,.zip,.sqlite,.sql,.d.ts"
+            className="hidden"
+            onChange={(e) => void onPick(e.target.files)}
+          />
+          <span title="รวมทุกไฟล์ + base64 (~1.37×) ต้องไม่เกิน ~25MB ไม่งั้นปุ่มผูกห้องจะไม่ผ่าน" className="text-[11px] text-muted-foreground">สูงสุดไฟล์ละ 24MB · รวมทุกไฟล์ต้องไม่เกิน ~25MB (ดูยอดรวมด้านล่าง) · ฝังใน .ztcode สอบออฟไลน์ได้เลย</span>
         </div>
-      ))}
-    </div>
+        {error !== null && <p className="mt-1 text-[11px] text-destructive">{error}</p>}
+        {props.files.map((f) => (
+          <div key={f.blobPath} className="mt-1 flex items-center gap-2 font-mono text-[11px]">
+            <span className="flex-1 truncate tabular-nums">{f.fileName} ({(f.sizeBytes / 1024).toFixed(0)} KB)</span>
+            <Button type="button" variant="ghost" size="icon" onClick={() => removeFile(f.blobPath)} aria-label={`ลบ ${f.fileName}`}>
+              <Trash2 size={12} />
+            </Button>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   )
 }

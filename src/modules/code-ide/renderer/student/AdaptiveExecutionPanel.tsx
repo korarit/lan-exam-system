@@ -3,6 +3,7 @@ import CliTestRunnerPanel from './panels/CliTestRunnerPanel'
 import WebReactPreviewPanel from './panels/WebReactPreviewPanel'
 import BackendApiTesterPanel from './panels/BackendApiTesterPanel'
 import DatabaseWorkbenchPanel from './panels/DatabaseWorkbenchPanel'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@renderer/components/ui/tabs'
 
 /* Phase 8 (8.2.3) — AdaptiveExecutionPanel: สลับแผงผลลัพธ์ตามประเภทโจทย์ */
 
@@ -35,12 +36,18 @@ export default function AdaptiveExecutionPanel(props: Props): React.JSX.Element 
     const api = props.sampleTests.filter((t): t is HttpApiTestCase => t.kind === 'http-api')
     const sql = props.sampleTests.filter((t): t is SqlTestCase => t.kind === 'sql-query')
     return (
-      <div className="divide-y divide-slate-800">
-        <section><SectionLabel text="CLI" /><CliTestRunnerPanel tests={cli} entries={props.entries} language={props.language} entryPointPath={props.entryPointPath} runSignal={props.runSignal} packageId={props.packageId} installPolicy={props.installPolicy} installPackages={props.installPackages} /></section>
-        <section><SectionLabel text="Web Preview" /><WebReactPreviewPanel entries={props.entries} language={props.language} tests={dom} /></section>
-        <section><SectionLabel text="API" /><BackendApiTesterPanel tests={api} /></section>
-        <section><SectionLabel text="Database" /><DatabaseWorkbenchPanel database={props.database} seedSql={props.seedSql} tests={sql} runSignal={props.runSignal} viewerRole={viewerRole} /></section>
-      </div>
+      <Tabs defaultValue="cli">
+        <TabsList className="w-full">
+          <TabsTrigger value="cli">CLI</TabsTrigger>
+          <TabsTrigger value="web">Web</TabsTrigger>
+          <TabsTrigger value="api">API</TabsTrigger>
+          <TabsTrigger value="db">Database</TabsTrigger>
+        </TabsList>
+        <TabsContent value="cli"><CliTestRunnerPanel tests={cli} entries={props.entries} language={props.language} entryPointPath={props.entryPointPath} runSignal={props.runSignal} packageId={props.packageId} installPolicy={props.installPolicy} installPackages={props.installPackages} /></TabsContent>
+        <TabsContent value="web"><WebReactPreviewPanel entries={props.entries} language={props.language} tests={dom} /></TabsContent>
+        <TabsContent value="api"><BackendApiTesterPanel tests={api} /></TabsContent>
+        <TabsContent value="db"><DatabaseWorkbenchPanel database={props.database} seedSql={props.seedSql} tests={sql} runSignal={props.runSignal} viewerRole={viewerRole} /></TabsContent>
+      </Tabs>
     )
   }
 
@@ -64,8 +71,4 @@ function executionTabsFor(category: ProjectCategory): 'cli' | 'web' | 'api' | 'd
     case 'database': return 'db'
     case 'fullstack': return 'cli'
   }
-}
-
-function SectionLabel(props: { text: string }): React.JSX.Element {
-  return <h4 className="bg-slate-950/60 px-3 pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{props.text}</h4>
 }

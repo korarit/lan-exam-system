@@ -21,6 +21,11 @@ import MissingRuntimePrompt from '../MissingRuntimePrompt'
 import ProjectFileExplorerTree from './ProjectFileExplorerTree'
 import MonacoCodeWorkspace from './MonacoCodeWorkspace'
 import AdaptiveExecutionPanel from './AdaptiveExecutionPanel'
+import { Button } from '@renderer/components/ui/button'
+import { Card } from '@renderer/components/ui/card'
+import { Badge } from '@renderer/components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@renderer/components/ui/tabs'
+import { ScrollArea } from '@renderer/components/ui/scroll-area'
 
 /* ============================================================
  * Phase 8 (8.2) — Student In-App Project IDE Workspace
@@ -92,10 +97,10 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
     const snapshot = entriesRef.current
     props.onSubmit?.(snapshot)
     if (isTeacherPreview) {
-      setNotice('👁️ โหมดพรีวิวครู — ไม่ส่งงานจริง')
+      setNotice('โหมดพรีวิวครู — ไม่ส่งงานจริง')
       return
     }
-    setNotice('🚀 ส่งงานแล้ว — รอเครื่องแม่รับเข้า (ดูสถานะจากแถบด้านบนเมื่อ host ตอบกลับ)')
+    setNotice('ส่งงานแล้ว — รอเครื่องแม่รับเข้า (ดูสถานะจากแถบด้านบนเมื่อ host ตอบกลับ)')
   }
 
   const sampleTests = useMemo(
@@ -150,9 +155,9 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
 
   function fail(err: unknown): void {
     if (err instanceof Error) {
-      if (err.name === 'ProjectTreePermissionError') setNotice(`⛔ ${err.message} — ไฟล์/โฟลเดอร์นี้ถูกล็อกโดยอาจารย์`)
-      else if (err.name === 'ProjectTreeLimitError') setNotice('⛔ ขนาดโปรเจกต์เกิน maxProjectSizeBytes')
-      else setNotice(`⛔ ${err.message}`)
+      if (err.name === 'ProjectTreePermissionError') setNotice(`${err.message} — ไฟล์/โฟลเดอร์นี้ถูกล็อกโดยอาจารย์`)
+      else if (err.name === 'ProjectTreeLimitError') setNotice('ขนาดโปรเจกต์เกิน maxProjectSizeBytes')
+      else setNotice(`${err.message}`)
     }
   }
 
@@ -164,7 +169,7 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
           const text = await f.text()
           next = createFileInTree(next, pkg.policy, f.name, text.slice(0, 500_000))
         }
-        mutate(next, `📤 อัปโหลด ${files.length} ไฟล์แล้ว`)
+        mutate(next, `อัปโหลด ${files.length} ไฟล์แล้ว`)
       } catch (err) {
         fail(err)
       }
@@ -172,35 +177,37 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
   }
 
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-slate-800 bg-slate-950/40">
+    <Card className="flex h-full flex-col overflow-hidden">
       {/* Kiosk HUD */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 px-3 py-2 text-xs text-slate-400">
-        <button
+      <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs text-muted-foreground">
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           onClick={() => setShowProblem((v) => !v)}
           title={showProblem ? 'ซ่อนโจทย์' : 'แสดงโจทย์'}
-          className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200"
         >
           <FileText size={14} />
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           onClick={() => setShowExplorer((v) => !v)}
           title={showExplorer ? 'ซ่อน Explorer' : 'แสดง Explorer'}
-          className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200"
         >
           {showExplorer ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
-        </button>
-        <span className="font-semibold text-slate-200">{pkg.title}</span>
-        <span className="rounded bg-slate-800 px-1.5 py-0.5">ข้อ {props.questionNo ?? 1}/{props.questionTotal ?? 1}</span>
-        <span className="rounded bg-slate-800 px-1.5 py-0.5">{PROJECT_CATEGORY_LABELS[pkg.category]}</span>
-        <span className="rounded bg-slate-800 px-1.5 py-0.5">{SUPPORTED_LANGUAGE_LABELS[pkg.language]}</span>
-        <span className="ml-auto inline-flex items-center gap-1 font-mono"><Timer size={12} />{props.timeLeftText ?? '--:--'}</span>
+        </Button>
+        <span className="font-semibold text-foreground">{pkg.title}</span>
+        <Badge variant="secondary" className="tabular-nums">ข้อ {props.questionNo ?? 1}/{props.questionTotal ?? 1}</Badge>
+        <Badge variant="outline">{PROJECT_CATEGORY_LABELS[pkg.category]}</Badge>
+        <Badge variant="outline">{SUPPORTED_LANGUAGE_LABELS[pkg.language]}</Badge>
+        <span className="ml-auto inline-flex items-center gap-1 font-mono tabular-nums"><Timer size={12} />{props.timeLeftText ?? '--:--'}</span>
       </div>
       {notice !== null && (
-        <div className="flex items-center gap-2 border-b border-slate-800 bg-slate-900/70 px-3 py-1.5 text-xs text-amber-200">
+        <div className="flex items-center gap-2 border-b bg-muted/60 px-3 py-1.5 text-xs">
           <span className="flex-1">{notice}</span>
-          <button type="button" onClick={() => setNotice(null)} className="text-slate-500 hover:text-slate-200">ปิด</button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setNotice(null)}>ปิด</Button>
         </div>
       )}
       {/* Phase 9.1: เช็ค runtime ของภาษาที่ข้อสอบใช้จริงก่อนเริ่ม (ขาดให้ติดตั้งเอง + Re-scan/Browse) */}
@@ -209,39 +216,41 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         {/* โจทย์ + libraries (ยุบได้) */}
         {showProblem && (
-          <div className="h-56 shrink-0 overflow-y-auto border-b border-slate-800 p-3 lg:h-auto lg:w-60 lg:border-b-0 lg:border-r">
-            <h3 className="mb-1 text-sm font-semibold text-slate-100">📄 โจทย์</h3>
-            <p className="whitespace-pre-wrap text-[13px] leading-6 text-slate-300">{pkg.instructions || '(อาจารย์ยังไม่ได้เขียนคำอธิบาย)'}</p>
+          <ScrollArea className="h-56 shrink-0 border-b p-3 lg:h-auto lg:w-60 lg:border-b-0 lg:border-r">
+            <h3 className="mb-1 text-sm font-semibold">โจทย์</h3>
+            <p className="whitespace-pre-wrap text-[13px] leading-6 text-muted-foreground">{pkg.instructions || '(อาจารย์ยังไม่ได้เขียนคำอธิบาย)'}</p>
             <div className="mt-3">
-              <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">📦 Libraries ที่ใช้ได้</h4>
+              <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Libraries ที่ใช้ได้</h4>
               {libraries.length === 0 ? (
-                <p className="text-[11px] text-slate-600">ไม่มีไลบรารีเสริม</p>
+                <p className="text-[11px] text-muted-foreground">ไม่มีไลบรารีเสริม</p>
               ) : (
-                <ul className="space-y-0.5 font-mono text-[11px] text-slate-400">
+                <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground">
                   {libraries.map((l, i) => (
                     <li key={i}>- {l.packages.map((p) => `${p.name}@${p.version}`).join(', ') || l.ecosystem}</li>
                   ))}
                 </ul>
               )}
               {pkg.installPolicy.enabled && (
-                <p className="mt-1 text-[11px] text-sky-300/80">
-                  🌐 ครูอนุญาตให้ติดตั้งเองได้ (pip/npm) — กด “ติดตั้งไลบรารี” ในแผงทดสอบ
+                <p className="mt-1 text-[11px] text-primary">
+                  ครูอนุญาตให้ติดตั้งเองได้ (pip/npm) — กด “ติดตั้งไลบรารี” ในแผงทดสอบ
                 </p>
               )}
             </div>
-            <button
+            <Button
               type="button"
-              onClick={() => mutate(initialEntries.map((e) => ({ ...e })), '🔄 รีเซ็ตโค้ดกลับเป็น Starter Project แล้ว')}
-              className="mt-3 inline-flex items-center gap-1 rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:border-amber-500 hover:text-amber-200"
+              variant="outline"
+              size="sm"
+              onClick={() => mutate(initialEntries.map((e) => ({ ...e })), 'รีเซ็ตโค้ดกลับเป็น Starter Project แล้ว')}
+              className="mt-3"
             >
               <RotateCcw size={12} /> Reset โค้ด
-            </button>
-          </div>
+            </Button>
+          </ScrollArea>
         )}
 
         {/* Explorer sidebar (ยุบได้) */}
         {showExplorer && (
-          <div className="h-64 shrink-0 border-b border-slate-800 lg:h-auto lg:w-60 lg:border-b-0 lg:border-r">
+          <div className="h-64 shrink-0 border-b lg:h-auto lg:w-60 lg:border-b-0 lg:border-r">
             <ProjectFileExplorerTree
               entries={entries}
               selectedPath={activePath}
@@ -252,13 +261,13 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
               onSelectFile={setActivePath}
               onCreateFile={(p) => {
                 try {
-                  mutate(createFileInTree(entries, pkg.policy, p, ''), `📄 สร้างไฟล์ ${p} (+เขียนลง ${folder})`)
+                  mutate(createFileInTree(entries, pkg.policy, p, ''), `สร้างไฟล์ ${p} (+เขียนลง ${folder})`)
                   setActivePath(p)
                 } catch (err) { fail(err) }
               }}
               onCreateFolder={(p) => {
                 try {
-                  mutate(createFolderInTree(entries, pkg.policy, p), `📁 สร้างโฟลเดอร์ ${p}`)
+                  mutate(createFolderInTree(entries, pkg.policy, p), `สร้างโฟลเดอร์ ${p}`)
                 } catch (err) { fail(err) }
               }}
               onRename={(o, n) => {
@@ -269,7 +278,7 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
               }}
               onDelete={(p) => {
                 try {
-                  mutate(deleteEntryInTree(entries, pkg.policy, p), `🗑 ลบ ${p}`)
+                  mutate(deleteEntryInTree(entries, pkg.policy, p), `ลบ ${p}`)
                   if (activePath === p) setActivePath(pkg.policy.entryPointPath)
                 } catch (err) { fail(err) }
               }}
@@ -299,67 +308,76 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
         </div>
 
         {/* ขวา: แผงทดสอบ/ผลลัพธ์ */}
-        <div className="flex h-96 min-h-0 flex-col border-t border-slate-800 lg:h-auto lg:w-[340px] lg:shrink-0 lg:border-l lg:border-t-0">
-          <div className="flex border-b border-slate-800 text-xs">
-            {(['result', 'tests'] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setPanelTab(t)}
-                className={`px-3 py-2 font-medium ${panelTab === t ? 'border-b-2 border-emerald-500 text-emerald-300' : 'text-slate-500 hover:text-slate-200'}`}
-              >
-                {t === 'result' ? '🧪 แผงทดสอบ/ผลลัพธ์' : `✅ Tests (${sampleTests.length})`}
-              </button>
-            ))}
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <AdaptiveExecutionPanel
-              category={pkg.category}
-              language={pkg.language}
-              entries={entries}
-              entryPointPath={pkg.policy.entryPointPath}
-              sampleTests={sampleTests}
-              database={pkg.database}
-              seedSql={seedSqlOf(pkg, entries)}
-              runSignal={runSignal}
-              viewerRole={props.viewerRole ?? 'student'}
-              packageId={pkg.packageId}
-              installPolicy={pkg.installPolicy}
-              installPackages={installPackages}
-            />
-          </div>
+        <div className="flex h-96 min-h-0 flex-col border-t lg:h-auto lg:w-[340px] lg:shrink-0 lg:border-l lg:border-t-0">
+          <Tabs value={panelTab} onValueChange={(v) => setPanelTab(v as 'result' | 'tests')} className="flex min-h-0 flex-1 flex-col">
+            <TabsList className="w-full rounded-none border-b">
+              <TabsTrigger value="result" className="flex-1">แผงทดสอบ/ผลลัพธ์</TabsTrigger>
+              <TabsTrigger value="tests" className="flex-1 tabular-nums">Tests ({sampleTests.length})</TabsTrigger>
+            </TabsList>
+            <TabsContent value="result" className="mt-0 min-h-0 flex-1 overflow-y-auto">
+              <AdaptiveExecutionPanel
+                category={pkg.category}
+                language={pkg.language}
+                entries={entries}
+                entryPointPath={pkg.policy.entryPointPath}
+                sampleTests={sampleTests}
+                database={pkg.database}
+                seedSql={seedSqlOf(pkg, entries)}
+                runSignal={runSignal}
+                viewerRole={props.viewerRole ?? 'student'}
+                packageId={pkg.packageId}
+                installPolicy={pkg.installPolicy}
+                installPackages={installPackages}
+              />
+            </TabsContent>
+            <TabsContent value="tests" className="mt-0 min-h-0 flex-1 overflow-y-auto">
+              <AdaptiveExecutionPanel
+                category={pkg.category}
+                language={pkg.language}
+                entries={entries}
+                entryPointPath={pkg.policy.entryPointPath}
+                sampleTests={sampleTests}
+                database={pkg.database}
+                seedSql={seedSqlOf(pkg, entries)}
+                runSignal={runSignal}
+                viewerRole={props.viewerRole ?? 'student'}
+                packageId={pkg.packageId}
+                installPolicy={pkg.installPolicy}
+                installPackages={installPackages}
+              />
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
 
       <div
         title="draft เก็บในโฟลเดอร์เครื่อง + ส่ง host ทุก ≥5 วินาที ดูยืนยันจากแถบ ack ด้านบน เน็ตหลุด draft ไม่หาย"
-        className="border-t border-slate-800 bg-slate-900/40 px-3 py-1 text-[11px] text-slate-500"
+        className="border-t bg-muted/40 px-3 py-1 text-[11px] tabular-nums text-muted-foreground"
       >
         {isTeacherPreview
-          ? '👁️ โหมดพรีวิวครู — ไม่ส่งงานจริง'
+          ? 'โหมดพรีวิวครู — ไม่ส่งงานจริง'
           : lastAutosaveAtMs === null
-            ? '💾 ยังไม่มี autosave — แก้โค้ดแล้วระบบจะบันทึก draft อัตโนมัติ (เก็บในเครื่อง + ส่ง host)'
-            : `💾 draft ล่าสุด ${new Date(lastAutosaveAtMs).toLocaleTimeString('th-TH')} — เก็บในเครื่องแล้ว + ส่ง host แล้ว (รอยืนยัน ack)`}
+            ? 'ยังไม่มี autosave — แก้โค้ดแล้วระบบจะบันทึก draft อัตโนมัติ (เก็บในเครื่อง + ส่ง host)'
+            : `draft ล่าสุด ${new Date(lastAutosaveAtMs).toLocaleTimeString('th-TH')} — เก็บในเครื่องแล้ว + ส่ง host แล้ว (รอยืนยัน ack)`}
       </div>
       {/* แถบล่าง */}
-      <div className="flex flex-wrap items-center gap-2 border-t border-slate-800 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2">
         <StudentWorkspaceFolderPicker examId={examId} studentId={studentId} value={folder} onPick={setFolder} />
         <span className="flex-1" />
-        <button
+        <Button
           type="button"
+          variant="secondary"
           onClick={runSamples}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3.5 py-2 text-sm font-semibold text-white hover:bg-emerald-600"
         >
           <Play size={15} /> รัน / ทดสอบ Sample (Ctrl+Enter)
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={handleSubmit}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-sky-500"
         >
           <Rocket size={15} /> ส่งงาน
-        </button>
+        </Button>
       </div>
-    </div>
+    </Card>
   )
 }

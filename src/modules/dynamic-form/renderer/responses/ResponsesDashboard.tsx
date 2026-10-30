@@ -6,6 +6,35 @@ import type {
   FormItemAnswerView
 } from '../../shared/form-responses-view'
 import { isFormItemQuestion, INPUT_TYPE_LABELS } from '../../shared/form-schema'
+import { Button } from '@renderer/components/ui/button'
+import { Input } from '@renderer/components/ui/input'
+import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/ui/card'
+import { Badge } from '@renderer/components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@renderer/components/ui/tabs'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@renderer/components/ui/table'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@renderer/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@renderer/components/ui/select'
+import { ScrollArea } from '@renderer/components/ui/scroll-area'
 
 /* ============================================================
  * Phase 7 (7.3.1) — Responses Dashboard (สไตล์แท็บ Responses)
@@ -25,6 +54,8 @@ export default function ResponsesDashboard(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState<string | null>(null)
   const [tab, setTab] = useState<TabId>('summary')
+  const [regradeOpen, setRegradeOpen] = useState(false)
+  const [passwordDialog, setPasswordDialog] = useState<{ mode: 'save' | 'load'; password: string } | null>(null)
 
   const refresh = async (): Promise<void> => {
     setLoading(true)
@@ -58,8 +89,6 @@ export default function ResponsesDashboard(): React.JSX.Element {
   }
 
   const regradeAll = async (): Promise<void> => {
-    const confirmed = window.confirm('คำนวณคะแนนใหม่ทั้งห้อง (Re-grade All)? คำตอบดิบไม่เปลี่ยน แต่คะแนนตรวจอัตโนมัติอัปเดตตามเฉลยล่าสุด')
-    if (!confirmed) return
     try {
       const res = await api.formRegradeAll({})
       if (res.ok) {
@@ -83,26 +112,22 @@ export default function ResponsesDashboard(): React.JSX.Element {
     }
   }
 
-  const saveZtresults = async (encrypted: boolean): Promise<void> => {
+  const saveZtresults = async (encrypted: boolean, password?: string): Promise<void> => {
     try {
-      const passwordFromPrompt = encrypted ? window.prompt('ตั้งรหัสผ่านของไฟล์ .ztresults (ใช้เปิดที่เครื่องอื่น)') : null
-      if (encrypted && passwordFromPrompt === null) return
-      const res = await api.saveZtresults({ encrypted, ...(passwordFromPrompt !== null ? { password: passwordFromPrompt } : {}) })
+      if (encrypted && password === undefined) {
+        setPasswordDialog({ mode: 'save', password: '' })
+        return
+      }
+      const res = await api.saveZtresults({ encrypted, ...(password !== undefined ? { password } : {}) })
       setNotice(res.ok && res.filePath !== undefined ? `บันทึกผลสอบแล้ว: ${res.filePath}` : `Save .ztresults ไม่สำเร็จ: ${res.reason ?? '?'}`)
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Save .ztresults ไม่สำเร็จ')
     }
   }
 
-  const loadZtresults = async (): Promise<void> => {
+  const loadZtresults = async (password?: string): Promise<void> => {
     try {
-      const res = await api.loadZtresults({})
-      if (res.ok && res.manifest !== undefined) {
-        await refresh()
-        setNotice(`เปิดไฟล์ผลสอบแล้ว: ${res.manifest.formTitle} (${res.manifest.studentCount} คน) จากห้อง ${res.manifest.roomName}`)
-      } else if (res.needPassword === true) {
-        const password = window.prompt('ไฟล์ถูกเข้ารหัส — กรอกรหัสผ่านของครู')
-        if (!password) return
+      if (password !== undefined) {
         const retry = await api.loadZtresults({ password })
         if (retry.ok && retry.manifest !== undefined) {
           await refresh()
@@ -110,6 +135,14 @@ export default function ResponsesDashboard(): React.JSX.Element {
         } else {
           setNotice(retry.message ?? 'เปิดไฟล์ไม่สำเร็จ')
         }
+        return
+      }
+      const res = await api.loadZtresults({})
+      if (res.ok && res.manifest !== undefined) {
+        await refresh()
+        setNotice(`เปิดไฟล์ผลสอบแล้ว: ${res.manifest.formTitle} (${res.manifest.studentCount} คน) จากห้อง ${res.manifest.roomName}`)
+      } else if (res.needPassword === true) {
+        setPasswordDialog({ mode: 'load', password: '' })
       } else {
         setNotice(res.message ?? 'เปิดไฟล์ไม่สำเร็จ')
       }
@@ -120,6 +153,7 @@ export default function ResponsesDashboard(): React.JSX.Element {
 
   useEffect(() => {
     void refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const questions = useMemo(() => {
@@ -145,91 +179,135 @@ export default function ResponsesDashboard(): React.JSX.Element {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="flex items-center gap-2 font-semibold">
-            <Rows3 size={18} className="text-emerald-400" />
+            <Rows3 size={18} className="text-primary" />
             {snapshot?.formTitle ?? 'ผลสอบ Dynamic Form'}
           </h2>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-muted-foreground">
             ห้อง {snapshot?.roomName ?? '—'} • โหมด {snapshot === null ? '—' : snapshot.kind === 'archive' ? 'เปิดจากไฟล์ .ztresults' : 'ฐานข้อมูลเครื่องแม่'}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <button type="button" onClick={attachForm} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 hover:border-emerald-600">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={attachForm}>
             ผูกฟอร์ม (.ztform)
-          </button>
-          <button type="button" onClick={regradeAll} className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 hover:border-amber-500">
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => setRegradeOpen(true)}>
             <RotateCcw size={12} /> Re-grade All
-          </button>
-          <button type="button" onClick={exportCsv} className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 hover:border-emerald-600">
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={exportCsv}>
             <Download size={12} /> Export CSV
-          </button>
-          <button type="button" onClick={() => saveZtresults(false)} className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 hover:border-emerald-600">
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => saveZtresults(false)}>
             <PackagePlus size={12} /> Save .ztresults
-          </button>
-          <button type="button" onClick={() => saveZtresults(true)} className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 hover:border-emerald-600">
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => saveZtresults(true)}>
             <Lock size={12} /> Save (เข้ารหัส)
-          </button>
-          <button type="button" onClick={loadZtresults} className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 hover:border-emerald-600">
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => loadZtresults()}>
             <FolderOpen size={12} /> เปิด .ztresults
-          </button>
-          <button type="button" onClick={refresh} className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 hover:border-emerald-600">
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={refresh}>
             <RefreshCw size={12} /> รีเฟรช
-          </button>
+          </Button>
         </div>
       </header>
 
       {hasFileUpload && snapshot !== null && (
-        <div
-          title="F-1: ท่อ LAN ยังไม่ส่งไบนารีไฟล์แนบ ตาราง/Export โชว์เฉพาะชื่อไฟล์/สถานะ ไฟล์จริงเก็บผ่านช่องทางอื่น — กันครูเข้าใจผิด"
-          className="rounded-xl border border-amber-800/60 bg-amber-950/30 px-4 py-2 text-xs text-amber-200"
-        >
-          📎 <b>ฟอร์มนี้มีข้อ file_upload — ไฟล์แนบยังไม่ส่งผ่านเครือข่าย (F-1)</b>
-          <span className="mt-0.5 block text-amber-200/80">
-            ตาราง/Export แสดงเฉพาะชื่อไฟล์/สถานะ ไม่มีไบนารี — เก็บไฟล์จริงผ่านช่องทางอื่นที่นัดกับนักเรียนไว้ อย่าตีความว่า “ไม่ส่ง = ทุจริต/ได้ 0 เพราะไฟล์หาย”
-          </span>
-        </div>
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent
+            title="F-1: ท่อ LAN ยังไม่ส่งไบนารีไฟล์แนบ ตาราง/Export โชว์เฉพาะชื่อไฟล์/สถานะ ไฟล์จริงเก็บผ่านช่องทางอื่น — กันครูเข้าใจผิด"
+            className="px-4 py-2 text-xs"
+          >
+            <b>ฟอร์มนี้มีข้อ file_upload — ไฟล์แนบยังไม่ส่งผ่านเครือข่าย (F-1)</b>
+            <span className="mt-0.5 block text-muted-foreground">
+              ตาราง/Export แสดงเฉพาะชื่อไฟล์/สถานะ ไม่มีไบนารี — เก็บไฟล์จริงผ่านช่องทางอื่นที่นัดกับนักเรียนไว้ อย่าตีความว่า “ไม่ส่ง = ทุจริต/ได้ 0 เพราะไฟล์หาย”
+            </span>
+          </CardContent>
+        </Card>
       )}
 
       {notice !== null && notice.length > 0 && (
-        <div className="rounded-xl border border-emerald-800/60 bg-emerald-950/40 px-4 py-2 text-xs text-emerald-200">{notice}</div>
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="px-4 py-2 text-xs">{notice}</CardContent>
+        </Card>
       )}
 
-      <nav className="flex gap-1 border-b border-slate-800">
-        {(
-          [
-            { id: 'summary', label: 'สรุปภาพรวม', icon: <BarChart3 size={13} /> },
-            { id: 'by-question', label: 'ตรวจรายข้อ (เร็วที่สุด)', icon: <Rows3 size={13} /> },
-            { id: 'individual', label: 'ใบคำตอบรายบุคคล', icon: <UserSquare2 size={13} /> }
-          ] as Array<{ id: TabId; label: string; icon: React.ReactNode }>
-        ).map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={`flex items-center gap-1.5 rounded-t-lg px-4 py-2 text-sm transition ${
-              tab === t.id ? 'border-b-2 border-emerald-500 font-semibold text-emerald-300' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {t.icon}
-            {t.label}
-          </button>
-        ))}
-      </nav>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as TabId)}>
+        <TabsList>
+          <TabsTrigger value="summary"><BarChart3 size={13} /> สรุปภาพรวม</TabsTrigger>
+          <TabsTrigger value="by-question"><Rows3 size={13} /> ตรวจรายข้อ (เร็วที่สุด)</TabsTrigger>
+          <TabsTrigger value="individual"><UserSquare2 size={13} /> ใบคำตอบรายบุคคล</TabsTrigger>
+        </TabsList>
+        <ScrollArea className="min-h-0 flex-1">
+          {loading && snapshot === null ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">กำลังโหลดผลสอบ…</div>
+          ) : snapshot === null ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">
+              ยังไม่มีผลตอบ — ผูกฟอร์มกับห้อง หรือเปิดไฟล์ .ztresults ย้อนหลัง
+            </div>
+          ) : (
+            <>
+              <TabsContent value="summary"><SummaryTab snapshot={snapshot} /></TabsContent>
+              <TabsContent value="by-question"><ByQuestionTab snapshot={snapshot} questionList={questionList} /></TabsContent>
+              <TabsContent value="individual"><IndividualTab snapshot={snapshot} /></TabsContent>
+            </>
+          )}
+        </ScrollArea>
+      </Tabs>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {loading && snapshot === null ? (
-          <div className="p-8 text-center text-sm text-slate-500">กำลังโหลดผลสอบ…</div>
-        ) : snapshot === null ? (
-          <div className="p-8 text-center text-sm text-slate-500">
-            ยังไม่มีผลตอบ — ผูกฟอร์มกับห้อง หรือเปิดไฟล์ .ztresults ย้อนหลัง
-          </div>
-        ) : tab === 'summary' ? (
-          <SummaryTab snapshot={snapshot} />
-        ) : tab === 'by-question' ? (
-          <ByQuestionTab snapshot={snapshot} questionList={questionList} />
-        ) : (
-          <IndividualTab snapshot={snapshot} />
-        )}
-      </div>
+      <Dialog open={regradeOpen} onOpenChange={setRegradeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>คำนวณคะแนนใหม่ทั้งห้อง</DialogTitle>
+            <DialogDescription>คำตอบดิบไม่เปลี่ยน แต่คะแนนตรวจอัตโนมัติจะอัปเดตตามเฉลยล่าสุด ยืนยัน Re-grade All?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setRegradeOpen(false)}>ยกเลิก</Button>
+            <Button type="button" onClick={() => { setRegradeOpen(false); void regradeAll() }}>ตรวจใหม่ทั้งห้อง</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={passwordDialog !== null} onOpenChange={(o) => { if (!o) setPasswordDialog(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{passwordDialog?.mode === 'save' ? 'ตั้งรหัสผ่านของไฟล์ .ztresults' : 'รหัสผ่านไฟล์ .ztresults'}</DialogTitle>
+            <DialogDescription>
+              {passwordDialog?.mode === 'save' ? 'ใช้เปิดที่เครื่องอื่น' : 'ไฟล์ถูกเข้ารหัส — กรอกรหัสผ่านของครู'}
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            type="password"
+            value={passwordDialog?.password ?? ''}
+            onChange={(e) => setPasswordDialog((p) => (p === null ? p : { ...p, password: e.target.value }))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (passwordDialog?.password.length ?? 0) > 0) {
+                const mode = passwordDialog?.mode
+                const pw = passwordDialog?.password ?? ''
+                setPasswordDialog(null)
+                if (mode === 'save') void saveZtresults(true, pw)
+                else void loadZtresults(pw)
+              }
+            }}
+            aria-label="รหัสผ่านไฟล์ผลสอบ"
+          />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPasswordDialog(null)}>ยกเลิก</Button>
+            <Button
+              type="button"
+              disabled={(passwordDialog?.password.length ?? 0) === 0}
+              onClick={() => {
+                const mode = passwordDialog?.mode
+                const pw = passwordDialog?.password ?? ''
+                setPasswordDialog(null)
+                if (mode === 'save') void saveZtresults(true, pw)
+                else void loadZtresults(pw)
+              }}
+            >
+              ตกลง
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -250,81 +328,89 @@ function SummaryTab({ snapshot }: { snapshot: FormResponsesSnapshot }): React.JS
           { label: 'ต่ำสุด (%)', value: snapshot.summary.min.toFixed(1) },
           { label: 'รอตรวจอัตนัย', value: String(snapshot.summary.needsManualCount) }
         ].map((card) => (
-          <div key={card.label} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-            <p className="text-[11px] text-slate-500">{card.label}</p>
-            <p className="mt-1 text-lg font-semibold text-slate-100">{card.value}</p>
-          </div>
+          <Card key={card.label}>
+            <CardContent className="p-3">
+              <p className="text-[11px] text-muted-foreground">{card.label}</p>
+              <p className="mt-1 text-lg font-semibold tabular-nums">{card.value}</p>
+            </CardContent>
+          </Card>
         ))}
       </div>
 
-      <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-        <h3 className="mb-3 text-sm font-semibold text-slate-200">การกระจายคะแนน (โดย %)</h3>
-        <div className="flex h-36 items-end gap-3">
-          {dist.map((bucket) => (
-            <div key={bucket.bucketLow} className="flex flex-1 flex-col items-center gap-1">
-              <span className="text-xs text-slate-400">{bucket.count > 0 ? bucket.count : ''}</span>
-              <div
-                className="w-full rounded-t-md bg-gradient-to-t from-emerald-700 to-emerald-500"
-                style={{ height: `${Math.round((bucket.count / distMax) * 100)}%`, minHeight: bucket.count > 0 ? 4 : 2 }}
-              />
-              <span className="text-[10px] text-slate-500">
-                {bucket.bucketLow}–{bucket.bucketHigh}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
+      <Card>
+        <CardHeader><CardTitle className="text-sm">การกระจายคะแนน (โดย %)</CardTitle></CardHeader>
+        <CardContent>
+          <div className="flex h-36 items-end gap-3">
+            {dist.map((bucket) => (
+              <div key={bucket.bucketLow} className="flex flex-1 flex-col items-center gap-1">
+                <span className="text-xs tabular-nums text-muted-foreground">{bucket.count > 0 ? bucket.count : ''}</span>
+                <div
+                  className="w-full rounded-t-md bg-primary"
+                  style={{ height: `${Math.round((bucket.count / distMax) * 100)}%`, minHeight: bucket.count > 0 ? 4 : 2 }}
+                />
+                <span className="text-[10px] tabular-nums text-muted-foreground">
+                  {bucket.bucketLow}–{bucket.bucketHigh}
+                </span>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
-      <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-        <h3 className="mb-3 text-sm font-semibold text-slate-200">สถิติรายข้อ (Question Breakdown)</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="text-slate-500">
-              <tr>
-                <th className="pb-2">#</th>
-                <th className="pb-2">โจทย์</th>
-                <th className="pb-2">ชนิด</th>
-                <th className="pb-2">ตอบ</th>
-                <th className="pb-2">ถูกเต็ม</th>
-                <th className="pb-2">อัตราถูก</th>
-              </tr>
-            </thead>
-            <tbody>
-              {snapshot.itemStats.map((stat) => {
-                const prompt = snapshot.form.items.find((i) => i.itemId === stat.itemId)
-                const label = prompt !== undefined && isFormItemQuestion(prompt) ? prompt.prompt : stat.itemId
-                const typeLabel =
-                  stat.inputType in INPUT_TYPE_LABELS ? INPUT_TYPE_LABELS[stat.inputType as keyof typeof INPUT_TYPE_LABELS] : stat.inputType
-                return (
-                  <tr key={stat.itemId} className="border-t border-slate-800/70">
-                    <td className="py-1.5">Q{stat.index}</td>
-                    <td className="max-w-[280px] truncate py-1.5">{label.length > 0 ? label : stat.itemId}</td>
-                    <td className="py-1.5 text-slate-500">{typeLabel}</td>
-                    <td className="py-1.5">{stat.responsesCount}</td>
-                    <td className="py-1.5">{stat.correctCount}</td>
-                    <td className="py-1.5">
-                      {Math.round(stat.correctRate * 100)}%
-                      {stat.flaggedHard && <span className="ml-2 rounded bg-red-950/60 px-1.5 py-0.5 text-[10px] text-red-300">ตอบผิดเกิน 70% — ตรวจโจทย์</span>}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <Card>
+        <CardHeader><CardTitle className="text-sm">สถิติรายข้อ (Question Breakdown)</CardTitle></CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>#</TableHead>
+                  <TableHead>โจทย์</TableHead>
+                  <TableHead>ชนิด</TableHead>
+                  <TableHead>ตอบ</TableHead>
+                  <TableHead>ถูกเต็ม</TableHead>
+                  <TableHead>อัตราถูก</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {snapshot.itemStats.map((stat) => {
+                  const prompt = snapshot.form.items.find((i) => i.itemId === stat.itemId)
+                  const label = prompt !== undefined && isFormItemQuestion(prompt) ? prompt.prompt : stat.itemId
+                  const typeLabel =
+                    stat.inputType in INPUT_TYPE_LABELS ? INPUT_TYPE_LABELS[stat.inputType as keyof typeof INPUT_TYPE_LABELS] : stat.inputType
+                  return (
+                    <TableRow key={stat.itemId}>
+                      <TableCell className="tabular-nums">Q{stat.index}</TableCell>
+                      <TableCell className="max-w-[280px] truncate">{label.length > 0 ? label : stat.itemId}</TableCell>
+                      <TableCell className="text-muted-foreground">{typeLabel}</TableCell>
+                      <TableCell className="tabular-nums">{stat.responsesCount}</TableCell>
+                      <TableCell className="tabular-nums">{stat.correctCount}</TableCell>
+                      <TableCell className="tabular-nums">
+                        {Math.round(stat.correctRate * 100)}%
+                        {stat.flaggedHard && <Badge variant="destructive" className="ml-2">ตอบผิดเกิน 70% — ตรวจโจทย์</Badge>}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
 
       {snapshot.regradeHistory.length > 0 && (
-        <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-xs text-slate-400">
-          <h3 className="mb-2 text-sm font-semibold text-slate-200">ประวัติการ Re-grade</h3>
-          <ul className="space-y-1">
-            {snapshot.regradeHistory.slice(0, 8).map((h) => (
-              <li key={h.runAtMs}>
-                {new Date(h.runAtMs).toLocaleString('th-TH')} — {h.summaryJson}
-              </li>
-            ))}
-          </ul>
-        </section>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">ประวัติการ Re-grade</CardTitle></CardHeader>
+          <CardContent className="text-xs text-muted-foreground">
+            <ul className="space-y-1">
+              {snapshot.regradeHistory.slice(0, 8).map((h) => (
+                <li key={h.runAtMs}>
+                  {new Date(h.runAtMs).toLocaleString('th-TH')} — {h.summaryJson}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
       )}
     </div>
   )
@@ -349,25 +435,25 @@ function ByQuestionTab({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <select
-          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200"
-          value={effective ?? ''}
-          onChange={(e) => setSelectedItemId(e.target.value)}
-        >
-          {questionList.map((q) => (
-            <option key={q.itemId} value={q.itemId}>
-              Q{q.index}: {q.prompt.length > 0 ? q.prompt.slice(0, 40) : q.itemId}
-            </option>
-          ))}
-        </select>
-        <button
+        <Select value={effective ?? ''} onValueChange={(v) => setSelectedItemId(v)}>
+          <SelectTrigger className="w-72 text-xs"><SelectValue placeholder="เลือกข้อ" /></SelectTrigger>
+          <SelectContent>
+            {questionList.map((q) => (
+              <SelectItem key={q.itemId} value={q.itemId}>
+                Q{q.index}: {q.prompt.length > 0 ? q.prompt.slice(0, 40) : q.itemId}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
           type="button"
+          variant={blind ? 'default' : 'outline'}
+          size="sm"
           onClick={() => setBlind(!blind)}
-          className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs ${blind ? 'border-amber-500 text-amber-300' : 'border-slate-700 text-slate-300'}`}
         >
           <EyeOff size={12} /> {blind ? 'Blind Grading เปิดอยู่' : 'Blind Grading'}
-        </button>
-        {allPending && <span className="rounded bg-amber-950/60 px-2 py-1 text-[11px] text-amber-300">ข้อนี้มีคำตอบรอครูตรวจ</span>}
+        </Button>
+        {allPending && <Badge variant="outline">ข้อนี้มีคำตอบรอครูตรวจ</Badge>}
       </div>
       <div className="space-y-3">
         {snapshot.students.map((student) => {
@@ -407,71 +493,79 @@ function GradingRow({
   const formItem = snapshot.form.items.find((i) => i.itemId === view.itemId)
   const isFileUpload = formItem !== undefined && isFormItemQuestion(formItem) && formItem.inputType === 'file_upload'
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-slate-100">{blind ? 'ผู้สอบ ' + student.studentId.slice(0, 6) + '…' : student.studentName}</p>
-          <p className="text-[11px] text-slate-500">
-            ส่งเมื่อ {student.submittedAtMs === null ? 'ยังไม่ส่ง' : new Date(student.submittedAtMs).toLocaleString('th-TH')} • ใช้เวลา {Math.round((view.journey?.timeSpentMs ?? 0) / 1000)} วินาที
+    <Card>
+      <CardContent className="pt-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">{blind ? 'ผู้สอบ ' + student.studentId.slice(0, 6) + '…' : student.studentName}</p>
+            <p className="text-[11px] text-muted-foreground tabular-nums">
+              ส่งเมื่อ {student.submittedAtMs === null ? 'ยังไม่ส่ง' : new Date(student.submittedAtMs).toLocaleString('th-TH')} • ใช้เวลา {Math.round((view.journey?.timeSpentMs ?? 0) / 1000)} วินาที
+            </p>
+          </div>
+          <StatusBadge status={view.status} earned={view.earnedPoints} max={view.maxPoints} />
+        </div>
+        <p className="mt-2 whitespace-pre-wrap text-sm">{view.displayValue.length > 0 ? view.displayValue : '(ไม่ตอบ)'}</p>
+        {isFileUpload && (
+          <p
+            title="F-1: LAN ยังไม่ส่งไบนารีไฟล์แนบ — รายการนี้เป็น descriptor/ชื่อไฟล์เท่านั้น"
+            className="mt-2 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-[11px]"
+          >
+            ข้อนี้เป็น file_upload (F-1) — ยังไม่มีไบนารีผ่าน LAN{view.artifacts.length === 0 ? ' (ไม่มีไฟล์แนบมาถึง — เก็บไฟล์จริงช่องทางอื่น)' : ' (รายการด้านล่างเป็น descriptor/ลิงก์เท่านั้น)'}
           </p>
-        </div>
-        <span className={`rounded px-2 py-1 text-[10px] ${view.status === 'auto-graded' ? 'bg-emerald-950/60 text-emerald-300' : view.status === 'needs-manual' ? 'bg-amber-950/60 text-amber-300' : 'bg-slate-800 text-slate-300'}`}>
-          {view.status} • {view.earnedPoints}/{view.maxPoints}
-        </span>
-      </div>
-      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-200">{view.displayValue.length > 0 ? view.displayValue : '(ไม่ตอบ)'}</p>
-      {isFileUpload && (
-        <p
-          title="F-1: LAN ยังไม่ส่งไบนารีไฟล์แนบ — รายการนี้เป็น descriptor/ชื่อไฟล์เท่านั้น"
-          className="mt-2 rounded-lg border border-amber-800/60 bg-amber-950/30 px-2.5 py-1.5 text-[11px] text-amber-200"
-        >
-          📎 ข้อนี้เป็น file_upload (F-1) — ยังไม่มีไบนารีผ่าน LAN{view.artifacts.length === 0 ? ' (ไม่มีไฟล์แนบมาถึง — เก็บไฟล์จริงช่องทางอื่น)' : ' (รายการด้านล่างเป็น descriptor/ลิงก์เท่านั้น)'}
-        </p>
-      )}
-      {view.artifacts.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {view.artifacts.map((a) => (
-            <button
-              key={a.artifactId}
-              type="button"
-              title="F-1: เปิดได้เฉพาะ descriptor/ไฟล์ที่ครูนำเข้าช่องทางอื่นแล้ว — ไม่ใช่ไบนารีที่นักเรียนอัปโหลดผ่าน LAN"
-              onClick={() => void window.ztExam.openFormArtifact({ studentId: student.studentId, itemId: view.itemId, artifactId: a.artifactId })}
-              className="flex items-center gap-1 rounded border border-slate-700 px-2 py-1 text-[11px] text-slate-300 hover:border-emerald-600"
-            >
-              <Paperclip size={10} /> {a.fileName} ({Math.round(a.sizeBytes / 1024)} KB)
-            </button>
-          ))}
-        </div>
-      )}
-      {needManual && view.keywordHits !== undefined && (
-        <p className="mt-1 text-[11px] text-amber-300/90">
-          พบ Keyword {view.keywordHits}/{view.keywordTotal} คำ: {view.keywordFound?.join(', ') ?? '—'}
-        </p>
-      )}
-      <div className="mt-2 flex items-center gap-2">
-        <input
-          type="number"
-          step="0.5"
-          value={points}
-          onChange={(e) => setPoints(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={`คะแนน (เต็ม ${view.maxPoints})`}
-          className="w-32 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm"
-        />
-        <button type="button" onClick={handIn} className="rounded-lg border border-emerald-700 bg-emerald-900/40 px-3 py-1.5 text-xs text-emerald-200 hover:bg-emerald-900/70">
-          ให้คะแนน
-        </button>
-        {(view.status === 'needs-manual' || view.status === 'invalid') && (
-          <button type="button" onClick={() => void api.formManualGrade({ studentId: student.studentId, itemId: view.itemId, points: null })} className="text-[11px] text-slate-500 hover:text-slate-300">
-            ล้างคะแนน
-          </button>
         )}
-        <span className="text-[11px] text-slate-600">
-          {snapshot.form.items.find((i) => i.itemId === view.itemId) && view.correctDisplay !== null ? `เฉลย: ${view.correctDisplay}` : ''}
-        </span>
-      </div>
-    </div>
+        {view.artifacts.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {view.artifacts.map((a) => (
+              <Button
+                key={a.artifactId}
+                type="button"
+                variant="outline"
+                size="sm"
+                title="F-1: เปิดได้เฉพาะ descriptor/ไฟล์ที่ครูนำเข้าช่องทางอื่นแล้ว — ไม่ใช่ไบนารีที่นักเรียนอัปโหลดผ่าน LAN"
+                onClick={() => void window.ztExam.openFormArtifact({ studentId: student.studentId, itemId: view.itemId, artifactId: a.artifactId })}
+              >
+                <Paperclip size={10} /> {a.fileName} ({Math.round(a.sizeBytes / 1024)} KB)
+              </Button>
+            ))}
+          </div>
+        )}
+        {needManual && view.keywordHits !== undefined && (
+          <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
+            พบ Keyword {view.keywordHits}/{view.keywordTotal} คำ: {view.keywordFound?.join(', ') ?? '—'}
+          </p>
+        )}
+        <div className="mt-2 flex items-center gap-2">
+          <Input
+            type="number"
+            step="0.5"
+            value={points}
+            onChange={(e) => setPoints(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder={`คะแนน (เต็ม ${view.maxPoints})`}
+            className="w-32 text-sm tabular-nums"
+            aria-label="คะแนนที่ให้"
+          />
+          <Button type="button" size="sm" onClick={handIn}>
+            ให้คะแนน
+          </Button>
+          {(view.status === 'needs-manual' || view.status === 'invalid') && (
+            <Button type="button" variant="ghost" size="sm" onClick={() => void api.formManualGrade({ studentId: student.studentId, itemId: view.itemId, points: null })}>
+              ล้างคะแนน
+            </Button>
+          )}
+          <span className="text-[11px] text-muted-foreground">
+            {snapshot.form.items.find((i) => i.itemId === view.itemId) && view.correctDisplay !== null ? `เฉลย: ${view.correctDisplay}` : ''}
+          </span>
+        </div>
+      </CardContent>
+    </Card>
   )
+}
+
+function StatusBadge(props: { status: FormItemAnswerView['status']; earned: number; max: number }): React.JSX.Element {
+  const label = props.status === 'auto-graded' ? 'ตรวจแล้ว' : props.status === 'needs-manual' ? 'รอตรวจ' : props.status === 'manual-graded' ? 'ครูตรวจแล้ว' : props.status
+  const variant = props.status === 'auto-graded' || props.status === 'manual-graded' ? 'default' : props.status === 'needs-manual' ? 'outline' : 'destructive'
+  return <Badge variant={variant} className="tabular-nums">{label} • {props.earned}/{props.max}</Badge>
 }
 
 /* ---------- มุมมอง 3: ใบคำตอบรายบุคคล ---------- */
@@ -481,47 +575,46 @@ function IndividualTab({ snapshot }: { snapshot: FormResponsesSnapshot }): React
   const effective = selectedStudent ?? snapshot.students[0]?.studentId ?? null
   const student = snapshot.students.find((s) => s.studentId === effective)
   if (student === undefined) {
-    return <div className="p-8 text-center text-sm text-slate-500">ยังไม่มีข้อมูลนักเรียน</div>
+    return <div className="p-8 text-center text-sm text-muted-foreground">ยังไม่มีข้อมูลนักเรียน</div>
   }
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
-        <select
-          className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs"
-          value={effective ?? ''}
-          onChange={(e) => setSelectedStudent(e.target.value)}
-        >
-          {snapshot.students.map((s) => (
-            <option key={s.studentId} value={s.studentId}>
-              {s.studentName} ({Math.round(s.totals.percent)}%)
-            </option>
-          ))}
-        </select>
+        <Select value={effective ?? ''} onValueChange={(v) => setSelectedStudent(v)}>
+          <SelectTrigger className="w-64 text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {snapshot.students.map((s) => (
+              <SelectItem key={s.studentId} value={s.studentId}>
+                {s.studentName} ({Math.round(s.totals.percent)}%)
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <div className="flex items-center gap-2 text-xs">
           <SecurityBadge status={student.security.status} />
-          <span className="text-slate-500">คะแนนความน่าสงสัย {student.security.suspicionScore} • เหตุการณ์วิกฤต {student.security.criticalEvents}</span>
+          <span className="text-muted-foreground tabular-nums">คะแนนความน่าสงสัย {student.security.suspicionScore} • เหตุการณ์วิกฤต {student.security.criticalEvents}</span>
         </div>
-        <div className="ml-auto text-xs text-slate-300">
+        <div className="ml-auto text-xs tabular-nums">
           คะแนน <b>{student.totals.totalPoints}</b>/{student.totals.maxPoints} ({student.totals.percent.toFixed(1)}%) • รอตรวจ {student.totals.needsManualCount} ข้อ
         </div>
       </div>
       <div className="space-y-2">
         {student.items.map((view, idx) => (
-          <div key={view.itemId} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-sm">
-            <div className="flex items-start justify-between gap-3">
-              <p className="font-medium text-slate-100">
-                Q{idx + 1}. {promptOf(snapshot, view.itemId, false)}
+          <Card key={view.itemId}>
+            <CardContent className="pt-3 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <p className="font-medium">
+                  Q{idx + 1}. {promptOf(snapshot, view.itemId, false)}
+                </p>
+                <StatusBadge status={view.status} earned={view.earnedPoints} max={view.maxPoints} />
+              </div>
+              <p className="mt-1 whitespace-pre-wrap">{view.displayValue.length > 0 ? view.displayValue : '(ไม่ตอบ)'}</p>
+              {view.correctDisplay !== null && <p className="mt-1 text-[11px] text-primary">เฉลย: {view.correctDisplay}</p>}
+              <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
+                ใช้เวลา {Math.round((view.journey?.timeSpentMs ?? 0) / 1000)} วิ {view.violations.length > 0 ? `• ผิดกฎ: ${view.violations.map((v) => v.code).join(', ')}` : ''}
               </p>
-              <span className={`shrink-0 rounded px-2 py-1 text-[10px] ${statusColor(view.status)}`}>
-                {view.status} • {view.earnedPoints}/{view.maxPoints}
-              </span>
-            </div>
-            <p className="mt-1 whitespace-pre-wrap text-slate-200">{view.displayValue.length > 0 ? view.displayValue : '(ไม่ตอบ)'}</p>
-            {view.correctDisplay !== null && <p className="mt-1 text-[11px] text-emerald-300/80">เฉลย: {view.correctDisplay}</p>}
-            <p className="mt-1 text-[11px] text-slate-500">
-              ใช้เวลา {Math.round((view.journey?.timeSpentMs ?? 0) / 1000)} วิ {view.violations.length > 0 ? `• ผิดกฎ: ${view.violations.map((v) => v.code).join(', ')}` : ''}
-            </p>
-          </div>
+            </CardContent>
+          </Card>
         ))}
       </div>
     </div>
@@ -537,27 +630,7 @@ function promptOf(snapshot: FormResponsesSnapshot, itemId: string, short: boolea
   return short ? (prefix.length > 0 ? `${prefix} ${body.slice(0, 34)}` : body.slice(0, 34)) : body
 }
 
-function statusColor(status: FormItemAnswerView['status']): string {
-  switch (status) {
-    case 'auto-graded':
-      return 'bg-emerald-950/60 text-emerald-300'
-    case 'needs-manual':
-      return 'bg-amber-950/60 text-amber-300'
-    case 'manual-graded':
-      return 'bg-sky-950/60 text-sky-300'
-    case 'invalid':
-      return 'bg-red-950/60 text-red-300'
-    default:
-      return 'bg-slate-800 text-slate-300'
-  }
-}
-
 function SecurityBadge({ status }: { status: FormStudentResponsesView['security']['status'] }): React.JSX.Element {
-  const cls =
-    status === 'CRITICAL'
-      ? 'bg-red-950/60 text-red-300'
-      : status === 'WARNING'
-        ? 'bg-amber-950/60 text-amber-300'
-        : 'bg-emerald-950/60 text-emerald-300'
-  return <span className={`rounded px-2 py-1 text-[10px] font-semibold ${cls}`}>{status}</span>
+  const variant = status === 'CRITICAL' ? 'destructive' : status === 'WARNING' ? 'outline' : 'default'
+  return <Badge variant={variant}>{status}</Badge>
 }

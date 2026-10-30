@@ -5,6 +5,7 @@ import CodeExamBuilder from './builder/CodeExamBuilder'
 import CodeSubmissionsTable from './responses/CodeSubmissionsTable'
 import StudentCodeIdeWorkspace from './student/StudentCodeIdeWorkspace'
 import { StudentCodePackageViewSchema } from '../shared/code-schema'
+import { Card, CardContent } from '@renderer/components/ui/card'
 
 /* ============================================================
  * Renderer side ของโมดูล code-ide
@@ -37,34 +38,38 @@ function CodeIdeStudentEntry(props: StudentWorkspaceProps): React.JSX.Element {
           blobs: pkg.bundleBlobs ?? []
         })
         if (!res.ok) {
-          setBundleNote(`⚠️ แคชไลบรารีเสริมไม่สำเร็จ (${res.reason ?? 'unknown'}) — รันด้วย runtime เครื่องตัวเองล้วน`)
+          setBundleNote(`แคชไลบรารีเสริมไม่สำเร็จ (${res.reason ?? 'unknown'}) — รันด้วย runtime เครื่องตัวเองล้วน`)
         } else if (res.unsupported.length > 0) {
-          setBundleNote(`⚠️ ไลบรารีบางชุดใช้ไม่ได้: ${res.unsupported.slice(0, 2).join('; ')}`)
+          setBundleNote(`ไลบรารีบางชุดใช้ไม่ได้: ${res.unsupported.slice(0, 2).join('; ')}`)
         } else {
           setBundleNote(null)
         }
       } catch {
-        setBundleNote('⚠️ แคชไลบรารีเสริมไม่สำเร็จ — รันด้วย runtime เครื่องตัวเองล้วน')
+        setBundleNote('แคชไลบรารีเสริมไม่สำเร็จ — รันด้วย runtime เครื่องตัวเองล้วน')
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bundleKey])
   if (!parsed.success) {
     return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-8 text-center">
-        <h2 className="font-semibold">Code IDE — รอโจทย์จากเครื่องแม่</h2>
-        <p className="mt-2 text-sm text-slate-500">
-          เมื่อครูเริ่มข้อสอบ โปรเจกต์ (.ztcode) จะปรากฏตรงนี้ — หรือเปิดดูตัวอย่างได้จากแท็บ Code IDE Builder ฝั่งครู
-        </p>
-      </div>
+      <Card className="border-dashed">
+        <CardContent className="p-8 text-center">
+          <h2 className="font-semibold">Code IDE — รอโจทย์จากเครื่องแม่</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            เมื่อครูเริ่มข้อสอบ โปรเจกต์ (.ztcode) จะปรากฏตรงนี้ — หรือเปิดดูตัวอย่างได้จากแท็บ Code IDE Builder ฝั่งครู
+          </p>
+        </CardContent>
+      </Card>
     )
   }
   return (
     <div className="flex h-full flex-col">
       {bundleNote !== null && (
-        <div className="mb-2 rounded-lg border border-amber-800/60 bg-amber-950/30 px-3 py-1.5 text-center text-[11px] text-amber-200">
-          {bundleNote}
-        </div>
+        <Card className="mb-2 border-primary/30 bg-primary/5">
+          <CardContent className="px-3 py-1.5 text-center text-[11px]">
+            {bundleNote}
+          </CardContent>
+        </Card>
       )}
       <div className="min-h-0 flex-1">
         <StudentCodeIdeWorkspace

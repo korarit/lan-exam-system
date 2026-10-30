@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Download, Eye, Play } from 'lucide-react'
+import { Download, Eye, Play, Pin } from 'lucide-react'
 import {
   CodeExamPackageSchema,
   canonicalStringify,
@@ -20,6 +20,20 @@ import MissingRuntimePrompt from '../MissingRuntimePrompt'
 import TestCaseEditor from './TestCaseEditor'
 import TeacherWorkspaceFolderConfig, { defaultTeacherWorkspace } from './TeacherWorkspaceFolderConfig'
 import StudentCodeIdeWorkspace from '../student/StudentCodeIdeWorkspace'
+import { Button } from '@renderer/components/ui/button'
+import { Input } from '@renderer/components/ui/input'
+import { Label } from '@renderer/components/ui/label'
+import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/ui/card'
+import { Badge } from '@renderer/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@renderer/components/ui/select'
+import { ScrollArea } from '@renderer/components/ui/scroll-area'
+import { cn } from '@renderer/lib/utils'
 
 /* ============================================================
  * Phase 8 (8.3) — CodeExamBuilder (ฝั่งครู)
@@ -140,10 +154,10 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
     if (reference.length === 0) issues.push('ยังไม่มี Reference Solution (อัปโหลดโฟลเดอร์เฉลยหรือเขียนเอง)')
     if (tests.length === 0) issues.push('ยังไม่มี Test Case')
     if (issues.length > 0) {
-      setReport(`⚠️ ตรวจโครงไม่ผ่าน: ${issues.join('; ')} (นี่คือเช็กโครงเท่านั้น ยังไม่รันจริง)`)
+      setReport(`ตรวจโครงไม่ผ่าน: ${issues.join('; ')} (นี่คือเช็กโครงเท่านั้น ยังไม่รันจริง)`)
       return
     }
-    setReport(`✅ ตรวจโครงผ่านเท่านั้น — Reference ${reference.length} entries × ${tests.length} tests (${countCodePoints(tests)} คะแนน) — ยังไม่รันโค้ดจริง การรันจริงผูก Runtime/Grader Phase 9 อย่าตีความว่าผ่าน=โค้ดรันถูก`)
+    setReport(`ตรวจโครงผ่านเท่านั้น — Reference ${reference.length} entries × ${tests.length} tests (${countCodePoints(tests)} คะแนน) — ยังไม่รันโค้ดจริง การรันจริงผูก Runtime/Grader Phase 9 อย่าตีความว่าผ่าน=โค้ดรันถูก`)
   }
 
   function buildDatabase(): DatabaseConfig {
@@ -224,10 +238,10 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
       a.download = fileName
       a.click()
       URL.revokeObjectURL(url)
-      setReport(`💾 บันทึก ${fileName} แล้ว (${manifest.totalFiles} ไฟล์ / ${manifest.totalTests} tests / ${manifest.totalPoints} คะแนน)`)
+      setReport(`บันทึก ${fileName} แล้ว (${manifest.totalFiles} ไฟล์ / ${manifest.totalTests} tests / ${manifest.totalPoints} คะแนน)`)
       props.onSavePackage?.(fileName)
     } catch (err) {
-      setReport(`⛔ บันทึกไม่สำเร็จ: ${err instanceof Error ? err.message : 'unknown'}`)
+      setReport(`บันทึกไม่สำเร็จ: ${err instanceof Error ? err.message : 'unknown'}`)
     } finally {
       setSaving(false)
     }
@@ -293,18 +307,18 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
       if (approxBytes > 25 * 1024 * 1024) {
         const blobMb = libFiles.reduce((s, f) => s + f.sizeBytes, 0) / 1048576
         setReport(
-          `⛔ package ใหญ่เกิน ~${(approxBytes / 1048576).toFixed(1)}MB (ขีดจำกัดส่งผ่าน IPC ~25MB) — วิธีลด: เอา lib หนักออก (แนบ libs รวม ~${blobMb.toFixed(1)}MB, เอา .jar/.whl ใหญ่หรือซ้ำออกก่อน), ลบ reference/ไฟล์ที่ไม่ใช้, แยก .zip หลายส่วน หรือใช้ห้อง lab ที่ลง lib ไว้แล้ว แล้วกดผูกใหม่`
+          `package ใหญ่เกิน ~${(approxBytes / 1048576).toFixed(1)}MB (ขีดจำกัดส่งผ่าน IPC ~25MB) — วิธีลด: เอา lib หนักออก (แนบ libs รวม ~${blobMb.toFixed(1)}MB, เอา .jar/.whl ใหญ่หรือซ้ำออกก่อน), ลบ reference/ไฟล์ที่ไม่ใช้, แยก .zip หลายส่วน หรือใช้ห้อง lab ที่ลง lib ไว้แล้ว แล้วกดผูกใหม่`
         )
         return
       }
       const res = await window.ztExam.attachCodeRoomPackage({ packageJson: JSON.stringify(pkg) })
       setReport(
         res.ok
-          ? `✅ ผูกข้อสอบเข้าห้องแล้ว (“${res.packageTitle ?? title}”) — นักเรียนส่งงานแล้วงานจะเข้าคิวตรวจ ดูผลที่แท็บ “ผลตรวจ Code (Grader)”`
-          : `⛔ ผูกไม่สำเร็จ: ${res.reason === 'ROOM_NOT_OPEN' ? 'ยังไม่เปิดห้องสอบ (แท็บห้องสอบ & ผู้คุม)' : (res.reason ?? 'unknown')}`
+          ? `ผูกข้อสอบเข้าห้องแล้ว (“${res.packageTitle ?? title}”) — นักเรียนส่งงานแล้วงานจะเข้าคิวตรวจ ดูผลที่แท็บ “ผลตรวจ Code (Grader)”`
+          : `ผูกไม่สำเร็จ: ${res.reason === 'ROOM_NOT_OPEN' ? 'ยังไม่เปิดห้องสอบ (แท็บห้องสอบ & ผู้คุม)' : (res.reason ?? 'unknown')}`
       )
     } catch (err) {
-      setReport(`⛔ ผูกไม่สำเร็จ: ${err instanceof Error ? err.message.slice(0, 160) : 'unknown'}`)
+      setReport(`ผูกไม่สำเร็จ: ${err instanceof Error ? err.message.slice(0, 160) : 'unknown'}`)
     } finally {
       setAttaching(false)
     }
@@ -313,170 +327,195 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <label className="block">
-          <span className="mb-1 block text-xs text-slate-400">ชื่อข้อสอบ</span>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-        </label>
+        <Label className="block">
+          <span className="mb-1 block text-xs text-muted-foreground">ชื่อข้อสอบ</span>
+          <Input value={title} onChange={(e) => setTitle(e.target.value)} className="text-sm" />
+        </Label>
         <TeacherWorkspaceFolderConfig value={teacherFolder} studentIds={[]} onPick={setTeacherFolder} />
       </div>
-      <label className="block">
-        <span className="mb-1 block text-xs text-slate-400">คำอธิบายโจทย์</span>
-        <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={3} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none" />
-      </label>
+      <Label className="block">
+        <span className="mb-1 block text-xs text-muted-foreground">คำอธิบายโจทย์</span>
+        <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={3} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+      </Label>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-        <TrackAndLanguageSelector
-          category={category}
-          language={language}
-          enableDatabase={enableDatabase}
-          onChangeCategory={(c) => {
-            setCategory(c)
-            if (c === 'database') {
-              setEnableDatabase(true)
-              if (language !== 'sql-sqlite') setLanguage('sql-sqlite')
-            }
-          }}
-          onChangeLanguage={(l) => {
-            setLanguage(l)
-            if (l === 'sql-sqlite') {
-              setEnableDatabase(true)
-              setDbConfig((prev) => ({ ...prev, enabled: true, engine: 'sqlite' }))
-            }
-            setStarter((prev) => (prev.length <= 2 ? starterEntries(l) : prev))
-          }}
-          onToggleDatabase={setEnableDatabase}
-        />
-      </div>
+      <Card>
+        <CardContent className="pt-4">
+          <TrackAndLanguageSelector
+            category={category}
+            language={language}
+            enableDatabase={enableDatabase}
+            onChangeCategory={(c) => {
+              setCategory(c)
+              if (c === 'database') {
+                setEnableDatabase(true)
+                if (language !== 'sql-sqlite') setLanguage('sql-sqlite')
+              }
+            }}
+            onChangeLanguage={(l) => {
+              setLanguage(l)
+              if (l === 'sql-sqlite') {
+                setEnableDatabase(true)
+                setDbConfig((prev) => ({ ...prev, enabled: true, engine: 'sqlite' }))
+              }
+              setStarter((prev) => (prev.length <= 2 ? starterEntries(l) : prev))
+            }}
+            onToggleDatabase={setEnableDatabase}
+          />
+        </CardContent>
+      </Card>
 
       {(enableDatabase || category === 'database') && (
-        <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-          <h4 className="mb-2 text-sm font-semibold">🗄️ ฐานข้อมูล SQLite (รันทั้งฝั่งครูและนักเรียน — ไม่ต้องตั้งเซิร์ฟเวอร์)</h4>
-          <div className="space-y-2">
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">ฐานข้อมูล SQLite (รันทั้งฝั่งครูและนักเรียน — ไม่ต้องตั้งเซิร์ฟเวอร์)</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
             <div>
-              <span className="mb-1 block text-xs text-slate-400">รูปแบบข้อสอบ SQL</span>
+              <span className="mb-1 block text-xs text-muted-foreground">รูปแบบข้อสอบ SQL</span>
               <div className="flex flex-col gap-1.5 sm:flex-row">
-                <button
+                <Button
                   type="button"
+                  variant={dbConfig.sqlMode === 'query' ? 'default' : 'outline'}
                   onClick={() => setDbConfig((prev) => ({ ...prev, sqlMode: 'query' }))}
-                  className={`flex-1 rounded-lg border px-3 py-2 text-left text-[13px] ${dbConfig.sqlMode === 'query' ? 'border-emerald-500/70 bg-emerald-950/30 text-emerald-200' : 'border-slate-800 bg-slate-950/40 text-slate-300'}`}
+                  className="flex-1 justify-start text-left text-[13px]"
                 >
-                  📋 มี table + data ให้แล้ว — นักเรียนเขียน query
+                  มี table + data ให้แล้ว — นักเรียนเขียน query
                   <span className="block text-[11px] opacity-70">อัปโหลด db/seed.sql (CREATE TABLE + INSERT) แล้วให้ SELECT</span>
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant={dbConfig.sqlMode === 'create-table' ? 'default' : 'outline'}
                   onClick={() => setDbConfig((prev) => ({ ...prev, sqlMode: 'create-table' }))}
-                  className={`flex-1 rounded-lg border px-3 py-2 text-left text-[13px] ${dbConfig.sqlMode === 'create-table' ? 'border-emerald-500/70 bg-emerald-950/30 text-emerald-200' : 'border-slate-800 bg-slate-950/40 text-slate-300'}`}
+                  className="flex-1 justify-start text-left text-[13px]"
                 >
-                  🏗️ ให้สร้าง table เอง — นักเรียนเขียน DDL
+                  ให้สร้าง table เอง — นักเรียนเขียน DDL
                   <span className="block text-[11px] opacity-70">เริ่มจาก DB ว่าง แล้วตรวจด้วย verificationQuery</span>
-                </button>
+                </Button>
               </div>
             </div>
-            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/40 px-2.5 py-2 text-[13px] text-slate-300">
+            <Label className="flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 text-[13px]">
               <input
                 type="checkbox"
                 checked={dbConfig.exposeDbViewerToStudent}
                 onChange={(e) => setDbConfig((prev) => ({ ...prev, exposeDbViewerToStudent: e.target.checked }))}
-                className="h-4 w-4 accent-emerald-500"
+                className="h-4 w-4 accent-primary"
               />
-              <span>👁️ ให้นักเรียนดู schema ได้ (Schema Viewer) — <span className="text-slate-500">ปิดแล้วนักเรียนจะไม่เห็นตาราง/คอลัมน์ ส่วนฝั่งครูดูได้ตลอด</span></span>
-            </label>
-            <p className="text-[11px] text-slate-500">
+              <span>ให้นักเรียนดู schema ได้ (Schema Viewer) — <span className="text-muted-foreground">ปิดแล้วนักเรียนจะไม่เห็นตาราง/คอลัมน์ ส่วนฝั่งครูดูได้ตลอด</span></span>
+            </Label>
+            <p className="text-[11px] text-muted-foreground">
               seed: <code className="font-mono">db/seed.sql</code> · รันจริงด้วย SQLite (better-sqlite3) ทั้งตอนครูกดทดสอบเฉลยและตอนตรวจงานนักเรียน · DELETE/DROP ได้เต็มที่ ระบบ spawn DB ใหม่พร้อมข้อมูลเดิมทุกครั้ง
             </p>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
-      <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-        <h4 className="mb-2 text-sm font-semibold">📁 โปรเจกต์ตั้งต้น / เฉลย</h4>
-        <ProjectTemplateUploader view={templateView} onViewChange={setTemplateView} onImportEntries={handleImport} />
-        <div className="mt-2 font-mono text-[11px] text-slate-500">
-          Starter: {starter.length} entries · Reference: {reference.length} entries
-        </div>
-      </div>
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm">โปรเจกต์ตั้งต้น / เฉลย</CardTitle></CardHeader>
+        <CardContent>
+          <ProjectTemplateUploader view={templateView} onViewChange={setTemplateView} onImportEntries={handleImport} />
+          <div className="mt-2 font-mono text-[11px] tabular-nums text-muted-foreground">
+            Starter: {starter.length} entries · Reference: {reference.length} entries
+          </div>
+        </CardContent>
+      </Card>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-        <h4 className="mb-2 text-sm font-semibold">🔒 สิทธิ์ไฟล์ + Entry Point</h4>
-        <label className="mb-2 block text-xs text-slate-400">
-          Entry point (ไฟล์หลักสำหรับรัน)
-          <select value={entryPoint} onChange={(e) => setEntryPoint(e.target.value)} className="ml-2 rounded border border-slate-700 bg-slate-900 px-2 py-1 font-mono text-xs">
-            {fileEntries.map((f) => <option key={f.path} value={f.path}>{f.path}</option>)}
-          </select>
-        </label>
-        <div className="max-h-44 space-y-1 overflow-y-auto">
-          {starter.map((e) => (
-            <div key={e.path} className="flex items-center gap-2 rounded bg-slate-900/60 px-2 py-1 font-mono text-[11px]">
-              <span className="flex-1 truncate text-slate-300">{e.path}</span>
-              <button type="button" onClick={() => toggleStarterFlag(e.path, 'readOnly')} title="ล็อกไม่ให้นักเรียนแก้/ลบ" className={`rounded px-1.5 py-0.5 ${e.readOnly ? 'bg-amber-900/60 text-amber-200' : 'bg-slate-800 text-slate-500 hover:text-slate-200'}`}>
-                {e.readOnly ? '🔒 read-only' : '🔓 แก้ได้'}
-              </button>
-              <button type="button" onClick={() => toggleStarterFlag(e.path, 'hiddenFromStudent')} title="ซ่อนจากนักเรียน (ไฟล์ตรวจ)" className={`rounded px-1.5 py-0.5 ${e.hiddenFromStudent ? 'bg-purple-900/60 text-purple-200' : 'bg-slate-800 text-slate-500 hover:text-slate-200'}`}>
-                {e.hiddenFromStudent ? '👁‍🗨 hidden' : '👁 เห็นได้'}
-              </button>
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm">สิทธิ์ไฟล์ + Entry Point</CardTitle></CardHeader>
+        <CardContent>
+          <Label className="mb-2 block text-xs text-muted-foreground">
+            Entry point (ไฟล์หลักสำหรับรัน)
+            <Select value={entryPoint} onValueChange={setEntryPoint}>
+              <SelectTrigger className="ml-2 inline-flex w-64 font-mono text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {fileEntries.map((f) => <SelectItem key={f.path} value={f.path}>{f.path}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Label>
+          <ScrollArea className="max-h-44">
+            <div className="space-y-1 pr-2">
+              {starter.map((e) => (
+                <div key={e.path} className="flex items-center gap-2 rounded-md bg-muted/50 px-2 py-1 font-mono text-[11px]">
+                  <span className="flex-1 truncate">{e.path}</span>
+                  <Badge variant={e.readOnly ? 'outline' : 'secondary'} className="cursor-pointer">
+                    <button type="button" onClick={() => toggleStarterFlag(e.path, 'readOnly')} title="ล็อกไม่ให้นักเรียนแก้/ลบ">
+                      {e.readOnly ? 'read-only' : 'แก้ได้'}
+                    </button>
+                  </Badge>
+                  <Badge variant={e.hiddenFromStudent ? 'outline' : 'secondary'} className="cursor-pointer">
+                    <button type="button" onClick={() => toggleStarterFlag(e.path, 'hiddenFromStudent')} title="ซ่อนจากนักเรียน (ไฟล์ตรวจ)">
+                      {e.hiddenFromStudent ? 'hidden' : 'เห็นได้'}
+                    </button>
+                  </Badge>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      </div>
+          </ScrollArea>
+        </CardContent>
+      </Card>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-        <h4 className="mb-2 text-sm font-semibold">📦 Offline Libraries</h4>
-        <OfflineDependencyManager bundles={bundles} onChange={setBundles} files={libFiles} onChangeFiles={setLibFiles} />
-        <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-amber-800/50 bg-amber-950/20 px-2.5 py-2 text-[13px] text-slate-200">
-          <input
-            type="checkbox"
-            checked={allowStudentInstall}
-            onChange={(e) => setAllowStudentInstall(e.target.checked)}
-            className="mt-0.5 h-4 w-4 accent-amber-500"
-          />
-          <span>
-            🌐 อนุญาตให้นักเรียนติดตั้งไลบรารีเอง (`pip install` / `npm install`)
-            <span className="block text-[11px] text-slate-400">
-              ติดตั้งได้เฉพาะชื่อ+เวอร์ชันที่ติ๊กไว้ด้านบนเท่านั้น (exact name@version) จาก registry ทางการ
-              (registry.npmjs.org / pypi.org) — ห้องแล็บต้องเปิดเน็ตถึง registry ดังกล่าว
-              ปิดไว้ = ออฟไลน์ 100% (นักเรียนใช้ได้แค่ runtime + blob ที่ครูแนบ)
-            </span>
-          </span>
-        </label>
-      </div>
-
-      <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-        <h4 className="mb-2 text-sm font-semibold">🧪 Test Cases — ตั้ง input/output (LeetCode-style) ({tests.length} — {countCodePoints(tests)} คะแนน)</h4>
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {(['stdio', 'unit-harness', 'dom-assertion', 'http-api', 'sql-query'] as const).map((k) => (
-            <button key={k} type="button" onClick={() => addTest(k)} className="rounded-lg border border-slate-700 px-2.5 py-1 font-mono text-[11px] text-slate-300 hover:border-emerald-500 hover:text-emerald-200">
-              + {k}
-            </button>
-          ))}
-        </div>
-        <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
-          {tests.map((t, i) => (
-            <TestCaseEditor
-              key={t.testId} test={t} index={i}
-              onChange={(next) => setTests((prev) => prev.map((x, xi) => (xi === i ? next : x)))}
-              onDelete={() => setTests((prev) => prev.filter((_, xi) => xi !== i))}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm">Offline Libraries</CardTitle></CardHeader>
+        <CardContent>
+          <OfflineDependencyManager bundles={bundles} onChange={setBundles} files={libFiles} onChangeFiles={setLibFiles} />
+          <Label className="mt-2 flex cursor-pointer items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-2 text-[13px]">
+            <input
+              type="checkbox"
+              checked={allowStudentInstall}
+              onChange={(e) => setAllowStudentInstall(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-primary"
             />
-          ))}
-          {tests.length === 0 && <p className="text-xs text-slate-600">ยังไม่มี test — กด + เพิ่ม (stdio = รับ input ทางคีย์บอร์ดแล้วตรวจ output, ปล่อยว่างได้ถ้าตั้งโจทย์เฉย ๆ)</p>}
-        </div>
-      </div>
+            <span>
+              อนุญาตให้นักเรียนติดตั้งไลบรารีเอง (`pip install` / `npm install`)
+              <span className="block text-[11px] text-muted-foreground">
+                ติดตั้งได้เฉพาะชื่อ+เวอร์ชันที่ติ๊กไว้ด้านบนเท่านั้น (exact name@version) จาก registry ทางการ
+                (registry.npmjs.org / pypi.org) — ห้องแล็บต้องเปิดเน็ตถึง registry ดังกล่าว
+                ปิดไว้ = ออฟไลน์ 100% (นักเรียนใช้ได้แค่ runtime + blob ที่ครูแนบ)
+              </span>
+            </span>
+          </Label>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm tabular-nums">Test Cases — ตั้ง input/output (LeetCode-style) ({tests.length} — {countCodePoints(tests)} คะแนน)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {(['stdio', 'unit-harness', 'dom-assertion', 'http-api', 'sql-query'] as const).map((k) => (
+              <Button key={k} type="button" variant="outline" size="sm" onClick={() => addTest(k)} className="font-mono text-[11px]">
+                + {k}
+              </Button>
+            ))}
+          </div>
+          <ScrollArea className="max-h-96">
+            <div className="space-y-2 pr-1">
+              {tests.map((t, i) => (
+                <TestCaseEditor
+                  key={t.testId} test={t} index={i}
+                  onChange={(next) => setTests((prev) => prev.map((x, xi) => (xi === i ? next : x)))}
+                  onDelete={() => setTests((prev) => prev.filter((_, xi) => xi !== i))}
+                />
+              ))}
+              {tests.length === 0 && <p className="text-xs text-muted-foreground">ยังไม่มี test — กด + เพิ่ม (stdio = รับ input ทางคีย์บอร์ดแล้วตรวจ output, ปล่อยว่างได้ถ้าตั้งโจทย์เฉย ๆ)</p>}
+            </div>
+          </ScrollArea>
+        </CardContent>
+      </Card>
 
       {report !== null && (
-        <p className="rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2 text-[13px] text-slate-200">{report}</p>
+        <Card><CardContent className="px-3 py-2 text-[13px]">{report}</CardContent></Card>
       )}
 
       <div
         title="ขนาดประเมินรวม base64 (~1.37×) ก่อนส่งผ่าน IPC ถ้าเกิน ~25MB จะผูกห้องไม่ผ่าน ให้เอา lib หนักออกก่อนกดผูก"
-        className={`rounded-xl border px-3 py-2 text-xs ${sizeEstimate.approxBytes > 25 * 1024 * 1024 ? 'border-red-800/60 bg-red-950/30 text-red-200' : sizeEstimate.approxBytes > 20 * 1024 * 1024 ? 'border-amber-800/60 bg-amber-950/30 text-amber-200' : 'border-slate-800 bg-slate-900/60 text-slate-400'}`}
+        className={cn('rounded-md border px-3 py-2 text-xs tabular-nums', sizeEstimate.approxBytes > 25 * 1024 * 1024 ? 'border-destructive/60 text-destructive' : sizeEstimate.approxBytes > 20 * 1024 * 1024 ? 'border-primary/40' : 'text-muted-foreground')}
       >
-        📦 ขนาดประเมิน ~{sizeEstimate.approxMb.toFixed(1)}MB / ขีดจำกัด IPC ~25MB
+        ขนาดประเมิน ~{sizeEstimate.approxMb.toFixed(1)}MB / ขีดจำกัด IPC ~25MB
         <span className="ml-2 opacity-80">
           (ไฟล์แนบ libs รวม {(sizeEstimate.blobBytes / 1048576).toFixed(1)}MB ·Starter/Reference/tests ~{(sizeEstimate.textBytes / 1024).toFixed(0)}KB)
         </span>
         {sizeEstimate.approxBytes > 20 * 1024 * 1024 && (
           <span className="mt-0.5 block font-medium">
-            ⚠️ ใกล้/เกินขีดจำกัด — วิธีลด: เอา .jar/.whl ไฟล์ใหญ่หรือซ้ำออก (ดูรายชื่อด้านล่าง), ลบ reference ที่ไม่ใช้, แยก .zip หลายส่วน หรือใช้ห้อง lab ที่ลง lib ไว้แล้ว
+            ใกล้/เกินขีดจำกัด — วิธีลด: เอา .jar/.whl ไฟล์ใหญ่หรือซ้ำออก (ดูรายชื่อด้านล่าง), ลบ reference ที่ไม่ใช้, แยก .zip หลายส่วน หรือใช้ห้อง lab ที่ลง lib ไว้แล้ว
           </span>
         )}
       </div>
@@ -484,36 +523,40 @@ export default function CodeExamBuilder(props: Props): React.JSX.Element {
       {/* Phase 9.1: เช็ค runtime ของภาษาที่โจทย์ใช้ (ไม่ดาวน์โหลดแยก — ขาดให้ติดตั้งเอง + Re-scan/Browse) */}
       <MissingRuntimePrompt languages={[language]} />
 
-      <div
-        title="ปุ่มนี้ตรวจเฉพาะโครง (reference + tests ครบหรือไม่) ยังไม่รันโค้ดจริง การรันจริงต้องรอ Runtime/Grader Phase 9"
-        className="rounded-xl border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200"
-      >
-        🧪 <b>ปุ่มด้านล่างตรวจโครงเท่านั้น ยังไม่รันจริง (Phase 9)</b> — ผ่านหมายถึง reference/tests ครบ ไม่ได้แปลว่าโค้ดรันถูกทุกเคส
-      </div>
+      <Card className="border-primary/30 bg-primary/5">
+        <CardContent
+          title="ปุ่มนี้ตรวจเฉพาะโครง (reference + tests ครบหรือไม่) ยังไม่รันโค้ดจริง การรันจริงต้องรอ Runtime/Grader Phase 9"
+          className="px-3 py-2 text-xs"
+        >
+          <b>ปุ่มด้านล่างตรวจโครงเท่านั้น ยังไม่รันจริง (Phase 9)</b> — ผ่านหมายถึง reference/tests ครบ ไม่ได้แปลว่าโค้ดรันถูกทุกเคส
+        </CardContent>
+      </Card>
       <div className="flex flex-wrap gap-2">
-        <button
+        <Button
           type="button"
+          variant="secondary"
           onClick={testReferenceSolution}
           title="ตรวจเฉพาะโครง reference + tests ครบหรือไม่ — ยังไม่รันโค้ดจริง (Phase 9)"
-          className="inline-flex items-center gap-1.5 rounded-xl bg-amber-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-600"
         >
-          <Play size={15} /> 🧪 ตรวจโครงเฉลย (ยังไม่รันจริง — Phase 9)
-        </button>
-        <button type="button" onClick={() => void attachToRoom()} disabled={attaching} className="inline-flex items-center gap-1.5 rounded-xl bg-sky-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-600 disabled:opacity-40">
-          📌 {attaching ? 'กำลังผูก…' : 'ผูกเข้าห้องสอบ'}
-        </button>
-        <button type="button" onClick={() => setPreviewOpen((v) => !v)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-200 hover:border-sky-500">
+          <Play size={15} /> ตรวจโครงเฉลย (ยังไม่รันจริง — Phase 9)
+        </Button>
+        <Button type="button" onClick={() => void attachToRoom()} disabled={attaching}>
+          <Pin size={15} /> {attaching ? 'กำลังผูก…' : 'ผูกเข้าห้องสอบ'}
+        </Button>
+        <Button type="button" variant="outline" onClick={() => setPreviewOpen((v) => !v)}>
           <Eye size={15} /> {previewOpen ? 'ซ่อนพรีวิวนักเรียน' : 'พรีวิวฝั่งนักเรียน'}
-        </button>
-        <button type="button" onClick={() => void saveZtcode()} disabled={saving} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-40">
+        </Button>
+        <Button type="button" onClick={() => void saveZtcode()} disabled={saving}>
           <Download size={15} /> {saving ? 'กำลังบันทึก…' : 'บันทึก .ztcode'}
-        </button>
+        </Button>
       </div>
 
       {previewOpen && previewPkg !== null && (
-        <div className="h-[560px] rounded-xl border border-sky-800/50">
-          <StudentCodeIdeWorkspace pkg={stripCodePackageForStudent(previewPkg)} examId="preview" studentId="preview-student" questionNo={1} questionTotal={1} timeLeftText="01:25:00" viewerRole="teacher" />
-        </div>
+        <Card className="border-primary/40">
+          <div className="h-[560px]">
+            <StudentCodeIdeWorkspace pkg={stripCodePackageForStudent(previewPkg)} examId="preview" studentId="preview-student" questionNo={1} questionTotal={1} timeLeftText="01:25:00" viewerRole="teacher" />
+          </div>
+        </Card>
       )}
     </div>
   )
