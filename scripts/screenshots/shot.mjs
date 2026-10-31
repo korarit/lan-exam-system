@@ -115,6 +115,27 @@ function mockInit(scenario) {
       getTriageOverview: async () => overview,
       getAttestationConfig: async () => attestation,
       setAttestationEnforce: async () => ({ ok: true }),
+      gatewayInterfaces: async () => ({
+        interfaces: [
+          { name: 'Ethernet', address: '192.168.1.2', netmask: '255.255.255.0', cidr: '192.168.1.0/24', mac: 'AA:BB:CC:DD:EE:01' }
+        ]
+      }),
+      gatewayStatus: async () => ({
+        state: 'stopped', running: false, interfaceName: null, hostIp: null, subnetCidr: null,
+        poolStart: null, poolEnd: null, leaseCount: 0, posture: null, warnings: [], lastError: null, startedAtMs: null
+      }),
+      gatewayLeases: async () => ({ leases: [] }),
+      gatewayDnsLog: async () => ({ entries: [] }),
+      gatewayStart: async () => ({
+        state: 'running', running: true, interfaceName: 'Ethernet', hostIp: '192.168.1.2', subnetCidr: '192.168.1.0/24',
+        poolStart: '192.168.1.100', poolEnd: '192.168.1.199', leaseCount: 0,
+        posture: { ipv4Forwarding: false, ipv6Forwarding: false, icsEnabled: false, canDisable: true, changed: [], warnings: [] },
+        warnings: [], lastError: null, startedAtMs: now
+      }),
+      gatewayStop: async () => ({
+        state: 'stopped', running: false, interfaceName: null, hostIp: null, subnetCidr: null,
+        poolStart: null, poolEnd: null, leaseCount: 0, posture: null, warnings: [], lastError: null, startedAtMs: null
+      }),
       listRecordedDomains: async () => ({ records: domains }),
       approveDomain: async () => ({ ok: true }),
       clearRecordedDomains: async () => ({ ok: true }),
