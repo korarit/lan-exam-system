@@ -26,6 +26,7 @@ flowchart TB
         H_TLS["TLS 1.3 Server"]
         H_Q["Question Dispatcher (ทีละข้อ)"]
         H_ATT["Attestation Verifier (Public Key)"]
+        H_GW["Host Gateway (DHCP / DNS sinkhole)"]
         H_LOG["Audit Log (hash chain)"]
         H_DB[("Encrypted Result Store")]
         H_DASH["Live Dashboard"]
@@ -36,7 +37,7 @@ flowchart TB
         C_EXAM["Exam UI (React)"]
         C_GUARD["Guard: Kiosk / Focus / Process / Connection Monitor"]
         C_PROXY["Local Proxy (Mode 3: ตรวจจับ/รายงาน)"]
-        C_ATT["Attestation Responder"]
+        C_ATT["Attestation Responder (native signer)"]
     end
 
     H_UDP -. beacon .-> C_DISC
@@ -51,6 +52,8 @@ flowchart TB
 
 เครื่องนักเรียนคุยกับเครื่องแม่เท่านั้น ไม่ต่อ cloud ตรง ๆ Cloud (ถ้ามี) เป็นแค่ที่สำรองผลหลังสอบ โดยเครื่องแม่เป็นผู้อัปโหลด
 
+ในโหมด Closed เครื่องแม่สามารถเปิด **Host Gateway** เพื่อเป็น default gateway + DNS sinkhole และไม่ forwarding/NAT ทำให้เครื่องนักเรียนออกเน็ตไม่ได้ที่ระดับเครือข่าย (รายละเอียดหัวข้อ 3.8)
+
 ---
 
 ## 3. ส่วนประกอบหลัก
@@ -59,7 +62,7 @@ flowchart TB
 เพื่อให้ระบบรองรับรูปแบบการสอบใหม่ๆ ในอนาคต (เช่น **โมดูลข้อสอบ Dynamic Form** และ **โมดูลสอบเขียนโค้ดด้วย In-App Code IDE** แบบ LeetCode/HackerRank) โดยไม่ต้องรื้อระบบเครือข่ายหรือระบบกันโกงใหม่ เราแยกโค้ดออกเป็น 2 ชั้นชัดเจน:
 
 1. **Core Platform ("Exam OS / Shell"):**
-   - ดูแลทุกอย่างที่ใช้ร่วมกันในทุกการสอบ: LAN Discovery, TLS 1.3 + Room PIN, Attestation, Kiosk Lock, Watermark, Deep Cheat Detection (Phase 3a), Audit Hash Chain & Dashboard Triage (Phase 3b), และ Screen Monitoring 5 นาที (Phase 3c)
+   - ดูแลทุกอย่างที่ใช้ร่วมกันในทุกการสอบ: LAN Discovery, TLS 1.3 + Room PIN, Attestation, Kiosk Lock, Watermark, Deep Cheat Detection (Phase 3a), Host-as-Gateway (default-deny egress, Closed mode), Audit Hash Chain & Dashboard Triage (Phase 3b), และ Screen Monitoring 5 นาที (Phase 3c)
    - มีท่อส่งข้อความกลาง (`MODULE_PACKET_ENVELOPE`), ระบบนับเวลาจากเครื่องแม่, และบริการ Autosave/Recovery พื้นฐานให้ทุกโมดูลเรียกใช้
 2. **Pluggable Exam Modules (`src/modules/<moduleId>/`):**
    - แต่ละโมดูลเป็นอิสระต่อกันและลงทะเบียนผ่าน `ExamModuleRegistry` โดยมีสัญญา (Interface Contract) 4 ส่วน:
@@ -77,12 +80,14 @@ flowchart TB
 - **TCP + TLS 1.3** ใช้ self-signed cert ชั่วคราวต่อห้อง
 - **ข้อควรระวัง:** beacon ทาง UDP ไม่มีการยืนยันตัวตน คนในวง LAN ปลอมได้ จึงต้องมี **Room PIN/รหัสสั้นที่ครูแสดงบนจอ** ให้นักเรียนกรอก แล้วใช้ยืนยัน fingerprint ของเครื่องแม่ (เช่น HMAC ของ fingerprint ด้วย PIN) ก่อนเชื่อใจ
 
-### 3.3 Attestation (เซ็นไฟล์แอปแบบ Arma 3)
+### 3.3 Attestation (เซ็นไฟล์แอปแบบ Arma 3 + native signer)
 - Build ปล่อยจริงสร้าง **manifest** (SHA-256 ของไฟล์ทั้งหมด) และเซ็นด้วย **Ed25519 private key ที่อยู่กับ dev เท่านั้น** เครื่องแม่ถือเฉพาะ public key
-- ตอน join: เครื่องแม่ส่ง **nonce**, client ตอบ HMAC ของข้อมูลไฟล์/โค้ดที่กำลังรัน พร้อม manifest + ลายเซ็น
+- ตอน join: เครื่องแม่ส่ง **nonce** และ **expected hash ของ app.asar** จาก manifest ที่เซ็นแล้ว; client ตอบ HMAC ผูกกับ TLS exporter พร้อม manifest + ลายเซ็น
+- **Native attestation signer (Windows/Linux/macOS):** addon `os_guard.node` ถือ Ed25519 seed ต่อ build, hash `app.asar` จริงใน native, เทียบกับ expected hash ที่ host ส่งมา แล้วเซ็น challenge ด้วย seed นั้น; host ตรวจลายเซ็นด้วย public key — patch JS อย่างเดียวจึงไม่พอ ต้อง patch native addon ด้วย
 - **ผูก attestation กับ TLS session** (ใช้ TLS exporter ผสมใน HMAC) และ **ส่ง challenge ใหม่แบบสุ่มเวลาตลอดการสอบ** เพื่อลดความเสี่ยงแบบ relay (นักเรียนรันโปรแกรมแท้อีกตัวไว้ตอบแทน)
+- **Bootstrap:** challenge แรกใช้ manifest + HMAC เพื่อให้ host รู้จัก manifest; ตั้งแต่ challenge ถัดไป native signature ถูกบังคับใน production
 - ถ้าตรวจพบไม่ตรง: ปฏิเสธการเข้าห้องหรือ freeze + แจ้งครู
-- **ข้อจำกัด:** ไม่มี hardware root of trust (TPM) จึงเป็นการ "ยกระดับความยาก" ไม่ใช่การรับประกัน
+- **ข้อจำกัด:** ไม่มี hardware root of trust (TPM) seed ฝังใน native จึงถูก extract ได้ และผู้ที่ patch native addon/ใช้ OS-level tooling ยังหลบได้; เป็นการ "ยกระดับความยาก" ไม่ใช่การรับประกัน
 
 ### 3.4 ระบบตรวจจับ (Detection Suite)
 ทุก event ส่งไปเครื่องแม่แบบ real-time และบันทึกใน audit log
@@ -92,6 +97,7 @@ flowchart TB
 | Kiosk / Focus | หน้าต่างเสียโฟกัส, ออกจากโหมดเต็มจอ, ความพยายามสลับแอป |
 | Process Monitor | โปรแกรมที่รันอยู่เทียบ blacklist/whitelist (เช่น เครื่องมือ AI, remote desktop, screen share, debugger) |
 | Connection Monitor | การเชื่อมต่อเครือข่ายรายโปรเซส เทียบกับสิ่งที่อนุญาต (จับ app ที่ออกเน็ตโดยไม่ผ่าน proxy) |
+| Host Gateway (Closed) | DHCP + DNS sinkhole + forwarding posture; ตัดเน็ตนอกที่ระดับเครือข่าย ไม่พึ่ง client report |
 | Integrity Watchdog | ตรวจ hash ไฟล์/โฟลเดอร์ที่ควบคุม (แอป, VS Code profile, extensions) ระหว่างสอบ |
 | Env / Launch Guard | ตรวจ command-line flag และ environment ที่น่าสงสัยตอนเริ่มแอป |
 | VM / Remote Detection | สัญญาณว่ารันใน VM หรือถูก remote (ผลเป็นสัญญาณเตือน ไม่ใช่ข้อสรุป) |
@@ -157,13 +163,25 @@ sequenceDiagram
 - **ความเป็นส่วนตัว:** จอนักเรียนอาจเผยข้อมูลส่วนตัว ควรประกาศนโยบายล่วงหน้า จำกัดสิทธิ์ผู้ดู และไม่ส่งภาพออกถ้าไม่ถูกเรียกดู
 - ไม่เห็นมือถือเหมือนเดิม
 
+### 3.8 Host-as-Gateway (default-deny egress สำหรับโหมด Closed)
+
+โหมด Closed สามารถให้เครื่องแม่เป็น **default gateway** ของเครื่องนักเรียนผ่าน DHCPv4 ในตัวแอป พร้อม DNS sinkhole เพื่อตัดเน็ตนักเรียนที่ระดับเครือข่ายโดยไม่ต้องพึ่ง client report
+
+- **DHCP:** host แจก IP ในวงที่กำหนด โดย option router/DNS ชี้มาที่ host; นักเรียนไม่ต้องตั้งค่าอะไร
+- **DNS sinkhole:** ค่าเริ่มต้นตอบ NXDOMAIN ทุกโดเมน; allowlist ที่ครูตั้งไว้จะถูก forward ผ่าน host และบันทึก log
+- **ไม่ทำ NAT/forwarding:** เครื่องแม่เป็น gateway แต่ไม่ส่งต่อแพ็กเก็ตออกเน็ต → DoH/direct-IP/connection สั้นออกนอกไม่ได้ แม้ client จะถูก patch
+- **Posture check:** ตรวจ/พยายามปิด IPv4/IPv6 forwarding และ ICS บน Windows/Linux/macOS; ถ้าปิดไม่ได้จะเข้า **degraded mode** และเตือนครู
+- **ข้อกำหนดห้องแล็บ:** host ต้องมี static IP, รันแบบ Administrator/root, ปิด DHCP ของเราเตอร์หรือแยก VLAN นักเรียน, และปิด IPv6/RA guard ใน VLAN นักเรียน
+- **ข้อจำกัด:** นักเรียนที่ตั้ง static IP/gateway เองหรือมี IPv6 router อื่นยัง bypass ได้; เป็น network configuration control ไม่ใช่ hardware root of trust
+- **สถานะ:** เปิดใช้เฉพาะโหมด Closed และ default off; ยังต้องทดสอบภาคสนามกับ DHCP client จริงและ IPv6 RA
+
 ---
 
 ## 4. โหมดการสอบ (ครูเลือกตอนสร้างห้อง)
 
 | โหมด | รายละเอียด | เครือข่ายฝั่งนักเรียน |
 |---|---|---|
-| **1. Closed** | Kiosk เต็มจอ ทำข้อสอบในแอปอย่างเดียว | ไม่ใช้อินเทอร์เน็ต (คุยแต่เครื่องแม่) |
+| **1. Closed** | Kiosk เต็มจอ ทำข้อสอบในแอปอย่างเดียว | ไม่ใช้อินเทอร์เน็ต (คุยแต่เครื่องแม่); เปิด Host Gateway เพื่อบังคับที่ระดับเครือข่ายได้ |
 | **2. In-App Docs** | แบ่งจอ: ข้อสอบ + WebView เอกสาร | ตรวจ URL กับ whitelist ใน WebView, ผิดกติกา = ฟ้อง |
 | **3. External Tools** | อนุญาตโปรแกรมภายนอก เช่น VS Code | Local proxy บันทึก/รายงานโดเมน + Connection Monitor ฟ้องการต่อเน็ตที่ไม่ผ่าน proxy |
 
@@ -180,7 +198,7 @@ sequenceDiagram
 ## 5. Open Source Model
 
 - **เปิดซอร์ส:** โปรโตคอล, UI, ระบบข้อสอบ, proxy, ตัวตรวจจับ (ความปลอดภัยของ crypto ไม่พึ่งการปิดซอร์ส)
-- **เก็บเป็นความลับ:** Ed25519 **private signing key** และ build/release pipeline ที่เซ็นไฟล์จริง
+- **เก็บเป็นความลับ:** Ed25519 **private signing key**, native attestation seed ต่อ build, และ build/release pipeline ที่เซ็นไฟล์จริง
 - Fork ที่ไม่มีลายเซ็นที่เครื่องแม่เชื่อถือ จะเข้าห้องสอบไม่ได้
 - **กติกาตรวจจับไม่ได้ปลอดภัยด้วยการเปิดซอร์ส:** ต่างจาก crypto ถ้าผู้สอบอ่านเจอว่า blacklist มีอะไรหรือ poll ทุกกี่วินาที ก็หลบได้ง่ายขึ้น จึงให้ policy มาจากเครื่องแม่ต่อห้อง (เซ็นลายเซ็น) ไม่เก็บ blacklist จริงไว้ใน repo และสุ่มช่วงเวลา poll
 - **การจัดการ private key:** เป็นจุดล้มเหลวจุดเดียว ควรเซ็นบนเครื่อง offline หรือฮาร์ดแวร์คีย์ มี key rotation และแผน revoke ถ้าคีย์หลุด
@@ -201,17 +219,18 @@ sequenceDiagram
 ```text
 lan-exam-system/
 ├── ai-docs-dev/                 # เอกสาร arc, tech stack และแผนงานราย phase
-├── native/                      # Native addon (keyboard hook, window/overlay inspector)
+├── native/                      # Native addon (keyboard hook, window/overlay inspector, attestation signer)
 ├── src/
 │   ├── shared/                  # Types, IPC contracts, Core protocol & Module interfaces
 │   │   └── module-contract.ts   # สัญญากลางสำหรับทุก Exam Module
 │   ├── main/                    # Electron Main (Core Platform)
 │   │   ├── network/             # UDP discovery, TLS 1.3 server/client, framing
+│   │   │   └── gateway/         # DHCPv4, DNS sinkhole, forwarding posture (Closed mode)
 │   │   ├── core-host/           # Session manager, timer, audit hash chain, triage engine
 │   │   ├── guard/               # Deep cheat detection (Phase 3a)
 │   │   ├── screen/              # 1fps thumbnails & 5-min encrypted ring buffer (Phase 3c)
 │   │   ├── proxy/               # Local CONNECT proxy & VS Code controller (Mode 3)
-│   │   └── attestation/         # Ed25519 manifest & TLS-bound challenge
+│   │   └── attestation/         # Ed25519 manifest, native signer & TLS-bound challenge
 │   ├── preload/                 # Sandboxed contextBridge
 │   ├── renderer/                # React + Vite + Tailwind (Core Shell)
 │   │   └── src/
@@ -238,7 +257,7 @@ lan-exam-system/
 | ภัยคุกคาม | ระดับการรับมือ |
 |---|---|
 | ดักฟัง/แก้ข้อมูลใน LAN | **กันได้** (TLS 1.3 + PIN-verified fingerprint) |
-| แก้ไฟล์แอป / ใช้ client ปลอม | **ตรวจจับได้ส่วนใหญ่** (signed manifest + challenge ผูก TLS) |
+| แก้ไฟล์แอป / ใช้ client ปลอม | **ตรวจจับได้ส่วนใหญ่** (signed manifest + native signer + challenge ผูก TLS); patch native หรือถอด seed ยังเป็น residual |
 | เปิดแอป AI / remote / โปรแกรมต้องห้าม | **ตรวจจับและฟ้อง** (process + connection monitor) แต่มีช่องเปิดแล้วปิดเร็วหรือเปลี่ยนชื่อ |
 | ข้อสอบข้อล่วงหน้ารั่ว | **ลดความเสี่ยงมาก** (ส่งทีละข้อ) |
 | ลอกเพื่อนข้าง ๆ | **ลดได้** (สลับข้อ/ตัวเลือกต่อคน) |
@@ -247,6 +266,7 @@ lan-exam-system/
 | ผู้โกงที่มีสิทธิ์ Admin | ข้ามการป้องกันระดับ OS ได้ จึงเน้นตรวจจับ + หลักฐาน และควรจัดเครื่องห้องแล็บให้นักเรียนเป็น standard user |
 | ใช้ AI ผ่านมือถือ | **ซอฟต์แวร์ไม่เห็นและไม่แดง** Watermark/การสลับข้อไม่ช่วยกับ AI จัดการด้วยกติกาห้องสอบ (เก็บมือถือ) + ผู้คุม + ออกแบบข้อสอบให้ AI ช่วยได้น้อย |
 | ใช้ AI บนเครื่องสอบ (เว็บ/extension/gateway เอง) | **ตรวจจับและฟ้องได้ดี** ด้วย whitelist แบบ default-deny ที่ proxy + connection monitor ถ้าต้องการให้ "ไม่ใช่ allow ก็ใช้ไม่ได้" ให้เปิด `block-and-report` |
+| เปิดเน็ต/DoH/direct-IP/connection สั้น | **ลดได้มากเมื่อเปิด Host Gateway** (DHCP + default-deny, ไม่ forwarding/NAT); ถ้าไม่เปิด หรือนักเรียนตั้ง static IP/IPv6 เองยังเลี่ยงได้ |
 | Local AI บนเครื่องห้องคอม | เสี่ยงต่ำถ้าคุมสิทธิ์เครื่อง (ไม่มี admin, ปิด USB/boot) และมี process monitor |
 | เว็บใน whitelist ถูกใช้เป็นทางผ่าน | ลดโดย whitelist ให้น้อยที่สุดเฉพาะเอกสารที่จำเป็น (proxy เห็นแค่ระดับโดเมน ไม่เห็น path) |
 | ผู้อ่านซอร์สเลี่ยงกติกาตรวจจับ | policy จากเครื่องแม่ + สุ่มเวลา poll (ดูหัวข้อ 3.4, 5) |
@@ -272,7 +292,7 @@ lan-exam-system/
    - **[Phase 3a-plus – Domain Recorder & Host Allowlist](./plan/phase-3a-plus-domain-recorder.md):** ครูเปิดเว็บเอกสารเองที่เครื่องแม่ก่อนเริ่มสอบ (Doc Preview) ระบบ record โดเมนที่หน้าเว็บเรียกใช้จริงเก็บไว้ใน DB ให้ครูกดอนุญาต (default-deny) แล้วฝังเป็น `allowedDomains` ใน Signed Policy — ไม่ต้องเพิ่มข้อความ network ใหม่เลย
 4. **[Phase 3b – Audit Hash Chain & Dashboard Triage](./plan/phase-3b-audit-and-triage.md):** Audit log แบบ Cryptographic Hash Chain, คำนวณคะแนนความน่าสงสัยรวมเหตุการณ์ซ้ำ, และหน้าจอ Dashboard คัดกรองคนแดง (Triage) พร้อม Timeline หลักฐาน
 5. **[Phase 3c – Screen Monitoring](./plan/phase-3c-screen-monitoring.md):** จับภาพครบทุกจอ, Thumbnail ~1 fps, Ring buffer เข้ารหัส 5 นาทีในเครื่องนักเรียน (เซกเมนต์ละ 10 วินาที), Pin on critical, Pull-on-demand ผ่าน TLS
-6. **[Phase 4 – Attestation & Hardening](./plan/phase-4-attestation-hardening.md):** Ed25519 signed manifest, Challenge-response ผูกกับ TLS Exporter ตลอดการสอบ, Native OS keyboard hook, Launch guard & Electron Fuses
+6. **[Phase 4 – Attestation & Hardening](./plan/phase-4-attestation-hardening.md):** Ed25519 signed manifest, native attestation signer (Windows/Linux/macOS), Challenge-response ผูกกับ TLS Exporter ตลอดการสอบ, Native OS keyboard hook, Launch guard & Electron Fuses
 7. **[Phase 5 – Mode 2 & Mode 3](./plan/phase-5-modes-2-3.md):** In-App Docs (`WebContentsView` + URL whitelist), Controlled VS Code profile + Local HTTP CONNECT proxy + Integrity watchdog
 8. **[Phase 6 – `dynamic-form` Module (UI & `.ztform`)](./plan/phase-6-dynamic-form-builder.md):** ระบบสร้างฟอร์มสไตล์ Google Forms รองรับ Input ครบ 12 ประเภท, ตั้งเฉลยและคะแนนรายข้อ, และ Save/Load ฟอร์มเป็นไฟล์ `.ztform` เพื่อนำเข้าเครื่องแม่
 9. **[Phase 7 – `dynamic-form` Module (Backend, Grading & Export)](./plan/phase-7-form-backend-grading-export.md):** Backend ฝังในตัวแอปเครื่องแม่ (Electron Main + SQLite), ตรวจเฉลยอัตโนมัติทันที, แก้เฉลยตรวจใหม่ทั้งห้อง, และส่งออกคำตอบเป็น CSV/Excel หรือ `.ztresults`
@@ -281,3 +301,5 @@ lan-exam-system/
 12. **[Phase 10 – `code-ide` Module (Part 3: Backend & Code Grader)](./plan/phase-10-code-ide-backend.md):** Embedded Backend สำหรับรันตรวจ Hidden Test Cases, คิวตรวจขนาน, หน้าเปิดดูโค้ด/Diff/Code Playback, และส่งออกคะแนน CSV + โฟลเดอร์ซอร์สโค้ด
 13. **[Phase 11 – `code-ide` Module (Part 4: Testing & Verification)](./plan/phase-11-code-ide-testing.md):** ทดสอบการรันและตรวจคำตอบครบทั้ง 6 ภาษา, Stress test ตัดจบ Infinite loop, และทดสอบ End-to-End ของโมดูล IDE
 14. **[Phase 12 – Post-MVP Extensions](./plan/phase-12-post-mvp.md):** Cloud sync หลังสอบ, สมการคณิตศาสตร์ออฟไลน์ (KaTeX), และ External URL mode
+
+**สถานะล่าสุด (2026-10-31):** เพิ่ม native attestation signer (Phase 4 hardening) และ Host-as-Gateway default-deny egress สำหรับโหมด Closed แล้ว; ยังต้องทดสอบภาคสนามกับ DHCP client จริง, IPv6 RA, และ native build บน Linux/macOS

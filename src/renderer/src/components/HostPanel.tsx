@@ -29,6 +29,7 @@ import { useAppStore } from '../store/app-store'
 import { playCriticalBeep, shouldAlertToast, useTriageStore } from '../store/triage-store'
 import type { HostExamSummariesEvent } from '@shared/ipc-channels'
 import TriageDashboard from '../core-host/dashboard/TriageDashboard'
+import NetworkGatewayPanel from '../core-host/dashboard/NetworkGatewayPanel'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
@@ -464,7 +465,7 @@ export default function HostPanel(): React.JSX.Element {
 
   if (!room) {
     return (
-      <div className="mx-auto w-full max-w-md">
+      <div className="mx-auto w-full max-w-2xl space-y-6">
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
@@ -520,6 +521,7 @@ export default function HostPanel(): React.JSX.Element {
             </Button>
           </CardContent>
         </Card>
+        <NetworkGatewayPanel examMode={mode} />
       </div>
     )
   }
@@ -665,6 +667,9 @@ export default function HostPanel(): React.JSX.Element {
           </TooltipProvider>
         </CardContent>
       </Card>
+
+      {/* ---------- Host-as-Gateway (security item 2): DHCP/DNS/forwarding ---------- */}
+      <NetworkGatewayPanel examMode={room.mode} />
 
       {/* ---------- Exam Core (Phase 2): โหลดข้อสอบ + เริ่ม/จบ + ความคืบหน้า ---------- */}
       <Card>

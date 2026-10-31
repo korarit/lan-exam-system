@@ -19,3 +19,6 @@ artifacts/
 # Phase 4: native addon build output
 native/build/
 .vitest/
+
+# VULN-05: native attestation private seed header — ห้าม commit เด็ดขาด
+native/src/generated/

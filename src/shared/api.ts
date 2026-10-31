@@ -77,6 +77,13 @@ export interface ZtExamApi {
   setStudentFreeze(req: IpcInvokeMap['host:set-student-freeze']['req']): Promise<IpcInvokeMap['host:set-student-freeze']['res']>
   exportIncidentReport(): Promise<IpcInvokeMap['host:export-incident-report']['res']>
   exportAuditBundle(): Promise<IpcInvokeMap['host:export-audit-bundle']['res']>
+  /* ---------- Host-as-Gateway (security item 2) ---------- */
+  gatewayInterfaces(): Promise<IpcInvokeMap['gateway:interfaces']['res']>
+  gatewayStart(req: IpcInvokeMap['gateway:start']['req']): Promise<IpcInvokeMap['gateway:start']['res']>
+  gatewayStop(): Promise<IpcInvokeMap['gateway:stop']['res']>
+  gatewayStatus(): Promise<IpcInvokeMap['gateway:status']['res']>
+  gatewayLeases(): Promise<IpcInvokeMap['gateway:leases']['res']>
+  gatewayDnsLog(): Promise<IpcInvokeMap['gateway:dns-log']['res']>
   /* ---------- Attestation (Phase 4) ---------- */
   getAttestationConfig(): Promise<IpcInvokeMap['host:get-attestation-config']['res']>
   setAttestationEnforce(req: IpcInvokeMap['host:set-attestation-enforce']['req']): Promise<IpcInvokeMap['host:set-attestation-enforce']['res']>

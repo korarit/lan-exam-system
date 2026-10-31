@@ -10,6 +10,10 @@ import {
   signWithDevKeyIfAvailable,
   type AttestationSnapshot
 } from './manifest'
+import {
+  signAttestation as signNativeAttestation,
+  type NativeAttestationSigner
+} from './native-attestation'
 
 /* ============================================================
  * Phase 4.2 — AttestationResponder ฝั่งเครื่องนักเรียน
@@ -26,6 +30,10 @@ export interface AttestationClientOptions {
   getTlsExporter: () => Buffer | null
   /** สร้าง/โหลด manifest ของตัวเอง (cache ภายใน) */
   getSnapshot: () => AttestationSnapshot | null
+  /** production (!dev) บังคับ native signature — dev อนุญาต HMAC-only fallback */
+  isDev?: () => boolean
+  /** inject native signer ใน unit test (default = native-attestation module) */
+  nativeSigner?: NativeAttestationSigner
   now?: () => number
 }
 
@@ -65,6 +73,10 @@ export class AttestationResponder {
       // อ่านไฟล์ตัวเองไม่ได้เลย = ระบบป้องกันถูกบุกรุกหรือยังไม่ build — ยอมอยู่เงียบแล้วกำชับต่อ host
       return false
     }
+    const manifestHash = snapshot.manifestHash
+    // challenge แรก (ยังไม่แนบ manifest) ไม่มี expected hash → native เซ็นไม่ได้ ต้อง bootstrap ก่อน
+    const nativeRequired =
+      !(this.opts.isDev?.() ?? false) && challenge.expectedAsarSha256 !== undefined
 
     const digests: string[] = []
     for (const range of challenge.sampleRanges) {
@@ -77,18 +89,25 @@ export class AttestationResponder {
       digests.push(digest)
     }
 
+    const nativeSignature = this.signWithNative(challenge, manifestHash, digests)
+    if (!nativeSignature && nativeRequired) {
+      // production: native signer ต้องพร้อมและตรวจไฟล์จริงผ่านเท่านั้น — ไม่ส่ง response เลย
+      return false
+    }
+
     const includeManifest = challenge.requireManifest || !this.sentManifestIn.has('once')
     const payload: AttestationResponse = {
       challengeId: challenge.challengeId,
       responseHmac: computeAttestationHmac(exporter, {
         challengeId: challenge.challengeId,
         serverNonce: challenge.serverNonce,
-        manifestHash: snapshot.manifestHash,
+        manifestHash,
         sampleDigests: digests
       }).toString('base64'),
-      manifestHash: snapshot.manifestHash,
+      manifestHash,
       sampleCount: challenge.sampleRanges.length
     }
+    if (nativeSignature) payload.nativeSignature = nativeSignature
     if (includeManifest && snapshot.manifest) {
       let manifest = snapshot.manifest
       // โหมด dev ที่มีกุญแจในเครื่อง (env): ลองเซ็นจริงเพื่อซ้อม E2E ด้วยลายเซ็นที่ตรวจได้
@@ -108,5 +127,29 @@ export class AttestationResponder {
     this.respondedCount += 1
     this.opts.sendToHost(NetMsgType.attestationResponse, payload)
     return true
+  }
+
+  /** ให้ native ตรวจ sha256 ของไฟล์จริงแล้วเซ็น — dev ที่ไม่มี addon คืน null */
+  private signWithNative(
+    challenge: AttestationChallenge,
+    manifestHash: string,
+    sampleDigests: string[]
+  ): string | null {
+    const expectedAsarSha256 = challenge.expectedAsarSha256
+    if (!expectedAsarSha256) return null
+    const signer = this.opts.nativeSigner?.signAttestation ?? signNativeAttestation
+    try {
+      const signature = signer({
+        challengeId: challenge.challengeId,
+        serverNonce: challenge.serverNonce,
+        manifestHash,
+        sampleDigests,
+        expectedAsarSha256,
+        targetRelativePath: challenge.targetRelativePath ?? 'app.asar'
+      })
+      return signature && signature.length > 0 ? signature : null
+    } catch {
+      return null
+    }
   }
 }

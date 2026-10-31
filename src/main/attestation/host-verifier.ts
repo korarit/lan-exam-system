@@ -5,16 +5,20 @@ import {
   type AppManifestBody,
   type AttestationChallenge,
   type AttestationResponse,
+  type ManifestFileEntry,
   type SignedAppManifest
 } from '@shared/attestation-schema'
 import { NetMsgType } from '@shared/protocol-schema'
 import {
+  buildNativeAttestationPayload,
   expectedDigestForRange,
   sampleChallengeRanges,
   verifyAttestationHmac,
   verifySignedManifest
 } from './manifest-core'
 import { trustedKeyPemSet, revokedManifestIdSet } from './trusted-keys'
+import { nativeTrustedPublicKeyHex } from './native-trusted-keys'
+import { ed25519VerifyRawPublicKeyHex } from '../crypto/primitives'
 
 /* ============================================================
  * ประเภทที่ใช้ (แยกเป็น structural type เพื่อไม่พึ่งคลาส concrete — ทดสอบ unit ได้)
@@ -83,6 +87,8 @@ export interface AttestationHostOptions {
   minAppVersion?: () => string | null
   onVerified: (ok: AttestationSuccess, isNew: boolean) => void
   onFailed: (failure: AttestationFailure) => void
+  /** inject trusted native public key (raw 32-byte hex) ใน unit test */
+  nativePublicKeyHex?: () => string | null
   now?: () => number
   /** ฟังก์ชันสุ่มช่วงเวลา (inject ได้เพื่อทดสอบ) */
   randomInterval?: (min: number, max: number) => number
@@ -207,12 +213,16 @@ export class AttestationHostService {
     const entry = this.state.get(studentId)
     if (!tlsServer || !entry) return null
     const ranges = entry.manifestBody ? sampleChallengeRanges(entry.manifestBody.files, this.maxRanges) : []
+    const target = entry.manifestBody ? chooseNativeTarget(entry.manifestBody.files) : null
     const challenge: AttestationChallenge = {
       challengeId: randomUUID(),
       serverNonce: freshNonceBase64(),
       sampleRanges: ranges,
       deadlineMs: this.deadlineMs,
-      requireManifest: entry.manifestHash === null
+      requireManifest: entry.manifestHash === null,
+      ...(target
+        ? { expectedAsarSha256: target.sha256, targetRelativePath: target.relativePath }
+        : {})
     }
     entry.pending = challenge
     entry.pendingIssuedAt = this.now()
@@ -288,6 +298,30 @@ export class AttestationHostService {
       response.responseHmac
     )
     if (!hmacOk) return this.reject(studentId, 'response-hmac-mismatch')
+
+    // 4. VULN-05: production ต้องมีลายเซ็นจาก native ที่ hash ไฟล์จริงเอง (dev ผ่อนปรน)
+    //    challenge แรกที่ยังไม่รู้ manifest ไม่มี expected hash → bootstrap ด้วย HMAC/manifest ก่อน
+    const nativeRequired = !this.opts.isDev() && pending.expectedAsarSha256 !== undefined
+    const nativeKeyHex = this.opts.nativePublicKeyHex?.() ?? nativeTrustedPublicKeyHex()
+    if (!response.nativeSignature) {
+      if (nativeRequired) return this.reject(studentId, 'native-signature-missing')
+    } else if (!nativeKeyHex) {
+      if (nativeRequired) return this.reject(studentId, 'native-key-unavailable')
+    } else if (!pending.expectedAsarSha256) {
+      if (nativeRequired) return this.reject(studentId, 'missing-expected-asar-hash')
+    } else {
+      const nativePayload = buildNativeAttestationPayload({
+        challengeId: pending.challengeId,
+        serverNonce: pending.serverNonce,
+        manifestHash,
+        sampleDigests: expectedDigests,
+        expectedAsarSha256: pending.expectedAsarSha256
+      })
+      const nativeSignature = Buffer.from(response.nativeSignature, 'base64')
+      if (!ed25519VerifyRawPublicKeyHex(nativePayload, nativeSignature, nativeKeyHex)) {
+        return this.reject(studentId, 'native-signature-invalid')
+      }
+    }
 
     // ผ่านทั้งหมด → สุ่มเวลาถึงรอบถัดไป (45–120s)
     this.scheduleNextChallenge(studentId)
@@ -384,4 +418,16 @@ export class AttestationHostService {
 
 function freshNonceBase64(): string {
   return randomFillSync(Buffer.alloc(32)).toString('base64')
+}
+
+/** ไฟล์ที่ native จะ hash ทั้งไฟล์: app.asar ก่อน (prod) หรือไฟล์แรกของ manifest (dev) */
+function chooseNativeTarget(
+  files: Record<string, ManifestFileEntry>
+): { relativePath: string; sha256: string } | null {
+  const asar = files['app.asar']
+  if (asar) return { relativePath: 'app.asar', sha256: asar.sha256 }
+  const firstPath = Object.keys(files)[0]
+  if (!firstPath) return null
+  const firstEntry = files[firstPath]
+  return firstEntry ? { relativePath: firstPath, sha256: firstEntry.sha256 } : null
 }

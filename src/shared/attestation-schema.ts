@@ -78,7 +78,11 @@ export const AttestationChallengeSchema = z
     /** ต้องตอบกลับภายในเวลานี้ (หน่วย ms — วัดด้วยนาฬิกาเครื่องแม่) */
     deadlineMs: z.number().int().positive(),
     /** บังคับให้แนบ SignedAppManifest มาด้วย (ครั้งแรกที่เข้าห้อง) */
-    requireManifest: z.boolean()
+    requireManifest: z.boolean(),
+    /** sha256 ของไฟล์ที่ต้องให้ native ตรวจทั้งไฟล์ก่อนเซ็น (public, ยืนยันโดย manifest ที่เซ็นแล้ว) */
+    expectedAsarSha256: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
+    /** path สัมพัทธ์จาก resources root (เช่น app.asar) — default app.asar */
+    targetRelativePath: z.string().min(1).max(300).optional()
   })
   .strict()
 export type AttestationChallenge = z.infer<typeof AttestationChallengeSchema>
@@ -92,7 +96,11 @@ export const AttestationResponseSchema = z
     manifestHash: z.string().length(64).optional(),
     manifest: SignedAppManifestSchema.optional(),
     /** จำนวนช่วงที่อ่านได้จริง (host ใช้เทียบกับที่สุ่มถาม) */
-    sampleCount: z.number().int().nonnegative().optional()
+    sampleCount: z.number().int().nonnegative().optional(),
+    /** Ed25519 signature จาก native addon (base64) — ผูกกับไฟล์จริงที่ native hash เอง */
+    nativeSignature: z.string().min(1).max(200).optional(),
+    /** keyId ของ native key (optional, diagnostics) */
+    nativeKeyId: z.string().min(1).max(80).optional()
   })
   .strict()
 export type AttestationResponse = z.infer<typeof AttestationResponseSchema>

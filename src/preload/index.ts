@@ -82,6 +82,13 @@ const api: ZtExamApi = {
   exportIncidentReport: () => call('host:export-incident-report', undefined),
   exportAuditBundle: () => call('host:export-audit-bundle', undefined),
 
+  gatewayInterfaces: () => call('gateway:interfaces', undefined),
+  gatewayStart: (req) => call('gateway:start', req),
+  gatewayStop: () => call('gateway:stop', undefined),
+  gatewayStatus: () => call('gateway:status', undefined),
+  gatewayLeases: () => call('gateway:leases', undefined),
+  gatewayDnsLog: () => call('gateway:dns-log', undefined),
+
   getAttestationConfig: () => call('host:get-attestation-config', undefined),
   setAttestationEnforce: (req) => call('host:set-attestation-enforce', req),
 

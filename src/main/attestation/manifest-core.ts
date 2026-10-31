@@ -156,6 +156,25 @@ function buildAttestationHmacPayload(input: AttestationDigestInput): string {
   ].join('|')
 }
 
+export interface NativeAttestationPayloadInput {
+  challengeId: string
+  serverNonce: string
+  manifestHash: string
+  sampleDigests: string[]
+  expectedAsarSha256: string
+}
+
+/** canonical payload ที่ native addon เซ็น (ต้องตรงกับ attestation_native.cc ทุกไบต์) */
+export function buildNativeAttestationPayload(input: NativeAttestationPayloadInput): string {
+  return [
+    input.challengeId,
+    input.serverNonce,
+    input.manifestHash,
+    input.sampleDigests.join(','),
+    input.expectedAsarSha256
+  ].join('|')
+}
+
 /** ยืนยันลายเซ็น manifest กับชุด public key ที่เชื่อถือ (รวม revoke list) */
 export function verifySignedManifest(
   manifest: SignedAppManifest,

@@ -20,6 +20,9 @@ bool os_guardInstallLowLevelHook();
 bool os_guardUninstallLowLevelHook();
 #endif
 
+// native/src/attestation_native.cc — native file hash + Ed25519 signer
+void RegisterAttestationFunctions(Napi::Env env, Napi::Object exports);
+
 namespace {
 
 Napi::Value Start(const Napi::CallbackInfo& info) {
@@ -96,6 +99,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("stop", Napi::Function::New(env, Stop));
   exports.Set("isRunning", Napi::Function::New(env, IsRunning));
   exports.Set("lastBlocked", Napi::Function::New(env, GetLastBlocked));
+  RegisterAttestationFunctions(env, exports);
   return exports;
 }
 

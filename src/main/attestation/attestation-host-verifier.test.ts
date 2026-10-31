@@ -6,19 +6,22 @@ import {
   ATTESTATION_BLOCK_SIZE,
   computeManifestHash,
   deriveKeyIdFromPublicKeyPem,
+  type AttestationChallenge,
   type AttestationSampleRange,
   type SignedAppManifest
 } from '@shared/attestation-schema'
 import {
   buildManifestBodyFromBuffers,
+  buildNativeAttestationPayload,
   computeAttestationHmac,
   signManifest
 } from './manifest-core'
 import { shaOf } from './manifest-core.test-helpers'
 import { AttestationHostService } from './host-verifier'
 import { AttestationResponder } from './client-responder'
-import { generateEd25519KeyPair } from '../crypto/primitives'
+import { ed25519Sign, generateEd25519KeyPair } from '../crypto/primitives'
 import type { AttestationSnapshot } from './manifest'
+import type { NativeAttestationSigner } from './native-attestation'
 
 /* ============================================================
  * Phase 4.2 — ทดสอบ AttestationHostService (เครื่องแม่) + AttestationResponder (นักเรียน)
@@ -90,11 +93,33 @@ function honestDigests(snapshot: AttestationSnapshot, ranges: AttestationSampleR
   return ranges.map((range) => shaOf(bytes.subarray(range.offset, range.offset + range.length)))
 }
 
+type Ed25519KeyPair = ReturnType<typeof generateEd25519KeyPair>
+
+function rawPublicKeyHex(pair: Ed25519KeyPair): string {
+  const jwk = pair.publicKey.export({ format: 'jwk' }) as { x?: string }
+  if (!jwk.x) throw new Error('missing jwk.x')
+  return Buffer.from(jwk.x, 'base64url').toString('hex')
+}
+
+function makeNativeSigner(
+  privateKey: Ed25519KeyPair['privateKey'],
+  tamper?: (input: Parameters<typeof buildNativeAttestationPayload>[0]) => Parameters<typeof buildNativeAttestationPayload>[0]
+): NativeAttestationSigner {
+  return {
+    signAttestation: (request) => {
+      const payload = buildNativeAttestationPayload(tamper ? tamper(request) : request)
+      return ed25519Sign(payload, privateKey).toString('base64')
+    }
+  }
+}
+
 describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
   let rooms: ReturnType<typeof fakeRoom>
   let exporter: Buffer
   let snapshotCtx: SnapshotFixture
   let keys: { publicPem: string; privatePem: string; keyId: string }
+  let nativeKeys: Ed25519KeyPair
+  let nativeKeyHex: string
   const failures: Array<{ studentId: string; reason: string }> = []
   const successes: string[] = []
 
@@ -109,6 +134,8 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
     keys.keyId = deriveKeyIdFromPublicKeyPem(keys.publicPem)
     keyHolder.keys = { [keys.keyId]: keys.publicPem }
     keyHolder.revoked = []
+    nativeKeys = generateEd25519KeyPair()
+    nativeKeyHex = rawPublicKeyHex(nativeKeys)
     exporter = Buffer.alloc(32, 0x77)
     rooms = fakeRoom()
     rooms.server.exporterFor.set('s1', exporter)
@@ -128,6 +155,7 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
       isDev: () => isDev,
       isSignatureEnforced: () => enforced,
       ...(minVersion !== undefined ? { minAppVersion: () => minVersion } : {}),
+      nativePublicKeyHex: () => nativeKeyHex,
       onVerified: (ok) => successes.push(ok.studentId),
       onFailed: (failure) => failures.push({ studentId: failure.studentId, reason: failure.reason }),
       randomInterval: () => 45_000
@@ -137,14 +165,17 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
   /** เดินเครื่องตามจริง: responder ตอบข้อความเข้าท่อ (สมมุติ sendToHost) แล้ว host รับ */
   function wireResponder(
     host: AttestationHostService,
-    snapshot: AttestationSnapshot = snapshotCtx.snapshot
+    snapshot: AttestationSnapshot = snapshotCtx.snapshot,
+    options: { isDev?: boolean; nativeSigner?: NativeAttestationSigner } = {}
   ): AttestationResponder {
     return new AttestationResponder({
       sendToHost: (_type, payload) => {
         host.handleResponse('s1', payload)
       },
       getTlsExporter: () => exporter,
-      getSnapshot: () => snapshot
+      getSnapshot: () => snapshot,
+      isDev: () => options.isDev ?? true,
+      nativeSigner: options.nativeSigner ?? { signAttestation: () => null }
     })
   }
 
@@ -329,5 +360,128 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
     })
     expect(outcome.ok).toBe(false)
     expect(outcome.reason).toBe('manifest-hash-changed')
+  })
+
+  it('production: bootstrap manifest ก่อน แล้ว challenge ถัดไปมี expectedAsarSha256 + native signature ถูกต้อง → ผ่าน', () => {
+    const host = buildHost(false, true)
+    const responder = wireResponder(host, snapshotCtx.snapshot, {
+      isDev: false,
+      nativeSigner: makeNativeSigner(nativeKeys.privateKey)
+    })
+    host.startExam(['s1'])
+    vi.advanceTimersByTime(1_500)
+    // challenge แรก: ยังไม่รู้ manifest จึง bootstrap ด้วย HMAC + manifest ที่เซ็นแล้ว
+    responder.handleChallengeMessage(rooms.server.sent[0]!.payload)
+    expect(failures).toHaveLength(0)
+    expect(successes).toEqual(['s1'])
+    // challenge ถัดไป: host รู้ manifest แล้ว → บังคับ native signature
+    vi.advanceTimersByTime(45_000)
+    const challenge = rooms.server.sent[1]!.payload as AttestationChallenge
+    expect(challenge.expectedAsarSha256).toBe(snapshotCtx.snapshot.body!.files['app.bin']!.sha256)
+    expect(challenge.targetRelativePath).toBe('app.bin')
+    responder.handleChallengeMessage(challenge)
+    expect(failures).toHaveLength(0)
+    expect(successes).toEqual(['s1', 's1'])
+  })
+
+  it('production: native signature ถูกแก้ payload → ปฏิเสธ native-signature-invalid', () => {
+    const host = buildHost(false, true)
+    const responder = wireResponder(host, snapshotCtx.snapshot, {
+      isDev: false,
+      nativeSigner: makeNativeSigner(nativeKeys.privateKey, (input) => ({
+        ...input,
+        manifestHash: 'b'.repeat(64)
+      }))
+    })
+    host.startExam(['s1'])
+    vi.advanceTimersByTime(1_500)
+    responder.handleChallengeMessage(rooms.server.sent[0]!.payload)
+    vi.advanceTimersByTime(45_000)
+    responder.handleChallengeMessage(rooms.server.sent[1]!.payload)
+    expect(successes).toEqual(['s1'])
+    expect(failures.map((f) => f.reason)).toEqual(['native-signature-invalid'])
+  })
+
+  it('production: ไม่มี nativeSignature ใน challenge ที่มี expected hash → ปฏิเสธ native-signature-missing', () => {
+    const host = buildHost(false, true)
+    host.startExam(['s1'])
+    vi.advanceTimersByTime(1_500)
+    const bootstrap = rooms.server.sent[0]!.payload as AttestationChallenge
+    // bootstrap: ส่ง manifest + HMAC (ยังไม่มี expected hash จึงยังไม่บังคับ native)
+    const bootstrapHmac = computeAttestationHmac(exporter, {
+      challengeId: bootstrap.challengeId,
+      serverNonce: bootstrap.serverNonce,
+      manifestHash: snapshotCtx.snapshot.manifestHash!,
+      sampleDigests: []
+    }).toString('base64')
+    const first = host.handleResponse('s1', {
+      challengeId: bootstrap.challengeId,
+      responseHmac: bootstrapHmac,
+      manifestHash: snapshotCtx.snapshot.manifestHash,
+      manifest: snapshotCtx.manifest,
+      sampleCount: bootstrap.sampleRanges.length
+    })
+    expect(first.ok).toBe(true)
+    vi.advanceTimersByTime(45_000)
+    const challenge = rooms.server.sent[1]!.payload as AttestationChallenge
+    const responseHmac = computeAttestationHmac(exporter, {
+      challengeId: challenge.challengeId,
+      serverNonce: challenge.serverNonce,
+      manifestHash: snapshotCtx.snapshot.manifestHash!,
+      sampleDigests: honestDigests(snapshotCtx.snapshot, challenge.sampleRanges)
+    }).toString('base64')
+    const outcome = host.handleResponse('s1', {
+      challengeId: challenge.challengeId,
+      responseHmac,
+      manifestHash: snapshotCtx.snapshot.manifestHash,
+      sampleCount: challenge.sampleRanges.length
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.reason).toBe('native-signature-missing')
+  })
+
+  it('production: native signer ไม่พร้อม → responder ไม่ส่ง response (fail closed)', () => {
+    const sendToHost = vi.fn()
+    const responder = new AttestationResponder({
+      sendToHost,
+      getTlsExporter: () => exporter,
+      getSnapshot: () => snapshotCtx.snapshot,
+      isDev: () => false,
+      nativeSigner: { signAttestation: () => null }
+    })
+    const challenge: AttestationChallenge = {
+      challengeId: 'native-missing',
+      serverNonce: 'n'.repeat(43),
+      sampleRanges: [],
+      deadlineMs: 2_500,
+      requireManifest: true,
+      expectedAsarSha256: snapshotCtx.snapshot.body!.files['app.bin']!.sha256,
+      targetRelativePath: 'app.bin'
+    }
+    expect(responder.respond(challenge)).toBe(false)
+    expect(sendToHost).not.toHaveBeenCalled()
+  })
+
+  it('dev: native signer พร้อม → แนบ nativeSignature ใน response', () => {
+    const sendToHost = vi.fn()
+    const responder = new AttestationResponder({
+      sendToHost,
+      getTlsExporter: () => exporter,
+      getSnapshot: () => snapshotCtx.snapshot,
+      isDev: () => true,
+      nativeSigner: makeNativeSigner(nativeKeys.privateKey)
+    })
+    const challenge: AttestationChallenge = {
+      challengeId: 'native-present',
+      serverNonce: 'n'.repeat(43),
+      sampleRanges: [],
+      deadlineMs: 2_500,
+      requireManifest: false,
+      expectedAsarSha256: snapshotCtx.snapshot.body!.files['app.bin']!.sha256,
+      targetRelativePath: 'app.bin'
+    }
+    expect(responder.respond(challenge)).toBe(true)
+    const payload = sendToHost.mock.calls[0]?.[1] as { nativeSignature?: string }
+    expect(payload.nativeSignature).toBeTruthy()
   })
 })

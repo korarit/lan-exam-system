@@ -23,6 +23,8 @@ import { registerDynamicFormHandlers } from './ipc/dynamic-form-handlers'
 import { registerFormResponseHandlers } from './ipc/form-response-handlers'
 import { registerCodeIdeHandlers } from './ipc/code-ide-handlers'
 import { registerCodeIdeHostHandlers } from './ipc/code-ide-host-handlers'
+import { registerGatewayHandlers } from './ipc/gateway-handlers'
+import { GatewayService } from './network/gateway/gateway-service'
 import { ModuleTransportHost, registerModuleTransportStudentHandlers } from './network/module-transport'
 import type { CodeIdeHostService } from '@modules/code-ide/main/code-host-service'
 import { CodeIdeHostService as CodeIdeHostServiceImpl } from '@modules/code-ide/main/code-host-service'
@@ -146,6 +148,7 @@ let sessionManager: CoreSessionManager | null = null
 let domainAllowlist: DomainAllowlistService | null = null
 let docPreview: DocPreviewController | null = null
 let triageService: TriageService | null = null
+let gatewayService: GatewayService | null = null
 let proctorViewService: ProctorViewService | null = null
 let screenStreamController: ScreenStreamController | null = null
 let discovery = new RoomDiscoveryListener()
@@ -355,6 +358,47 @@ function ensureTriageService(): TriageService {
     sendHostEvent: sendEventToWindow
   })
   return triageService
+}
+
+/**
+ * Security item 2: host-as-gateway (DHCP + DNS sinkhole + posture)
+ * - ไม่ auto-start — ครูต้องกดเปิดเองในหน้าตั้งค่าห้อง
+ * - DNS ที่ถูกบล็อกไหลเข้า triage/audit chain; ทุก query ยัง push ไปหน้า host
+ */
+function ensureGatewayService(): GatewayService {
+  gatewayService ??= new GatewayService({
+    getRole: () => state.role,
+    onStatus: (status) => sendEventToWindow('gateway:status-changed', status),
+    onDnsQuery: (entry) => {
+      sendEventToWindow('gateway:dns-query', entry)
+      if (entry.allowed) return
+      try {
+        ensureTriageService().recordHostEvent(
+          null,
+          'GATEWAY_DNS_BLOCKED',
+          'warning',
+          `DNS ถูกบล็อกที่ gateway: ${entry.domain}`,
+          {
+            domain: entry.domain,
+            clientIp: entry.clientIp,
+            qtype: String(entry.qtype),
+            action: entry.action
+          },
+          5
+        )
+      } catch {
+        // ยังไม่มีห้อง/chain — in-memory log + renderer event ยังอยู่
+      }
+    },
+    onAudit: (eventCode, summaryText, evidence) => {
+      try {
+        ensureTriageService().recordHostEvent('HOST', eventCode, 'normal', summaryText, evidence, 0)
+      } catch {
+        console.info(`[gateway-audit-fallback] ${eventCode}: ${summaryText}`)
+      }
+    }
+  })
+  return gatewayService
 }
 
 /** Phase 2 (ท่อกลาง MODULE_PACKET_ENVELOPE — สเปคมีแต่เพิ่งมีโค้ด): รับส่ง action/autosave ของ modules ผ่าน LAN */
@@ -945,7 +989,8 @@ function ensureAttestationResponder(resetOnly: boolean): AttestationResponder {
   attestationResponder ??= new AttestationResponder({
     sendToHost: (type, payload) => ensureStudentClient().sendExamMessage(type, payload),
     getTlsExporter: () => studentClient?.exporter ?? null,
-    getSnapshot: () => ensureLocalManifestSnapshot(IS_DEV_BUILD)
+    getSnapshot: () => ensureLocalManifestSnapshot(IS_DEV_BUILD),
+    isDev: () => IS_DEV_BUILD
   })
   void resetOnly
   return attestationResponder
@@ -1206,6 +1251,10 @@ void app.whenReady().then(() => {
     getSessionManager: ensureSessionManager,
     getTriageService: ensureTriageService
   })
+  // Security item 2: host-as-gateway (เฉพาะ role=host; ไม่ auto-start)
+  registerGatewayHandlers(router, state, {
+    getGateway: ensureGatewayService
+  })
   registerScreenHandlers(router, state, {
     getStreamController: () => (state.role === 'student' ? ensureScreenStreamController() : null),
     getProctorViewService: () => (state.role === 'host' ? ensureProctorViewService() : null)
@@ -1329,6 +1378,9 @@ app.on('before-quit', () => {
   vsCodeController?.stop()
   connectProxy?.close()
   closeFloatingHud()
+  // Security item 2: ปิด DHCP/DNS gateway ทุกครั้งก่อนออก (ไม่ทิ้งพอร์ต 67/53 ค้าง)
+  gatewayService?.stop()
+  gatewayService = null
   void roomManager?.closeRoom()
   discovery.stop()
 })

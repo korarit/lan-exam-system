@@ -3,6 +3,7 @@ import {
   createDecipheriv,
   createHash,
   createHmac,
+  createPublicKey,
   randomBytes,
   sign as cryptoSign,
   verify as cryptoVerify,
@@ -118,6 +119,28 @@ export function ed25519Verify(
 ): boolean {
   try {
     return cryptoVerify(null, data, publicKey, signature)
+  } catch {
+    return false
+  }
+}
+
+/** ตรวจ Ed25519 ด้วย raw public key 32 bytes (hex) — ใช้กับกุญแจที่ฝังใน native addon */
+export function ed25519VerifyRawPublicKeyHex(
+  data: Buffer | string,
+  signature: Buffer,
+  publicKeyHex: string
+): boolean {
+  if (!/^[0-9a-fA-F]{64}$/.test(publicKeyHex) || signature.length !== 64) return false
+  try {
+    const key = createPublicKey({
+      key: {
+        kty: 'OKP',
+        crv: 'Ed25519',
+        x: Buffer.from(publicKeyHex, 'hex').toString('base64url')
+      },
+      format: 'jwk'
+    })
+    return cryptoVerify(null, data, key, signature)
   } catch {
     return false
   }

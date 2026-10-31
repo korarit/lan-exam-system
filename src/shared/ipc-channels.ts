@@ -52,6 +52,19 @@ import {
   type StudentEvidenceResponse,
   type ResolveTriageResponse
 } from './triage'
+import {
+  GatewayStartRequestSchema,
+  GatewayStatusSchema,
+  GatewayInterfacesResponseSchema,
+  GatewayLeasesResponseSchema,
+  GatewayDnsLogResponseSchema,
+  GatewayDnsLogEntrySchema,
+  type GatewayStartRequest,
+  type GatewayStatus,
+  type GatewayInterfaceInfo,
+  type GatewayLease,
+  type GatewayDnsLogEntry
+} from './gateway'
 export type {
   TriageLevel,
   AlertResolution,
@@ -976,6 +989,13 @@ export interface IpcInvokeMap {
   'host:set-student-freeze': { req: SetStudentFreezeRequest; res: OkResponse }
   'host:export-incident-report': { req: void; res: ExportFileResponse }
   'host:export-audit-bundle': { req: void; res: ExportFileResponse }
+  /* ---------- Host-as-Gateway (security item 2) ---------- */
+  'gateway:interfaces': { req: void; res: { interfaces: GatewayInterfaceInfo[] } }
+  'gateway:start': { req: GatewayStartRequest; res: GatewayStatus }
+  'gateway:stop': { req: void; res: GatewayStatus }
+  'gateway:status': { req: void; res: GatewayStatus }
+  'gateway:leases': { req: void; res: { leases: GatewayLease[] } }
+  'gateway:dns-log': { req: void; res: { entries: GatewayDnsLogEntry[] } }
   /* ---------- Attestation (Phase 4) ---------- */
   'host:get-attestation-config': { req: void; res: AttestationConfigResponse }
   'host:set-attestation-enforce': { req: { enforced: boolean }; res: OkResponse }
@@ -1050,6 +1070,9 @@ export interface IpcEventMap {
   'host:guard-events': HostGuardEventsEvent
   'host:recorded-domains-updated': RecordedDomainsUpdatedEvent
   'host:triage-updated': TriageOverviewEvent
+  /* ---------- Host-as-Gateway (security item 2) ---------- */
+  'gateway:status-changed': GatewayStatus
+  'gateway:dns-query': GatewayDnsLogEntry
   /* ---------- Mode 2 / Mode 3 (Phase 5) ---------- */
   'exam:docs-state': DocsPanelState
   'exam:proctor-warning': { message: string; sentAtMs: number }
@@ -2020,6 +2043,31 @@ export const IpcInvokeSchemas: {
         reason: z.string().max(200).optional()
       })
       .strict()
+  },
+  /* ---------- Host-as-Gateway (security item 2) ---------- */
+  'gateway:interfaces': {
+    request: z.void(),
+    response: GatewayInterfacesResponseSchema
+  },
+  'gateway:start': {
+    request: GatewayStartRequestSchema,
+    response: GatewayStatusSchema
+  },
+  'gateway:stop': {
+    request: z.void(),
+    response: GatewayStatusSchema
+  },
+  'gateway:status': {
+    request: z.void(),
+    response: GatewayStatusSchema
+  },
+  'gateway:leases': {
+    request: z.void(),
+    response: GatewayLeasesResponseSchema
+  },
+  'gateway:dns-log': {
+    request: z.void(),
+    response: GatewayDnsLogResponseSchema
   }
 }
 
@@ -2166,5 +2214,8 @@ export const IpcEventSchemas: {
       startTimeMs: z.number().int().nonnegative(),
       endTimeMs: z.number().int().nonnegative()
     })
-    .strict()
+    .strict(),
+  /* ---------- Host-as-Gateway (security item 2) ---------- */
+  'gateway:status-changed': GatewayStatusSchema,
+  'gateway:dns-query': GatewayDnsLogEntrySchema
 }
