@@ -30,9 +30,30 @@ export const DANGEROUS_CLI_SWITCHES: readonly string[] = [
   '--disable-extensions-except',
   '--disable-web-security',
   '--allow-running-insecure-content',
+  '--allow-file-access-from-files',
   '--host-resolver-rules',
-  '--proxy-server'
+  '--proxy-server',
+  '--proxy-bypass-list',
+  /* VULN-44: switch ที่ลดชั้น sandbox/isolation หรือแก้ runtime โดยไม่ถูก denylist เดิม */
+  '--no-sandbox',
+  '--disable-gpu-sandbox',
+  '--disable-site-isolation-trials',
+  '--js-flags',
+  '--user-data-dir',
+  '--unsafely-treat-insecure-origin-as-secure'
 ]
+
+/**
+ * feature flags ที่ Chromium/Electron อาจตั้งเองภายใน — ตรวจเฉพาะ argv ที่ผู้ใช้ส่งมา
+ * (ไม่ใช้ app.commandLine.hasSwitch เพื่อกัน false positive ตอน start ปกติ)
+ */
+export const DANGEROUS_ARGV_ONLY_SWITCHES: readonly string[] = [
+  '--disable-features',
+  '--enable-features',
+  '--enable-blink-features'
+]
+
+const ALL_ARGV_SWITCHES = [...DANGEROUS_CLI_SWITCHES, ...DANGEROUS_ARGV_ONLY_SWITCHES]
 
 /** เธฃเธฒเธขเธเธฒเธฃ environment variables เธญเธฑเธเธ•เธฃเธฒเธข */
 export const DANGEROUS_ENV_KEYS: readonly string[] = [
@@ -52,7 +73,7 @@ function scanArgList(list: readonly string[], kind: LaunchFinding['kind']): Laun
     const eq = raw.indexOf('=')
     const bare = eq === -1 ? raw : raw.slice(0, eq)
     const value = eq === -1 ? null : raw.slice(eq + 1)
-    const matched = DANGEROUS_CLI_SWITCHES.find((candidate) => candidate === bare)
+    const matched = ALL_ARGV_SWITCHES.find((candidate) => candidate === bare)
     if (matched) findings.push({ kind, name: matched, value })
   }
   return findings

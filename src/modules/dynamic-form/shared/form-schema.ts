@@ -380,4 +380,7 @@ export interface StudentFormView {
   instructions: string
   settings: FormSettings
   items: StudentFormViewItem[]
+  /** VULN-61: progressive disclosure — จำนวนข้อทั้งหมด vs ที่เปิดให้เห็นแล้ว */
+  totalQuestions?: number
+  revealedQuestions?: number
 }

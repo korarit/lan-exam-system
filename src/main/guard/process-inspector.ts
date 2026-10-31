@@ -5,6 +5,7 @@ import { DetectionEventCatalog } from '@shared/policy-schema'
 import { createPlatformMetadataReader, BinaryMetadataCache, readPeVersionInfoBatch, hashFileSha256, statFile, type BinaryMetadata } from './binary-metadata'
 import { parseJsonLines } from './system-probes'
 import { startPortableProcessTrace } from './ephemeral-process-watch'
+import { powershellExecutable } from './trusted-binary'
 
 /* ============================================================
  * ProcessInspector — ตรวจโปรเซสเชิงลึก (Phase 3a.2)
@@ -69,6 +70,45 @@ function normalizePathForMatch(filePath: string): string {
   return filePath.replace(/\\/g, '/').toLowerCase()
 }
 
+export interface AllowlistMatch {
+  matched: boolean
+  /** true = ตรงจาก path/hash (หลักฐานแน่นหนา), false = ตรงแค่ชื่อไฟล์ */
+  strong: boolean
+}
+
+/**
+ * ตรวจ allowlist พร้อมระดับความน่าเชื่อถือ (pure)
+ * - exeNames อย่างเดียว = weak (VULN-53: interpreter ที่ชื่อซ้ำจะหลุดง่าย)
+ * - pathPrefixes / sha256Hashes = strong
+ */
+export function matchProcessAllowlist(
+  snapshot: Pick<ProcessSnapshot, 'exeName' | 'exePath'>,
+  metadata: BinaryMetadata | null,
+  allowlist: readonly ProcessAllowlistEntry[] | undefined
+): AllowlistMatch {
+  if (!allowlist || allowlist.length === 0) return { matched: false, strong: false }
+  const exe = normalizeExeName(snapshot.exeName)
+  const path = normalizePathForMatch(snapshot.exePath)
+  const hash = (metadata?.sha256 ?? '').toLowerCase()
+  let nameMatch = false
+  for (const entry of allowlist) {
+    if (entry.exeNames?.some((name) => name.toLowerCase() === exe)) nameMatch = true
+    if (
+      path !== '' &&
+      entry.pathPrefixes?.some((prefix) => {
+        const p = normalizePathForMatch(prefix).replace(/\/+$/, '')
+        return p !== '' && (path === p || path.startsWith(`${p}/`))
+      })
+    ) {
+      return { matched: true, strong: true }
+    }
+    if (hash !== '' && entry.sha256Hashes?.some((h) => h.toLowerCase() === hash)) {
+      return { matched: true, strong: true }
+    }
+  }
+  return { matched: nameMatch, strong: false }
+}
+
 /**
  * โปรเซสนี้อยู่ใน allowlist ที่ครูอนุมัติหรือไม่ (pure)
  * - exeNames: เทียบชื่อไฟล์ (ตัวพิมพ์ไม่สำคัญ)
@@ -80,25 +120,20 @@ export function isAllowlistedProcess(
   metadata: BinaryMetadata | null,
   allowlist: readonly ProcessAllowlistEntry[] | undefined
 ): boolean {
-  if (!allowlist || allowlist.length === 0) return false
-  const exe = normalizeExeName(snapshot.exeName)
-  const path = normalizePathForMatch(snapshot.exePath)
-  const hash = (metadata?.sha256 ?? '').toLowerCase()
-  for (const entry of allowlist) {
-    if (entry.exeNames?.some((name) => name.toLowerCase() === exe)) return true
-    if (
-      path !== '' &&
-      entry.pathPrefixes?.some((prefix) => {
-        const p = normalizePathForMatch(prefix).replace(/\/+$/, '')
-        return p !== '' && (path === p || path.startsWith(`${p}/`))
-      })
-    ) {
-      return true
-    }
-    if (hash !== '' && entry.sha256Hashes?.some((h) => h.toLowerCase() === hash)) return true
-  }
-  return false
+  return matchProcessAllowlist(snapshot, metadata, allowlist).matched
 }
+
+/** interpreter/script host ที่ชื่อไฟล์ซ้ำได้ง่าย — ต้องไม่ให้ชื่ออย่างเดียวปลดการตรวจ */
+export const SHARED_INTERPRETER_PATTERN =
+  /^(python|pythonw|python3(?:\.\d+)?|node|nodejs|java|javaw|php(?:\.exe)?|php\d+|ruby|perl|pwsh|powershell|cmd|bash|sh|zsh)(?:\.exe)?$/i
+
+export function isSharedInterpreter(exeName: string): boolean {
+  return SHARED_INTERPRETER_PATTERN.test(exeName.trim())
+}
+
+/** threshold ที่ต่ำลงสำหรับ interpreter (VULN-54) */
+export const INTERPRETER_SPIKE_MEM_BYTES = 400 * 1024 * 1024
+export const INTERPRETER_SPIKE_CPU_PERCENT = 25
 
 function textMatches(haystack: string | undefined, needles: string[] | undefined): boolean {  if (!haystack || !needles || needles.length === 0) return false
   const lower = haystack.toLowerCase()
@@ -253,7 +288,7 @@ function startWindowsProcessTrace(
     let proc: ChildProcess
     try {
       proc = spawn(
-        'powershell.exe',
+        powershellExecutable(),
         ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
         { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
       )
@@ -449,10 +484,15 @@ export class ProcessInspector {
         const sha = await this.verifyFileHash(snapshot.exePath)
         if (sha) metadata.sha256 = sha
       }
-      const allowlisted =
-        !authorized && isAllowlistedProcess(snapshot, metadata, policy.processAllowlist)
+      const allowMatch = authorized
+        ? { matched: false, strong: false }
+        : matchProcessAllowlist(snapshot, metadata, policy.processAllowlist)
+      const allowlisted = allowMatch.matched
+      const interpreter = isSharedInterpreter(snapshot.exeName)
+      // VULN-53: allowlist ที่ตรงแค่ชื่อไฟล์ต้องไม่ปลดการตรวจ interpreter
+      const rulesExempt = authorized || (allowlisted && !(interpreter && !allowMatch.strong))
       const ports = portByPid.get(snapshot.pid)
-      const matches = authorized || allowlisted
+      const matches = rulesExempt
         ? []
         : matchProcessRules(
             snapshot,
@@ -484,11 +524,16 @@ export class ProcessInspector {
         }
       }
       // Local AI spike (Mode closed เท่านั้น)
+      // VULN-53/54: interpreter ใช้ threshold ต่ำลง และไม่ถูกยกเว้นเพราะ allowlist ชื่ออย่างเดียว
+      const interpreterLimits = interpreter && !authorized
+      const spikeMemLimit = interpreterLimits ? INTERPRETER_SPIKE_MEM_BYTES : this.spikeMemBytes
+      const spikeCpuLimit = interpreterLimits ? INTERPRETER_SPIKE_CPU_PERCENT : this.spikeCpuPercent
+      const spikeExempt = allowlisted && !interpreter
       if (
-        !allowlisted &&
+        !spikeExempt &&
         policy.examMode === 'closed' &&
-        snapshot.memBytes > this.spikeMemBytes &&
-        snapshot.cpuPercent > this.spikeCpuPercent
+        snapshot.memBytes > spikeMemLimit &&
+        snapshot.cpuPercent > spikeCpuLimit
       ) {
         const signature = `spike:${snapshot.exeName}`
         if (this.shouldReport(signature, 20_000)) {
@@ -544,7 +589,8 @@ export class ProcessInspector {
     if (!policy) return
     if (p.pid === process.pid) return
     if (this.opts.isAuthorizedPid?.(p.pid) === true) return
-    if (isAllowlistedProcess({ exeName: p.name, exePath: '' }, null, policy.processAllowlist)) {
+    const allow = matchProcessAllowlist({ exeName: p.name, exePath: '' }, null, policy.processAllowlist)
+    if (allow.matched && !isSharedInterpreter(p.name)) {
       return
     }
     this.noteEphemeralBurst(p)

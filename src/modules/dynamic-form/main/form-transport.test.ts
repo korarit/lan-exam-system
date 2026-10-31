@@ -56,9 +56,27 @@ function makeService(db: HostDatabase): FormHostService {
   return new FormHostService(db, keyFn, vaultRoot)
 }
 
-function loadForm(service: FormHostService): void {
-  const container = buildZtformContainer({ form: FORM, assets: {}, nowMs: 1_700_000_000_000, initialFormId: FORM.formId })
+function loadForm(service: FormHostService, form: ZtformContainer['form'] = FORM): void {
+  const container = buildZtformContainer({ form, assets: {}, nowMs: 1_700_000_000_000, initialFormId: form.formId })
   service.setRoomForm(ROOM, 'ห้อง LAN', container)
+}
+
+const TWO_ITEM_FORM: ZtformContainer['form'] = {
+  ...FORM,
+  formId: '5f60a5a5-6a2b-4a5e-9f8a-000000000002',
+  items: [
+    FORM.items[0]!,
+    {
+      inputType: 'mcq_single',
+      itemId: 'mcq2',
+      prompt: '3+3=?',
+      points: 5,
+      shuffleChoices: false,
+      choices: [{ choiceId: 'c6', text: '6' }],
+      validation: { required: true },
+      answerKey: { gradingType: 'exact_choice', correctChoiceId: 'c6' }
+    }
+  ]
 }
 
 describe('F-1 — FormHostService.ingestViaTransport', () => {
@@ -139,6 +157,53 @@ describe('F-1 — FormHostService.ingestViaTransport', () => {
       expect((item as Record<string, unknown>).points).toBeUndefined()
       expect((item as Record<string, unknown>).parameters).toBeUndefined()
     }
+  })
+
+  it('VULN-61: เปิดข้อทีละข้อ และ push ข้อถัดไปหลังส่งสำเร็จ', () => {
+    const db = makeDb()
+    seedRunningRoom(db)
+    const service = makeService(db)
+    loadForm(service, TWO_ITEM_FORM)
+
+    const firstView = service.studentViewFor(ROOM, 's1')
+    expect(firstView?.totalQuestions).toBe(2)
+    expect(firstView?.items.filter((item) => 'inputType' in item)).toHaveLength(1)
+    const first = firstView!.items.find((item) => 'inputType' in item) as {
+      itemId: string
+      inputType: string
+    }
+    const choiceId = first.itemId === 'mcq1' ? 'c4' : 'c6'
+    const otherId = first.itemId === 'mcq1' ? 'mcq2' : 'mcq1'
+
+    // ข้อที่ยังไม่ถูกเปิด → ปฏิเสธ (client เดา itemId ไม่ได้)
+    const rejected = service.ingestViaTransport({
+      roomId: ROOM,
+      studentId: 's1',
+      kind: 'action',
+      payloadJson: JSON.stringify({
+        type: 'dynamic-form.submit-item',
+        submission: { itemId: otherId, value: { kind: 'choice', choiceId }, timeSpentMs: 1, clientSubmittedAtMs: Date.now() }
+      }),
+      serverTimestampMs: Date.now()
+    })
+    expect(rejected.ok).toBe(false)
+    expect(rejected.reason).toBe('ALL_ITEMS_REJECTED')
+
+    const res = service.ingestViaTransport({
+      roomId: ROOM,
+      studentId: 's1',
+      kind: 'action',
+      payloadJson: JSON.stringify({
+        type: 'dynamic-form.submit-item',
+        submission: { itemId: first.itemId, value: { kind: 'choice', choiceId }, timeSpentMs: 1, clientSubmittedAtMs: Date.now() }
+      }),
+      serverTimestampMs: Date.now()
+    })
+    expect(res.ok).toBe(true)
+    expect(res.stateJson).toBeTruthy()
+    const next = JSON.parse(res.stateJson!) as { items: Array<{ inputType?: string }>; revealedQuestions: number }
+    expect(next.items.filter((item) => item.inputType !== undefined)).toHaveLength(2)
+    expect(next.revealedQuestions).toBe(2)
   })
 
   it('finalizeStudentSession ปั๊ม endedAtMs (คำตอบบันทึกครบแล้วตอน ingest)', () => {

@@ -1,4 +1,5 @@
-﻿import type { ResolvedParameters, ZtformContainer, DynamicFormDefinition } from '../shared/form-schema'
+﻿import { randomUUID } from 'node:crypto'
+import type { ResolvedParameters, ZtformContainer, DynamicFormDefinition } from '../shared/form-schema'
 import { isFormItemQuestion } from '../shared/form-schema'
 import type { StoredArtifactDescriptor } from '../shared/form-answer-schema'
 import { FormArtifactUploadSchema, FormItemSubmissionSchema } from '../shared/form-answer-schema'
@@ -73,6 +74,18 @@ export class FormHostService {
   private readonly vault: FileVault
   private readonly rooms = new Map<string, FormRoomContext>()
   private readonly artifactBuffers = new Map<string, string[]>()
+  /**
+   * VULN-59: seed ต่อ (room, student) ต้องสุ่มและเก็บฝั่ง host เท่านั้น
+   * เดิมใช้ studentId เป็น seed → ทำนาย shuffle/parameter ได้
+   */
+  private readonly studentSeeds = new Map<string, string>()
+  /**
+   * VULN-61: เปิดข้อทีละข้อ (default) — ไม่ดันข้อสอบทั้งชุดไปเครื่องนักเรียน
+   * key = roomId\0studentId, value = จำนวนข้อที่เปิดแล้ว
+   */
+  private readonly revealedQuestions = new Map<string, number>()
+  /** ลำดับข้อจริงหลัง shuffle ต่อคน (ใช้กันการยิงซ้ำเพื่อเปิดข้อเพิ่ม) */
+  private readonly questionOrderByStudent = new Map<string, string[]>()
 
   constructor(
     private readonly db: HostDatabase,
@@ -98,6 +111,63 @@ export class FormHostService {
 
   getRoomForm(roomId: string): FormRoomContext | null {
     return this.rooms.get(roomId) ?? null
+  }
+
+  private revealKey(roomId: string, studentId: string): string {
+    return `${roomId}\u0000${studentId}`
+  }
+
+  /** จำนวนข้อที่เปิดให้นักเรียนเห็นแล้ว (default 1 = ทีละข้อ) */
+  getRevealedQuestions(roomId: string, studentId: string): number {
+    return this.revealedQuestions.get(this.revealKey(roomId, studentId)) ?? 1
+  }
+
+  /** เปิดข้อถัดไปหลังส่งข้อปัจจุบัน (VULN-61) */
+  revealMore(roomId: string, studentId: string, count = 1): number {
+    const room = this.rooms.get(roomId)
+    if (!room) return 0
+    const total = room.container.form.items.filter(isFormItemQuestion).length
+    const current = this.getRevealedQuestions(roomId, studentId)
+    const next = Math.max(0, Math.min(total, current + Math.max(0, count)))
+    this.revealedQuestions.set(this.revealKey(roomId, studentId), next)
+    return next
+  }
+
+  private totalQuestions(room: FormRoomContext): number {
+    return room.container.form.items.filter(isFormItemQuestion).length
+  }
+
+  /** VULN-61: ข้อนี้ถูกเปิดให้นักเรียนเห็นแล้วหรือยัง (ถ้ายังไม่มี order = ไม่บังคับ) */
+  private isItemRevealed(roomId: string, studentId: string, itemId: string): boolean {
+    const order = this.questionOrderByStudent.get(this.revealKey(roomId, studentId))
+    if (!order) return true
+    const revealed = this.getRevealedQuestions(roomId, studentId)
+    return order.slice(0, revealed).includes(itemId)
+  }
+
+  /**
+   * เปิดข้อถัดไปเมื่อส่ง "ข้อสุดท้ายที่เปิดอยู่" เท่านั้น
+   * (ส่งซ้ำข้อเก่าไม่ทำให้เห็นข้อใหม่เพิ่ม)
+   */
+  private advanceRevealOnSubmission(roomId: string, studentId: string, submittedItemIds: readonly string[]): void {
+    const key = this.revealKey(roomId, studentId)
+    const order = this.questionOrderByStudent.get(key)
+    if (!order || order.length === 0) return
+    const revealed = this.getRevealedQuestions(roomId, studentId)
+    const frontier = order[revealed - 1]
+    if (frontier !== undefined && submittedItemIds.includes(frontier)) {
+      this.revealMore(roomId, studentId, 1)
+    }
+  }
+
+  /** seed แบบสุ่มต่อห้อง/คน — คงที่ตลอด session เพื่อให้ reconnect ได้ลำดับเดิม */
+  seedFor(roomId: string, studentId: string): string {
+    const key = `${roomId}\u0000${studentId}`
+    const existing = this.studentSeeds.get(key)
+    if (existing !== undefined) return existing
+    const seed = randomUUID()
+    this.studentSeeds.set(key, seed)
+    return seed
   }
 
   registerStudentSeed(roomId: string, studentId: string, studentSeed: string): void {
@@ -218,6 +288,10 @@ export class FormHostService {
     if (item === undefined || !isFormItemQuestion(item)) {
       return { accepted: false, itemId: submission.itemId, reason: 'UNKNOWN_ITEM' }
     }
+    // VULN-61: ห้ามตอบข้อที่ยังไม่ถูกเปิด (client ดัดแปลงเดา itemId ไม่ได้)
+    if (!this.isItemRevealed(input.roomId, input.studentId, submission.itemId)) {
+      return { accepted: false, itemId: submission.itemId, reason: 'ITEM_NOT_REVEALED' }
+    }
 
     const artifactsByStudentItem = this.store
       .listArtifactMetaForStudent(input.roomId, input.studentId)
@@ -337,7 +411,7 @@ export class FormHostService {
     kind: 'action' | 'autosave'
     payloadJson: string
     serverTimestampMs: number
-  }): { ok: boolean; progressText?: string; reason?: string } {
+  }): { ok: boolean; progressText?: string; reason?: string; stateJson?: string } {
     const room = this.rooms.get(input.roomId)
     if (!room) return { ok: false, reason: 'ROOM_FORM_NOT_LOADED' }
     try {
@@ -359,9 +433,12 @@ export class FormHostService {
     const submissions = extractFormSubmissions(parsed)
     if (!submissions) return { ok: false, reason: 'SUBMISSION_INVALID' }
     // seed ต่อคน (shuffle/params ต้องตรงกับ view ที่ดันไปตอนเริ่มสอบ)
-    const seed = input.studentId
+    const seed = this.seedFor(input.roomId, input.studentId)
     this.registerStudentSeed(input.roomId, input.studentId, seed)
+    // VULN-61: สร้าง order/เปิดชุดแรกก่อนรับคำตอบ เพื่อบังคับ item ที่ยังไม่เปิด
+    this.studentViewFor(input.roomId, input.studentId)
     let accepted = 0
+    const acceptedItemIds: string[] = []
     for (const submission of submissions) {
       const res = this.ingestItemSubmission({
         roomId: input.roomId,
@@ -370,12 +447,27 @@ export class FormHostService {
         submission,
         serverTimestampMs: input.serverTimestampMs
       })
-      if (res.accepted) accepted += 1
+      if (res.accepted) {
+        accepted += 1
+        const itemId = (submission as { itemId?: unknown }).itemId
+        if (typeof itemId === 'string') acceptedItemIds.push(itemId)
+      }
     }
     if (accepted === 0) return { ok: false, reason: 'ALL_ITEMS_REJECTED' }
+    let stateJson: string | undefined
+    if (input.kind === 'action') {
+      // VULN-61: เปิดข้อถัดไปเฉพาะเมื่อส่งข้อที่เปิดอยู่ล่าสุดสำเร็จ
+      if (!this.questionOrderByStudent.has(this.revealKey(input.roomId, input.studentId))) {
+        this.studentViewFor(input.roomId, input.studentId)
+      }
+      this.advanceRevealOnSubmission(input.roomId, input.studentId, acceptedItemIds)
+      const view = this.studentViewFor(input.roomId, input.studentId)
+      if (view) stateJson = JSON.stringify(view)
+    }
     return {
       ok: true,
-      progressText: input.kind === 'autosave' ? 'form-autosave-ingested' : 'form-item-ingested'
+      progressText: input.kind === 'autosave' ? 'form-autosave-ingested' : 'form-item-ingested',
+      ...(stateJson !== undefined ? { stateJson } : {})
     }
   }
 
@@ -386,10 +478,28 @@ export class FormHostService {
   studentViewFor(roomId: string, studentId: string): StudentFormView | null {
     const room = this.rooms.get(roomId)
     if (!room) return null
-    const seed = studentId
+    const seed = this.seedFor(roomId, studentId)
     const { view, resolvedParameters } = stripAnswerKeyForStudent(room.container.form, seed)
     room.resolvedParametersByStudent.set(studentId, resolvedParameters)
-    return view
+
+    // VULN-61: ส่งเฉพาะข้อที่เปิดแล้ว — ไม่ให้ข้อสอบทั้งชุดอยู่ในเครื่องนักเรียนตั้งแต่ต้น
+    const total = this.totalQuestions(room)
+    const revealed = total === 0 ? 0 : Math.max(1, Math.min(total, this.getRevealedQuestions(roomId, studentId)))
+    let seen = 0
+    const visibleItems: typeof view.items = []
+    const order: string[] = []
+    for (const item of view.items) {
+      // StudentFormViewItem ไม่มี answerKey — เช็คชนิดด้วย inputType
+      const isQuestion = item.inputType !== 'section_header' && item.inputType !== 'media_stimulus'
+      if (isQuestion) {
+        order.push(item.itemId)
+        if (seen >= revealed) break
+        seen += 1
+      }
+      visibleItems.push(item)
+    }
+    this.questionOrderByStudent.set(this.revealKey(roomId, studentId), order)
+    return { ...view, items: visibleItems, totalQuestions: total, revealedQuestions: seen }
   }
 
   /** จบสอบ: ปั๊ม endedAtMs ของห้อง (คำตอบรายข้อบันทึกครบแล้วตอน ingest) */

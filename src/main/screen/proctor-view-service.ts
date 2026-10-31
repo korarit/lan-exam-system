@@ -31,6 +31,23 @@ export interface ProctorViewServiceOptions {
   ) => void
 }
 
+/** VULN-51: ประเมินความสดของหลักฐานหน้าจอ (pure) */
+export interface ScreenLiveness {
+  stale: boolean
+  ageMs: number
+}
+
+export function evaluateScreenLiveness(
+  startedAtMs: number,
+  lastFrameAtMs: number | null,
+  nowMs: number,
+  maxAgeMs: number
+): ScreenLiveness {
+  const reference = lastFrameAtMs ?? startedAtMs
+  const ageMs = Math.max(0, nowMs - reference)
+  return { stale: reference > 0 && ageMs > maxAgeMs, ageMs }
+}
+
 interface StoredThumbnail {
   studentId: string
   displayIndex: number
@@ -57,6 +74,9 @@ export class ProctorViewService {
   private readonly udpChannels = new Map<string, { studentId: string; keys: ScreenUdpKeys }>()
   /** กุญแจ ring buffer ล่าสุดต่อ student (มาจากช่วงบันทึกเซสชัน — ใช้ derive คีย์ UDP) */
   private readonly studentUdpKeyMaterial = new Map<string, { screenBufferKey: string; udpPort: number }>()
+  /** VULN-51: เวลาเริ่มส่ง SCREEN_SESSION + เฟรมล่าสุด (host-side liveness) */
+  private readonly screenSessionStartedAtMs = new Map<string, number>()
+  private readonly lastFrameAtMs = new Map<string, number>()
   private udpReceiver = new UdpStreamReceiver({
     onSegment: (channelIdHex, header, webm) => this.handleUdpSegment(channelIdHex, header, webm),
     onSegmentFailed: (channelIdHex, header) => this.handleUdpSegmentFailed(channelIdHex, header),
@@ -113,6 +133,30 @@ export class ProctorViewService {
   noteScreenSession(studentId: string, screenBufferKey: string): void {
     const udpPort = this.udpReceiver.getPort()
     if (udpPort !== null) this.studentUdpKeyMaterial.set(studentId, { screenBufferKey, udpPort })
+    if (!this.screenSessionStartedAtMs.has(studentId)) {
+      this.screenSessionStartedAtMs.set(studentId, Date.now())
+    }
+  }
+
+  /**
+   * VULN-51/52: คืนรายชื่อที่ควรมีหลักฐานหน้าจอแต่ไม่มีเฟรมใหม่เกิน maxAgeMs
+   * ใช้ให้ host ออก event SCREEN_EVIDENCE_STALE (ไม่เชื่อ client อย่างเดียว)
+   */
+  getStaleStudents(
+    nowMs: number = Date.now(),
+    maxAgeMs = 15_000
+  ): Array<{ studentId: string; ageMs: number }> {
+    const stale: Array<{ studentId: string; ageMs: number }> = []
+    for (const [studentId, startedAtMs] of this.screenSessionStartedAtMs) {
+      const liveness = evaluateScreenLiveness(
+        startedAtMs,
+        this.lastFrameAtMs.get(studentId) ?? null,
+        nowMs,
+        maxAgeMs
+      )
+      if (liveness.stale) stale.push({ studentId, ageMs: liveness.ageMs })
+    }
+    return stale
   }
 
   /** atom จากนักเรียน (ผ่าน UDP receiver) ครบแล้ว → กระจายไป UI ตาม origin */
@@ -179,6 +223,7 @@ export class ProctorViewService {
       displayId: decoded.header.displayId
     }
     this.thumbnails.set(`${studentId}:${decoded.header.displayIndex}`, stored)
+    this.lastFrameAtMs.set(studentId, Date.now())
     this.opts.sendHostEvent('host:screen-thumbnail', { ...stored })
   }
 
@@ -283,6 +328,8 @@ export class ProctorViewService {
     this.inspecting.clear()
     this.udpChannels.clear()
     this.studentUdpKeyMaterial.clear()
+    this.screenSessionStartedAtMs.clear()
+    this.lastFrameAtMs.clear()
     this.udpReceiver.unregisterAll()
   }
 }

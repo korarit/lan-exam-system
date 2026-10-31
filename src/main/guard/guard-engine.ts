@@ -15,6 +15,7 @@ import { NetworkInspector } from './network-inspector'
 import { InputClipboardGuard } from './input-clipboard-guard'
 import { SelfIntegrityGuard } from './self-integrity-guard'
 import { HardwareVmGuard } from './hardware-vm-guard'
+import { SessionSwitchGuard } from './session-switch-guard'
 import { authorizedChildProcesses } from '@modules/code-ide/main/authorized-process-registry'
 
 /* ============================================================
@@ -49,6 +50,7 @@ export class GuardEngine {
   private readonly inputClipboardGuard: InputClipboardGuard
   private readonly selfIntegrityGuard: SelfIntegrityGuard
   private readonly hardwareVmGuard: HardwareVmGuard
+  private readonly sessionSwitchGuard: SessionSwitchGuard
   private readonly now: () => number
   private eventQueue: DetectionEvent[] = []
   private flushTimer: NodeJS.Timeout | null = null
@@ -85,6 +87,8 @@ export class GuardEngine {
       getPolicy: () => this.policyBody,
       emit
     })
+    // VULN-48: Linux VT switch / macOS console user switch
+    this.sessionSwitchGuard = new SessionSwitchGuard({ emit })
   }
 
   get process(): ProcessInspector {
@@ -153,7 +157,8 @@ export class GuardEngine {
       this.processInspector,
       this.overlayInspector,
       this.networkInspector,
-      this.selfIntegrityGuard
+      this.selfIntegrityGuard,
+      this.sessionSwitchGuard
     ]) {
       this.watchdog.register(detector)
     }
@@ -163,6 +168,7 @@ export class GuardEngine {
     this.networkInspector.start()
     this.inputClipboardGuard.start()
     this.hardwareVmGuard.start()
+    this.sessionSwitchGuard.start()
     this.scheduler.start()
     this.flushTimer = setInterval(() => this.flushEvents(), EVENT_FLUSH_INTERVAL_MS)
   }
@@ -178,6 +184,7 @@ export class GuardEngine {
     this.inputClipboardGuard.stop()
     this.selfIntegrityGuard.stop()
     this.hardwareVmGuard.stop()
+    this.sessionSwitchGuard.stop()
     if (this.flushTimer) clearInterval(this.flushTimer)
     this.flushTimer = null
     this.flushEvents()

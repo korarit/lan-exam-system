@@ -25,6 +25,8 @@ export interface VsCodeControllerOptions {
   now?: () => number
   /** inject สำหรับทดสอบ (default: systeminformation.processes) */
   listProcesses?: () => Promise<RogueProcessSnapshot[]>
+  /** VULN-43: production ห้าม override binary/extensions dir ผ่าน env */
+  allowEnvOverrides?: boolean
 }
 
 /** สรุปโปรเซสขั้นต่ำที่ใช้ตรวจ IDE แปลกปลอม */
@@ -82,14 +84,17 @@ export function isControlledVsCodeCommand(
   const userDir = extractFlagValue(commandLine, '--user-data-dir')
   if (userDir === null) return false
   if (normalizeDir(userDir) !== normalizeDir(profile.userDataDir)) return false
+  // VULN-58: ต้องระบุ --extensions-dir ให้ตรงเสมอ (ไม่ปล่อยให้ใช้ default extensions dir)
   const extDir = extractFlagValue(commandLine, '--extensions-dir')
-  if (extDir !== null && normalizeDir(extDir) !== normalizeDir(profile.extensionsDir)) return false
-  return true
+  if (extDir === null) return false
+  return normalizeDir(extDir) === normalizeDir(profile.extensionsDir)
 }
 
-export function findVsCodeBinary(): string | null {
-  const override = process.env.ZTEXAM_VSCODE_PATH
-  if (override && fs.existsSync(override)) return override
+export function findVsCodeBinary(allowEnvOverride = true): string | null {
+  if (allowEnvOverride) {
+    const override = process.env.ZTEXAM_VSCODE_PATH
+    if (override && fs.existsSync(override)) return override
+  }
   const candidates =
     process.platform === 'win32'
       ? [
@@ -146,7 +151,10 @@ export class VsCodeController {
       await fsp.mkdir(workspaceDir, { recursive: true })
       await fsp.writeFile(path.join(userDir, 'settings.json'), buildLockedSettings(proxyPort), 'utf8')
       // คัดลอก Extension ที่ครูอนุมัติล่วงหน้า (ถ้ามีโฟลเดอร์ไลบรารีระบุไว้)
-      const src = process.env.ZTEXAM_VSCODE_EXTENSIONS_SRC
+      const src =
+        this.opts.allowEnvOverrides === false
+          ? undefined
+          : process.env.ZTEXAM_VSCODE_EXTENSIONS_SRC
       if (src && fs.existsSync(src) && fs.statSync(src).isDirectory()) {
         for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
           const target = path.join(extensionsDir, entry.name)
@@ -172,7 +180,7 @@ export class VsCodeController {
     if (!proxyUrl || !proxyUrl.startsWith('http://127.0.0.1:')) {
       return { ok: false, reason: 'PROXY_NOT_RUNNING' }
     }
-    const binary = findVsCodeBinary()
+    const binary = findVsCodeBinary(this.opts.allowEnvOverrides !== false)
     if (!binary) return { ok: false, reason: 'VSCODE_NOT_INSTALLED' }
     try {
       const child = spawn(
@@ -238,7 +246,16 @@ export class VsCodeController {
 interface ProfileSnapshot {
   settingsHash: string
   extensionsTreeHash: string
+  /** VULN-58: .vscode/{settings,tasks,launch,extensions}.json ใน workspace */
+  workspaceConfigHash: string
 }
+
+const WORKSPACE_CONFIG_FILES = [
+  'settings.json',
+  'tasks.json',
+  'launch.json',
+  'extensions.json'
+] as const
 
 export class VsCodeIntegrityWatchdog {
   private scheduler: JitteredScheduler | null = null
@@ -295,10 +312,12 @@ export class VsCodeIntegrityWatchdog {
       return
     }
     if (snapshot && this.baseline && (this.baseline.settingsHash !== snapshot.settingsHash ||
-      this.baseline.extensionsTreeHash !== snapshot.extensionsTreeHash)) {
+      this.baseline.extensionsTreeHash !== snapshot.extensionsTreeHash ||
+      this.baseline.workspaceConfigHash !== snapshot.workspaceConfigHash)) {
       let tamperKind = 'unknown'
       if (this.baseline.settingsHash !== snapshot.settingsHash) tamperKind = 'settings-modified'
-      else tamperKind = 'extensions-changed'
+      else if (this.baseline.extensionsTreeHash !== snapshot.extensionsTreeHash) tamperKind = 'extensions-changed'
+      else tamperKind = 'workspace-config-modified'
       this.opts.emit(
         makeDetectionEvent('VSCODE_PROFILE_TAMPERED', 'vscode-watchdog', {
           kind: tamperKind,
@@ -375,7 +394,24 @@ export async function computeProfileSnapshot(profile: ControlledProfile): Promis
     await walk(entry.name)
   }
   const extensionsTreeHash = createHash('sha256').update(parts.sort().join('\n')).digest('hex')
-  return { settingsHash, extensionsTreeHash }
+  const workspaceConfigHash = await computeWorkspaceConfigHash(profile.workspaceDir)
+  return { settingsHash, extensionsTreeHash, workspaceConfigHash }
+}
+
+/** hash ไฟล์ config ระดับ workspace (ไฟล์ที่ไม่มี = ค่าว่าง) */
+async function computeWorkspaceConfigHash(workspaceDir: string): Promise<string> {
+  const hash = createHash('sha256')
+  for (const name of WORKSPACE_CONFIG_FILES) {
+    const filePath = path.join(workspaceDir, '.vscode', name)
+    try {
+      const content = await fsp.readFile(filePath)
+      hash.update(`${name}\n`)
+      hash.update(content)
+    } catch {
+      hash.update(`${name}\n<missing>\n`)
+    }
+  }
+  return hash.digest('hex')
 }
 
 /** probe ปกติ — ทำงานร่วมกับ systeminformation ที่แอปใช้อยู่ (inject ได้ตอนเทสต์) */

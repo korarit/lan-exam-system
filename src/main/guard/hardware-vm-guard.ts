@@ -3,6 +3,8 @@ import fs from 'node:fs'
 import type { DetectionEvent, DetectionPolicyBody } from '@shared/policy-schema'
 import { makeDetectionEvent } from './process-inspector'
 import { runCommand, runPowerShell } from './system-probes'
+import { analyzeIsolation } from './isolation-probe'
+import { resolveTrustedExecutable } from './trusted-binary'
 
 /* ============================================================
  * HardwareVmGuard — Phase 3a.7
@@ -179,11 +181,11 @@ async function readRemoteSessionVerdict(
     return analyzeRemoteSession({ platform, env, querySession })
   }
   if (platform === 'linux') {
-    const who = await runCommand('who', [])
+    const who = await runCommand(resolveTrustedExecutable('who', platform), [])
     const sessionId = env.XDG_SESSION_ID
     const loginctl =
       sessionId !== undefined && sessionId !== ''
-        ? await runCommand('loginctl', [
+        ? await runCommand(resolveTrustedExecutable('loginctl', platform), [
             'show-session',
             sessionId,
             '-p',
@@ -195,7 +197,7 @@ async function readRemoteSessionVerdict(
     return analyzeRemoteSession({ platform, env, who, loginctl })
   }
   // macOS: who แสดง remote login พร้อม host ในวงเล็บ
-  const who = await runCommand('/usr/bin/who', [])
+  const who = await runCommand(resolveTrustedExecutable('who', platform), [])
   return analyzeRemoteSession({ platform, env, who })
 }
 
@@ -207,11 +209,11 @@ export async function readHypervisorSignals(
   platform: NodeJS.Platform = process.platform
 ): Promise<string[]> {
   if (platform === 'darwin') {
-    const out = await runCommand('/usr/sbin/sysctl', ['-n', 'kern.hv_vmm_present'])
+    const out = await runCommand(resolveTrustedExecutable('sysctl', platform), ['-n', 'kern.hv_vmm_present'])
     return out.trim() === '1' ? ['sysctl:kern.hv_vmm_present'] : []
   }
   if (platform === 'linux') {
-    const detected = (await runCommand('systemd-detect-virt', ['--vm'])).trim()
+    const detected = (await runCommand(resolveTrustedExecutable('systemd-detect-virt', platform), ['--vm'])).trim()
     if (detected !== '' && detected !== 'none') return [`systemd-detect-virt:${detected}`]
     try {
       const vendor = fs.readFileSync('/sys/class/dmi/id/sys_vendor', 'utf8').trim()
@@ -225,6 +227,39 @@ export async function readHypervisorSignals(
     }
   }
   return []
+}
+
+/** VULN-46/47: รวม namespace/container/WSL/utility-VM signals (ไม่ต้อง kernel) */
+async function readIsolationSignals(
+  processEntries: ReadonlyArray<{ name?: string }>
+): Promise<{ signals: string[] }> {
+  let procStatus: string | null = null
+  let cgroup: string | null = null
+  let dockerEnv = false
+  let containerEnv = false
+  if (process.platform === 'linux') {
+    try {
+      procStatus = fs.readFileSync('/proc/self/status', 'utf8')
+    } catch {
+      procStatus = null
+    }
+    try {
+      cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8')
+    } catch {
+      cgroup = null
+    }
+    dockerEnv = fs.existsSync('/.dockerenv')
+    containerEnv = fs.existsSync('/run/.containerenv')
+  }
+  return analyzeIsolation({
+    platform: process.platform,
+    env: process.env,
+    procStatus,
+    cgroup,
+    dockerEnv,
+    containerEnv,
+    processNames: processEntries.map((entry) => entry.name ?? '')
+  })
 }
 
 export interface DisplaySnapshot {
@@ -300,7 +335,11 @@ export class HardwareVmGuard {
   private async detectVmEnvironment(): Promise<DetectionEvent | null> {
     try {
       const si = (await import('systeminformation')).default
-      const [system, graphics] = await Promise.all([si.system(), si.graphics()])
+      const [system, graphics, processes] = await Promise.all([
+        si.system(),
+        si.graphics(),
+        si.processes().catch(() => ({ list: [] }))
+      ])
       const macs = Object.values(os.networkInterfaces())
         .flat()
         .filter((n) => n?.mac)
@@ -315,6 +354,10 @@ export class HardwareVmGuard {
       const hypervisorSignals = await readHypervisorSignals()
       for (const signal of hypervisorSignals) fingerprint.signals.push(signal)
       if (hypervisorSignals.length > 0) fingerprint.isVm = true
+      // VULN-46/47: namespace / container / WSL / utility-VM signals
+      const isolation = await readIsolationSignals(processes.list ?? [])
+      for (const signal of isolation.signals) fingerprint.signals.push(signal)
+      if (isolation.signals.length > 0) fingerprint.isVm = true
       if (!fingerprint.isVm) return null
       return makeDetectionEvent(
         'VM_ENVIRONMENT_DETECTED',
@@ -330,9 +373,10 @@ export class HardwareVmGuard {
 
   /** electron screen → เรียกเมื่อจอเปลี่ยน (กัน hotplug ระหว่างสอบ) */
   handleDisplayChanged(change: 'added' | 'removed' | 'metrics-changed', newCount: number): void {
-    if (!this.started) return
     const baselineCount = this.displayCount
+    // บันทึก baseline ได้แม้ยังไม่ start (wire ก่อนเริ่มสอบ) — ไม่งั้น hotplug แรกจะถูกกลืน
     this.displayCount = newCount
+    if (!this.started) return
     // จอแรกตอน start ไม่ถือเป็นการเปลี่ยนแปลง
     if (baselineCount === 0) return
     this.opts.emit(
@@ -417,11 +461,16 @@ export class HardwareVmGuard {
     guard.handleDisplayChanged('metrics-changed', initial)
     const onAdded = (): void => guard.handleDisplayChanged('added', screen.getAllDisplays().length)
     const onRemoved = (): void => guard.handleDisplayChanged('removed', screen.getAllDisplays().length)
+    // VULN-50: จอเดิมแต่ resolution/scale/rotation เปลี่ยนก็ต้องจับ (EDID-stable splitter)
+    const onMetrics = (): void =>
+      guard.handleDisplayChanged('metrics-changed', screen.getAllDisplays().length)
     screen.on('display-added', onAdded)
     screen.on('display-removed', onRemoved)
+    screen.on('display-metrics-changed', onMetrics)
     return () => {
       screen.off('display-added', onAdded)
       screen.off('display-removed', onRemoved)
+      screen.off('display-metrics-changed', onMetrics)
     }
   }
 }

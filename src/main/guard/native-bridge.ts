@@ -37,6 +37,11 @@ export interface NativeKeyboardGuardOptions {
   now?: () => number
   /** override ตำแหน่ง .node (ทดสอบ) */
   addonPath?: string
+  /**
+   * VULN-43: อนุญาต env override (`ZTEXAM_NATIVE_ADDON`) เฉพาะ dev
+   * production ต้องโหลด addon จากตำแหน่งที่ manifest ครอบเท่านั้น
+   */
+  allowEnvOverrides?: boolean
 }
 
 export class NativeKeyboardGuard {
@@ -158,8 +163,10 @@ export class NativeKeyboardGuard {
   private defaultAddonPath(): string | null {
     const moduleName = `os_guard_${process.platform}_${process.arch}.node`
     const plainName = 'os_guard.node'
-    const explicitEnvironment = process.env.ZTEXAM_NATIVE_ADDON
-    if (explicitEnvironment && fs.existsSync(explicitEnvironment)) return explicitEnvironment
+    if (this.opts.allowEnvOverrides !== false) {
+      const explicitEnvironment = process.env.ZTEXAM_NATIVE_ADDON
+      if (explicitEnvironment && fs.existsSync(explicitEnvironment)) return explicitEnvironment
+    }
     const candidates: string[] = []
     // dev: out/main → native/build/Release/os_guard.node
     candidates.push(path.resolve(__dirname, '../../native/build/Release'))

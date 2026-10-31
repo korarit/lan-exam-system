@@ -80,9 +80,20 @@ export function enterKioskMode(win: BrowserWindow): void {
   win.setKiosk(true)
   win.setFullScreen(true)
   win.setAlwaysOnTop(true, 'screen-saver')
+  // VULN-49: กันซ่อนหน้าต่างสอบบน virtual desktop/space อื่น (macOS/Linux)
+  try {
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  } catch {
+    // Windows บางเวอร์ชันไม่รองรับ — kiosk + alwaysOnTop ยังทำงาน
+  }
 }
 
 export function exitKioskMode(win: BrowserWindow): void {
+  try {
+    win.setVisibleOnAllWorkspaces(false)
+  } catch {
+    // ไม่รองรับ — ข้าม
+  }
   win.setAlwaysOnTop(false)
   win.setFullScreen(false)
   win.setKiosk(false)

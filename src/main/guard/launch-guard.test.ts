@@ -35,6 +35,25 @@ describe('launch guard CLI switches', () => {
     expect(names).toEqual(['cli-switch:--inspect-brk', 'exec-arg:--inspect-port'])
   })
 
+  it('VULN-44: จับ --no-sandbox / --js-flags / --disable-features ที่เคยหลุด denylist', () => {
+    const findings = inspectLaunch({
+      argv: [
+        'ZT-Exam.exe',
+        '--no-sandbox',
+        '--js-flags=--allow-natives-syntax',
+        '--disable-features=IsolateOrigins,site-per-process'
+      ],
+      execArgv: [],
+      env: {},
+      hasChromiumSwitch: emptyBrackets
+    })
+    expect(findings.map((f) => f.name)).toEqual([
+      '--no-sandbox',
+      '--js-flags',
+      '--disable-features'
+    ])
+  })
+
   it('จับเพิ่มจาก app.commandLine.hasSwitch', () => {
     const findings = inspectLaunch({
       argv: [],

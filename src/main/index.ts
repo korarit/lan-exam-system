@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, safeStorage } from 'electron'
+import { app, BrowserWindow, clipboard, powerMonitor, safeStorage, screen } from 'electron'
 import path from 'node:path'
 import { pbkdf2Sync } from 'node:crypto'
 import { IpcEventSchemas, type IpcEventChannel } from '@shared/ipc-channels'
@@ -44,7 +44,9 @@ import { RoomDiscoveryListener } from './network/discovery'
 import { ExamTlsClient } from './network/tls-client'
 import { CoreSessionManager } from './host/core-session-manager'
 import { GuardEngine } from './guard/guard-engine'
+import { HardwareVmGuard } from './guard/hardware-vm-guard'
 import { TypingMonitor } from './guard/typing-monitor'
+import { signedOrDevEnv } from './policy-env'
 import { makeDetectionEvent } from './guard/process-inspector'
 import { NativeKeyboardGuard } from './guard/native-bridge'
 import { AttestationResponder } from './attestation/client-responder'
@@ -83,13 +85,14 @@ if (launchFindings.length > 0) {
 const attestationStrictToggle = { enforced: process.env.ZTEXAM_STRICT_ATTESTATION === '1' }
 
 /* ---------- จัดการ isolation ของ multi-instance ก่อนพร้อมใช้งาน ---------- */
-/** config ที่ลงลายเซ็น (ถ้ามี) — ใช้แทน env ที่ผู้ใช้แก้เองได้ */
-const deploymentConfig = loadDeploymentConfig(
-  process.env.ZTEXAM_DEPLOYMENT_CONFIG ??
-    (IS_PACKAGED && process.resourcesPath
-      ? path.join(process.resourcesPath, 'deployment.json')
-      : null)
-)
+/**
+ * config ที่ลงลายเซ็น (ถ้ามี) — ใช้แทน env ที่ผู้ใช้แก้เองได้
+ * VULN-42: production รับเฉพาะไฟล์ใต้ resources (ไม่รับ path จาก env)
+ */
+const deploymentConfigPath = IS_PACKAGED
+  ? (process.resourcesPath ? path.join(process.resourcesPath, 'deployment.json') : null)
+  : (process.env.ZTEXAM_DEPLOYMENT_CONFIG ?? null)
+const deploymentConfig = loadDeploymentConfig(deploymentConfigPath)
 
 function envProfileAllowlist(): readonly string[] | undefined {
   const raw = process.env.ZTEXAM_ALLOWED_PROFILES
@@ -101,7 +104,11 @@ function envProfileAllowlist(): readonly string[] | undefined {
 }
 
 const runtimePolicy: RuntimeArgPolicy = { production: IS_PACKAGED }
-const allowedProfiles = deploymentConfig?.allowedProfiles ?? envProfileAllowlist()
+const allowedProfiles = signedOrDevEnv(
+  IS_PACKAGED,
+  deploymentConfig?.allowedProfiles,
+  envProfileAllowlist()
+)
 if (allowedProfiles !== undefined) runtimePolicy.allowedProfiles = allowedProfiles
 if (deploymentConfig?.allowedRoles !== undefined) {
   runtimePolicy.allowedRoles = deploymentConfig.allowedRoles
@@ -110,7 +117,8 @@ if (deploymentConfig?.lockedRole !== undefined) {
   runtimePolicy.lockedRole = deploymentConfig.lockedRole
 }
 const allowWindowedKiosk =
-  deploymentConfig?.allowWindowedKiosk ?? process.env.ZTEXAM_ALLOW_WINDOWED_KIOSK === '1'
+  deploymentConfig?.allowWindowedKiosk ??
+  (!IS_PACKAGED && process.env.ZTEXAM_ALLOW_WINDOWED_KIOSK === '1')
 if (allowWindowedKiosk) runtimePolicy.allowWindowedKiosk = true
 
 const runtime = applyRuntimeArgPolicy(parseRuntimeArgs(process.argv), runtimePolicy)
@@ -147,6 +155,11 @@ let vsCodeController: VsCodeController | null = null
 let connectProxy: LocalConnectProxy | null = null
 let floatingHudWindow: BrowserWindow | null = null
 let guardEngine: GuardEngine | null = null
+/** VULN-50: unsubscribe display listeners */
+let displayUnsubscribe: (() => void) | null = null
+/** VULN-51/52: host-side screen liveness */
+let screenLivenessTimer: NodeJS.Timeout | null = null
+const reportedStaleScreen = new Set<string>()
 let typingMonitor: TypingMonitor | null = null
 let nativeKeyboardGuard: NativeKeyboardGuard | null = null
 let attestationResponder: AttestationResponder | null = null
@@ -243,6 +256,8 @@ function ensureSessionManager(): CoreSessionManager {
     },
     onExamStarted: (roomId, policy) => {
       ensureTriageService().startRoom(roomId, policy)
+      // VULN-51/52: เฝ้าหลักฐานหน้าจอฝั่ง host ตลอดการสอบ
+      startScreenLivenessMonitor()
       // Phase 2 (ท่อกลาง modules): ดัน stripped code-ide package ให้ทุกคนตอนเริ่มสอบ
       pushCodeIdePackageToStudents(roomId)
       // F-1: ดัน stripped form view รายคน (ลำดับข้อ/ตัวเลือกของตัวเอง) ตอนเริ่มสอบ
@@ -253,6 +268,7 @@ function ensureSessionManager(): CoreSessionManager {
       )
     },
     onExamEnded: (roomId, reason) => {
+      stopScreenLivenessMonitor()
       ensureTriageService().endRoom(roomId, reason)
       // F-2: finalize โมดูลที่ผูกไว้ (เลื่อน draft ค้างเป็น submission + ปั๊มสถานะ)
       try {
@@ -350,6 +366,9 @@ function ensureModuleTransport(): ModuleTransportHost {
       roomManager?.tlsServerInstance?.sendToStudent(studentId, type, payload)
     },
       handleModuleMessage: async ({ roomId, studentId, moduleId, kind, payloadJson, serverTimestampMs }) => {
+        // VULN-57: module action/autosave ต้องผ่าน gate freeze/หมดเวลาเหมือน SUBMIT_ANSWER
+        const gate = ensureSessionManager().canAcceptModuleSubmission(studentId)
+        if (!gate.ok) return { ok: false, reason: gate.reason }
         if (moduleId === 'code-ide') {
           return ensureCodeIdeService().ingestViaTransport({
             roomId,
@@ -466,6 +485,58 @@ function ensureProctorViewService(): ProctorViewService {
   return proctorViewService
 }
 
+/**
+ * VULN-51/52: host ตรวจว่าเครื่องที่ควรส่งภาพยังส่งจริง
+ * ไม่มีเฟรมเกิน 15s = หลักฐานหน้าจอขาดตอน (ไม่รอ client รายงาน)
+ */
+function startScreenLivenessMonitor(): void {
+  if (screenLivenessTimer) return
+  screenLivenessTimer = setInterval(() => {
+    let stale: Array<{ studentId: string; ageMs: number }> = []
+    try {
+      stale = ensureProctorViewService().getStaleStudents(Date.now(), 15_000)
+    } catch {
+      return
+    }
+    const staleIds = new Set(stale.map((entry) => entry.studentId))
+    for (const studentId of [...reportedStaleScreen]) {
+      if (!staleIds.has(studentId)) reportedStaleScreen.delete(studentId)
+    }
+    for (const entry of stale) {
+      if (reportedStaleScreen.has(entry.studentId)) continue
+      reportedStaleScreen.add(entry.studentId)
+      const event = makeDetectionEvent('SCREEN_EVIDENCE_STALE', 'screen-liveness', {
+        ageMs: String(entry.ageMs)
+      })
+      try {
+        ensureTriageService().recordStudentEvents(entry.studentId, [event])
+      } catch {
+        // triage ยังไม่พร้อม — เก็บไว้รอบถัดไป
+        reportedStaleScreen.delete(entry.studentId)
+      }
+    }
+  }, 5_000)
+  screenLivenessTimer.unref?.()
+}
+
+function stopScreenLivenessMonitor(): void {
+  if (screenLivenessTimer) clearInterval(screenLivenessTimer)
+  screenLivenessTimer = null
+  reportedStaleScreen.clear()
+}
+
+/** VULN-48 (Windows/macOS): lock/unlock ระหว่างสอบ = session switch */
+function reportSessionSwitch(reason: string): void {
+  if (state.role !== 'student' || !studentExamRunning) return
+  try {
+    ensureGuardEngine().pushExternalEvent(
+      makeDetectionEvent('SESSION_SWITCH_DETECTED', 'power-monitor', { reason }, undefined, Date.now)
+    )
+  } catch {
+    // guard ยังไม่พร้อม
+  }
+}
+
 /** Phase 3c: ตัวควบคุมบันทึก/ส่งหน้าจอฝั่งนักเรียน */
 function ensureScreenStreamController(): ScreenStreamController {
   screenStreamController ??= new ScreenStreamController({
@@ -487,9 +558,10 @@ function ensureDocPreview(): DocPreviewController {
   return docPreview
 }
 
-/** roster ของห้อง: signed config ก่อน แล้วค่อย env (สำหรับ dev/ฉุกเฉิน) */
+/** roster ของห้อง: signed config ก่อน แล้วค่อย env เฉพาะ dev (VULN-42) */
 function resolveRoomRoster(): readonly string[] | undefined {
   if (deploymentConfig?.roster !== undefined) return deploymentConfig.roster
+  if (IS_PACKAGED) return undefined
   const raw = process.env.ZTEXAM_ROSTER
   if (raw === undefined) return undefined
   return raw
@@ -502,14 +574,17 @@ function resolveMaxReconnects(): number {
   if (deploymentConfig?.maxReconnectsPerStudent !== undefined) {
     return deploymentConfig.maxReconnectsPerStudent
   }
+  if (IS_PACKAGED) return 5
   const raw = Number(process.env.ZTEXAM_MAX_RECONNECTS)
   return Number.isInteger(raw) && raw >= 0 ? raw : 5
 }
 
 function resolveDisconnectFreezeMs(): number | null {
+  // null จาก signed config = ปิด freeze โดยเจตนา (ต้องแยกจาก undefined)
   if (deploymentConfig?.disconnectFreezeMs !== undefined) {
     return deploymentConfig.disconnectFreezeMs
   }
+  if (IS_PACKAGED) return 30_000
   const raw = Number(process.env.ZTEXAM_DISCONNECT_FREEZE_MS)
   if (Number.isInteger(raw) && raw >= 0) return raw === 0 ? null : raw
   return 30_000
@@ -727,7 +802,8 @@ function ensureStudentClient(): ExamTlsClient {
 }
 
 function ensureGuardEngine(): GuardEngine {
-  guardEngine ??= new GuardEngine({
+  if (guardEngine) return guardEngine
+  guardEngine = new GuardEngine({
     sendToHost: (type, payload) => ensureStudentClient().sendExamMessage(type, payload),
     getExamBounds: () => {
       if (!mainWindow || mainWindow.isDestroyed()) return null
@@ -739,6 +815,12 @@ function ensureGuardEngine(): GuardEngine {
     // Phase 5: proxy ของโหมดข้อสอบที่พิเศษ (0 = ปิด → NetworkInspector ตัดตัวเองออกชั่วคราว)
     getLocalProxyPort: () => connectProxy?.getBoundPort() ?? 0
   })
+  // VULN-50: ผูก display hotplug/metrics จริง (เดิม wireElectronScreen ไม่มีผู้เรียก)
+  try {
+    displayUnsubscribe = HardwareVmGuard.wireElectronScreen(guardEngine.hardware, screen)
+  } catch {
+    displayUnsubscribe = null
+  }
   return guardEngine
 }
 
@@ -788,7 +870,9 @@ function ensureDocsView(): DocsViewController {
 /** Mode 3: ตัวคุม VS Code (โปรไฟล์ + watchdog) */
 function ensureVsCode(): VsCodeController {
   vsCodeController ??= new VsCodeController({
-    emit: (event) => ensureGuardEngine().pushExternalEvent(event)
+    emit: (event) => ensureGuardEngine().pushExternalEvent(event),
+    // VULN-43: production ห้าม override binary/extensions ผ่าน env
+    allowEnvOverrides: !IS_PACKAGED
   })
   return vsCodeController
 }
@@ -918,6 +1002,8 @@ function handleAttestationFailure(failure: AttestationFailure): void {
 function ensureNativeKeyboardGuard(): NativeKeyboardGuard {
   nativeKeyboardGuard ??= new NativeKeyboardGuard({
     getMainWindow: () => mainWindow,
+    // VULN-43: production โหลด addon จากตำแหน่งที่ manifest ครอบเท่านั้น
+    allowEnvOverrides: !IS_PACKAGED,
     emitEvent: (event) => {
       // ปุ่มถูกบล็อก → วิ่งเข้าท่อตรวจจับเดิม (GUARD_EVENT → hash chain → triage → pin-on-critical)
       ensureGuardEngine().pushExternalEvent(event)
@@ -1205,6 +1291,10 @@ void app.whenReady().then(() => {
     discovery.start()
   }
 
+  // VULN-48: lock/unlock ระหว่างสอบ (Windows/macOS; Linux ใช้ SessionSwitchGuard)
+  powerMonitor.on('lock-screen', () => reportSessionSwitch('lock-screen'))
+  powerMonitor.on('unlock-screen', () => reportSessionSwitch('unlock-screen'))
+
   createWindow()
 
   app.on('activate', () => {
@@ -1227,6 +1317,10 @@ app.on('before-quit', () => {
   nativeKeyboardGuard?.stop()
   attestationHost?.stop()
   attestationHost = null
+  // VULN-50/51: ถอด display listener + หยุด liveness timer
+  displayUnsubscribe?.()
+  displayUnsubscribe = null
+  stopScreenLivenessMonitor()
   // Prompt 3c: Zero-Trace — ลบ ring buffer/คีย์ทันทีเมื่อปิดแอป
   screenStreamController?.stopSession('app-quit')
   proctorViewService?.clearAll()

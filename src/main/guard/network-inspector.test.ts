@@ -85,6 +85,47 @@ describe('diffNetworkInterfaces — VPN/Tunnel ใหม่', () => {
   })
 })
 
+describe('NetworkInspector — liveness (VULN-60)', () => {
+  it('getLastTickAtMs คืนเวลาที่สแกนจริง ไม่ใช่เวลาปัจจุบันหลอก watchdog', async () => {
+    let nowMs = 1_000
+    const inspector = new NetworkInspector({
+      getPolicy: () => policy,
+      getHostIp: () => null,
+      getLocalProxyPort: () => 0,
+      emit: () => {},
+      listDnsCache: async () => [],
+      listSockets: async () => [],
+      getDefaultGateway: async () => null,
+      now: () => nowMs
+    })
+    inspector.start()
+    await inspector.scanOnce()
+    expect(inspector.getLastTickAtMs()).toBe(1_000)
+    nowMs = 9_000
+    expect(inspector.getLastTickAtMs()).toBe(1_000)
+    await inspector.scanOnce()
+    expect(inspector.getLastTickAtMs()).toBe(9_000)
+  })
+
+  it('probe ค้างเกิน timeout → GUARD_PROBE_FAILED ไม่ปล่อยให้ค้างเงียบ', async () => {
+    const events: DetectionEvent[] = []
+    const inspector = new NetworkInspector({
+      getPolicy: () => policy,
+      getHostIp: () => null,
+      getLocalProxyPort: () => 0,
+      emit: (e) => events.push(e),
+      listDnsCache: async () => new Promise<string[]>(() => {}),
+      listSockets: async () => [],
+      getDefaultGateway: async () => null,
+      probeTimeoutMs: 25,
+      now: () => 1_000
+    })
+    await inspector.scanOnce()
+    await inspector.scanOnce()
+    expect(events.some((e) => e.code === 'GUARD_PROBE_FAILED' && e.detail.probe === 'dns-cache')).toBe(true)
+  })
+})
+
 describe('NetworkInspector — probe failure visibility', () => {
   it('probe ล้มติดกัน → GUARD_PROBE_FAILED (ไม่ถูกตีความว่า "ไม่พบ")', async () => {
     const events: DetectionEvent[] = []
@@ -121,14 +162,15 @@ describe('NetworkInspector.scanOnce — mode-aware socket check', () => {
     mode: 'closed' | 'in-app-docs' | 'external-tools',
     sockets: Array<{ pid: number; processName: string; peerAddress: string; peerPort: number; state: string }>,
     getHostIp: () => string | null,
-    getHostPort?: () => number | null
+    getHostPort?: () => number | null,
+    getLocalProxyPort: () => number = () => 0
   ): { inspector: NetworkInspector; events: DetectionEvent[] } {
     const events: DetectionEvent[] = []
     const inspector = new NetworkInspector({
       getPolicy: () => ({ ...policy, examMode: mode }),
       getHostIp,
       ...(getHostPort !== undefined ? { getHostPort } : {}),
-      getLocalProxyPort: () => 0,
+      getLocalProxyPort,
       emit: (e) => events.push(e),
       listDnsCache: async () => [],
       listSockets: async () =>
@@ -186,6 +228,30 @@ describe('NetworkInspector.scanOnce — mode-aware socket check', () => {
       [{ pid: 11, processName: 'electron.exe', peerAddress: '192.168.1.1', peerPort: 33445, state: 'ESTABLISHED' }],
       () => '192.168.1.1',
       () => 33445
+    )
+    const produced = await inspector.scanOnce()
+    expect(produced).toHaveLength(0)
+  })
+
+  it('VULN-55: peerPort เท่ากับ proxyPort แต่ปลายทางไม่ใช่ loopback → ฟ้อง', async () => {
+    const { inspector } = makeInspector(
+      'closed',
+      [{ pid: 30, processName: 'python.exe', peerAddress: '203.0.113.9', peerPort: 49152, state: 'ESTABLISHED' }],
+      () => null,
+      undefined,
+      () => 49152
+    )
+    const produced = await inspector.scanOnce()
+    expect(produced.some((e) => e.code === 'DIRECT_SOCKET_PROXY_BYPASS')).toBe(true)
+  })
+
+  it('VULN-55: ต่อไป proxy บน loopback ด้วย proxyPort → ไม่ฟ้อง', async () => {
+    const { inspector } = makeInspector(
+      'closed',
+      [{ pid: 30, processName: 'code.exe', peerAddress: '127.0.0.1', peerPort: 49152, state: 'ESTABLISHED' }],
+      () => null,
+      undefined,
+      () => 49152
     )
     const produced = await inspector.scanOnce()
     expect(produced).toHaveLength(0)

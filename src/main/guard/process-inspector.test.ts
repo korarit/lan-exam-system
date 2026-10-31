@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   isAllowlistedProcess,
+  isSharedInterpreter,
+  matchProcessAllowlist,
   isUserWritablePath,
   matchProcessRules,
   makeDetectionEvent,
@@ -333,5 +335,82 @@ describe('ProcessInspector.scanOnce — new process from user-writable location'
     const produced = await inspector.scanOnce()
     expect(produced.some((e) => e.code === 'UNLISTED_PROCESS_DETECTED')).toBe(true)
     expect(events.some((e) => e.code === 'UNLISTED_PROCESS_DETECTED')).toBe(true)
+  })
+})
+
+describe('VULN-53/54 — interpreter allowlist และ threshold ต่ำลง', () => {
+  it('รู้จัก interpreter ที่ชื่อซ้ำได้ง่าย', () => {
+    expect(isSharedInterpreter('python.exe')).toBe(true)
+    expect(isSharedInterpreter('python3')).toBe(true)
+    expect(isSharedInterpreter('node.exe')).toBe(true)
+    expect(isSharedInterpreter('code.exe')).toBe(false)
+  })
+
+  it('allowlist ที่ตรงแค่ชื่อ interpreter = weak ไม่ใช่ strong', () => {
+    expect(
+      matchProcessAllowlist({ exeName: 'python.exe', exePath: '' }, null, [
+        { exeNames: ['python.exe'] }
+      ])
+    ).toEqual({ matched: true, strong: false })
+  })
+
+  it('allowlist interpreter ด้วย path = strong', () => {
+    expect(
+      matchProcessAllowlist(
+        { exeName: 'python.exe', exePath: 'C:\\Lab\\python.exe' },
+        null,
+        [{ pathPrefixes: ['C:\\Lab'] }]
+      )
+    ).toEqual({ matched: true, strong: true })
+  })
+
+  it('python ที่ allowlist ชื่ออย่างเดียวแต่ cmdline เป็น ollama serve → ยังจับ blacklist', async () => {
+    const events: DetectionEvent[] = []
+    const allowPolicy = DetectionPolicyBodySchema.parse({
+      ...buildDefaultPolicy('closed'),
+      processAllowlist: [{ exeNames: ['python.exe'] }]
+    })
+    const inspector = new ProcessInspector({
+      getPolicy: () => allowPolicy,
+      emit: (e) => events.push(e),
+      listProcesses: async () => [
+        {
+          pid: 10,
+          exeName: 'python.exe',
+          exePath: 'C:\\Users\\a\\AppData\\Local\\Programs\\Python\\python.exe',
+          commandLine: 'python.exe -m ollama serve',
+          memBytes: 0,
+          cpuPercent: 0
+        }
+      ],
+      listListeningPorts: async () => [],
+      startProcessTrace: () => () => {},
+      now: () => 1_000_000
+    })
+    const produced = await inspector.scanOnce()
+    expect(produced.some((e) => e.code === 'BLACKLISTED_PROCESS_DETECTED')).toBe(true)
+  })
+
+  it('interpreter ใช้ threshold 400MB/25% (ต่ำกว่า 1.5GB/70%)', async () => {
+    const events: DetectionEvent[] = []
+    const inspector = new ProcessInspector({
+      getPolicy: () => policy,
+      emit: (e) => events.push(e),
+      listProcesses: async () => [
+        {
+          pid: 10,
+          exeName: 'python.exe',
+          exePath: 'C:\\Python\\python.exe',
+          commandLine: 'python train_or_ask.py',
+          memBytes: 500 * 1024 * 1024,
+          cpuPercent: 40
+        }
+      ],
+      listListeningPorts: async () => [],
+      startProcessTrace: () => () => {},
+      now: () => 1_000_000
+    })
+    const produced = await inspector.scanOnce()
+    expect(produced.some((e) => e.code === 'SUSPICIOUS_COMPUTE_SPIKE')).toBe(true)
   })
 })

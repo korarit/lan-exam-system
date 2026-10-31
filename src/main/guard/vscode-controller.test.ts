@@ -23,9 +23,9 @@ import type { DetectionEvent } from '@shared/policy-schema'
 describe('isControlledVsCodeCommand', () => {
   const profile = { userDataDir: '/tmp/zt-profile/user-data', extensionsDir: '/tmp/zt-profile/extensions' }
 
-  it('ต้องตรงทั้ง user-data-dir และ extensions-dir (ถ้ามี)', () => {
+  it('ต้องตรงทั้ง user-data-dir และ extensions-dir (ขาด extensions-dir ไม่ผ่าน)', () => {
     expect(isControlledVsCodeCommand('code --user-data-dir=/tmp/zt-profile/user-data --extensions-dir=/tmp/zt-profile/extensions', profile)).toBe(true)
-    expect(isControlledVsCodeCommand('code --user-data-dir=/tmp/zt-profile/user-data', profile)).toBe(true)
+    expect(isControlledVsCodeCommand('code --user-data-dir=/tmp/zt-profile/user-data', profile)).toBe(false)
     expect(isControlledVsCodeCommand('code --user-data-dir=/tmp/zt-profile/user-data --extensions-dir=/tmp/evil', profile)).toBe(false)
     expect(isControlledVsCodeCommand('code --user-data-dir=/tmp/zt-profile/user-data-rogue', profile)).toBe(false)
   })
@@ -114,6 +114,17 @@ describe('VsCodeIntegrityWatchdog', () => {
     const tampered = events.filter((event) => event.code === 'VSCODE_PROFILE_TAMPERED')
     expect(tampered).toHaveLength(1)
     expect(tampered[0]!.detail.kind).toBe('extensions-changed')
+  })
+
+  it('VULN-58: แก้ .vscode/settings.json ใน workspace → VSCODE_PROFILE_TAMPERED (workspace-config-modified)', async () => {
+    await watchdog.scanOnce()
+    const vscodeDir = path.join(profile!.workspaceDir, '.vscode')
+    await fsp.mkdir(vscodeDir, { recursive: true })
+    await fsp.writeFile(path.join(vscodeDir, 'settings.json'), '{"http.proxy":""}', 'utf8')
+    await watchdog.scanOnce()
+    const tampered = events.filter((event) => event.code === 'VSCODE_PROFILE_TAMPERED')
+    expect(tampered).toHaveLength(1)
+    expect(tampered[0]!.detail.kind).toBe('workspace-config-modified')
   })
 
   it('โปรเซส VS Code ที่ไม่ใช่โปรไฟล์ของเรา → UNAUTHORIZED_IDE_DETECTED', async () => {

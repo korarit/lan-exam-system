@@ -35,6 +35,31 @@ export interface ExamHostEventSender {
   (channel: string, payload: unknown): void
 }
 
+/** VULN-57: gate กลางสำหรับ module action/autosave (freeze/time-up ต้องบังคับที่ host) */
+export interface ModuleSubmissionGateInput {
+  state: ExamState
+  frozen: boolean
+  nowMs: number
+  examEndsAtMs: number
+  gracePeriodMs: number
+}
+
+export type ModuleSubmissionGate =
+  | { ok: true }
+  | { ok: false; reason: 'EXAM_NOT_RUNNING' | 'frozen' | 'time-expired' }
+
+export function evaluateModuleSubmissionGate(input: ModuleSubmissionGateInput): ModuleSubmissionGate {
+  if (input.state !== 'running') return { ok: false, reason: 'EXAM_NOT_RUNNING' }
+  if (input.frozen) return { ok: false, reason: 'frozen' }
+  if (
+    input.examEndsAtMs > 0 &&
+    input.nowMs > input.examEndsAtMs + input.gracePeriodMs
+  ) {
+    return { ok: false, reason: 'time-expired' }
+  }
+  return { ok: true }
+}
+
 export interface CoreSessionManagerOptions {
   db: HostDatabase
   /** คืนห้องที่เปิดอยู่ (ผูกกับ HostRoomManager ใน main) */
@@ -539,6 +564,20 @@ export class CoreSessionManager {
       reason: `ขาดการเชื่อมต่อระหว่างสอบ ${Math.round(offlineForMs / 1000)} วินาที`
     })
     this.opts.onAnomaly?.(studentId, `AUTO_FREEZE_DISCONNECTED_${offlineForMs}ms`)
+  }
+
+  /**
+   * VULN-57: ตรวจก่อนรับ module action/autosave ทุกครั้ง
+   * (freeze/หมดเวลาเดิมบังคับเฉพาะ SUBMIT_ANSWER — module transport เคยข้าม gate นี้)
+   */
+  canAcceptModuleSubmission(studentId: string): ModuleSubmissionGate {
+    return evaluateModuleSubmissionGate({
+      state: this.state,
+      frozen: this.isStudentFrozen(studentId),
+      nowMs: Date.now(),
+      examEndsAtMs: this.examEndsAtMs,
+      gracePeriodMs: this.gracePeriodMs
+    })
   }
 
   /** สถานะ freeze ฝั่ง host (แหล่งความจริงคือตาราง students ไม่ใช่ client) */

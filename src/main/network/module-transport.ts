@@ -150,6 +150,8 @@ export interface ModuleIngestResult {
   ok: boolean
   progressText?: string
   reason?: string
+  /** VULN-61: view ถัดไปที่ host ต้องการ push (progressive disclosure) */
+  stateJson?: string
 }
 
 export interface ModuleTransportHostDeps {
@@ -235,6 +237,12 @@ export class ModuleTransportHost {
         serverTimestampMs: Date.now()
       })
       this.ack(studentId, moduleId, kind, result)
+      if (result.stateJson !== undefined) {
+        this.deps.sendToStudent(studentId, NetMsgType.moduleStatePush, {
+          moduleId,
+          stateJson: result.stateJson
+        })
+      }
     } catch {
       this.ack(studentId, moduleId, kind, { ok: false, reason: 'HANDLER_FAILED' })
     }

@@ -134,7 +134,11 @@ export default function DynamicFormStudentWorkspace(
         <ClipboardList size={16} className="text-primary" />
         <span className="font-semibold">{view.title}</span>
         <Badge variant="secondary" className="tabular-nums">
-          {questions.length} ข้อ
+          {questions.length}
+          {view.totalQuestions !== undefined && view.totalQuestions > questions.length
+            ? ` / ${view.totalQuestions}`
+            : ''}{' '}
+          ข้อ
         </Badge>
         <span className="flex-1" />
         <Button
@@ -148,6 +152,11 @@ export default function DynamicFormStudentWorkspace(
       {view.instructions && (
         <p className="border-b px-4 py-2 text-[13px] whitespace-pre-wrap text-muted-foreground">
           {view.instructions}
+        </p>
+      )}
+      {view.totalQuestions !== undefined && view.totalQuestions > questions.length && (
+        <p className="border-b border-primary/30 bg-primary/5 px-4 py-2 text-xs text-muted-foreground">
+          ระบบเปิดข้อทีละข้อ — ส่งข้อนี้แล้วข้อถัดไปจะปรากฏอัตโนมัติ
         </p>
       )}
       {hasFileUpload && (

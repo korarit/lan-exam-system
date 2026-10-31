@@ -159,6 +159,9 @@ export const DetectionEventCatalog = {
   PID_BURST_ANOMALY: { category: 'automation-macro', severity: 'warning', score: 10 },
   VM_ENVIRONMENT_DETECTED: { category: 'memory-debugger', severity: 'warning', score: 15 },
   REMOTE_SESSION_SUSPECTED: { category: 'remote-control', severity: 'warning', score: 15 },
+  /* VULN-48/51: เปลี่ยน session/VT หรือหลักฐานหน้าจอขาดตอนระหว่างสอบ */
+  SESSION_SWITCH_DETECTED: { category: 'stealth-overlay', severity: 'critical', score: 35 },
+  SCREEN_EVIDENCE_STALE: { category: 'stealth-overlay', severity: 'critical', score: 40 },
   /* ---------- Phase 4: Attestation & Native Guard ---------- */
   ATTESTATION_VERIFICATION_FAILED: { category: 'app-tamper', severity: 'critical', score: 80 },
   BLOCKED_SYSTEM_SHORTCUT: { category: 'kiosk-escape', severity: 'warning', score: 15 },

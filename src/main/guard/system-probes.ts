@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { powershellExecutable } from './trusted-binary'
 
 /* ============================================================
  * System probes — ชั้น adapter ที่คุยกับ OS (PowerShell / /proc)
@@ -32,7 +33,7 @@ export function runCommand(
 /** รัน PowerShell (Windows เท่านั้น) แบบ -NoProfile -NonInteractive */
 export function runPowerShell(script: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<string> {
   return runCommand(
-    'powershell.exe',
+    powershellExecutable(),
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
     timeoutMs
   )
@@ -61,7 +62,7 @@ export function runPowerShellStrict(
   timeoutMs = PROBE_TIMEOUT_MS
 ): Promise<{ ok: boolean; stdout: string }> {
   return runCommandStrict(
-    'powershell.exe',
+    powershellExecutable(),
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
     timeoutMs
   )

@@ -52,6 +52,29 @@ export function isLoopback(address: string): boolean {
   )
 }
 
+/**
+ * VULN-60: probe ต้องมีเพดานเวลา — ถ้า systeminformation/WMI ค้าง
+ * ต้องรายงานว่าล้ม ไม่ใช่ปล่อยให้ detector แขวนเงียบ
+ */
+export async function withProbeTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  let timer: NodeJS.Timeout | null = null
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`PROBE_TIMEOUT:${label}`)), timeoutMs)
+        timer.unref?.()
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 /** เดาชื่อโดเมนที่ forbidden: ตรงกันเป๊ะหรือเป็น subdomain ลูกของรายการ */
 export function matchForbiddenDomain(
   hostname: string,
@@ -171,6 +194,8 @@ export interface NetworkInspectorOptions {
   listSockets?: () => Promise<SocketInfo[]>
   /** ค่า default gateway ปัจจุบัน (inject ได้เพื่อทดสอบ) */
   getDefaultGateway?: () => Promise<string | null>
+  /** เพดานเวลาต่อ probe (default 4s) — กัน probe ค้างแล้ว watchdog มองไม่เห็น */
+  probeTimeoutMs?: number
   now?: () => number
 }
 
@@ -186,9 +211,13 @@ export class NetworkInspector {
   private readonly reportedDomains = new Map<string, number>()
   /** นับ probe ที่ล้มติดกัน — กัน "ตรวจไม่ได้" ถูกตีความว่า "ไม่พบ" */
   private readonly probeFailures = new Map<string, number>()
+  private readonly probeTimeoutMs: number
+  /** เวลาที่สแกนจริงรอบล่าสุด (VULN-60: ห้ามคืนเวลาปัจจุบันหลอก watchdog) */
+  private lastScanAtMs = 0
 
   constructor(private readonly opts: NetworkInspectorOptions) {
     this.now = opts.now ?? Date.now
+    this.probeTimeoutMs = opts.probeTimeoutMs ?? 4_000
     this.listDnsCache =
       opts.listDnsCache ??
       (process.platform === 'win32' ? readDnsCacheWindows : async () => [])
@@ -207,7 +236,7 @@ export class NetworkInspector {
   }
 
   getLastTickAtMs(): number {
-    return this.now()
+    return this.lastScanAtMs
   }
 
   private reportProbeFailure(probe: string, reason: string): void {
@@ -258,13 +287,14 @@ export class NetworkInspector {
   stop(): void {}
 
   async scanOnce(): Promise<DetectionEvent[]> {
+    this.lastScanAtMs = this.now()
     const policy = this.opts.getPolicy()
     if (!policy) return []
     const events: DetectionEvent[] = []
 
     /* ---------- 1) DNS cache diffing ---------- */
     try {
-      const current = await this.listDnsCache()
+      const current = await withProbeTimeout(this.listDnsCache(), this.probeTimeoutMs, 'dns-cache')
       this.clearProbeFailure('dns-cache')
       if (this.dnsBaseline) {
         for (const event of diffDnsCache(this.dnsBaseline, current, policy)) {
@@ -296,7 +326,11 @@ export class NetworkInspector {
     }
     /* ---------- 2b) เส้นทางออกหลักเปลี่ยน ---------- */
     try {
-      const gateway = await this.getDefaultGateway()
+      const gateway = await withProbeTimeout(
+        this.getDefaultGateway(),
+        this.probeTimeoutMs,
+        'default-gateway'
+      )
       this.clearProbeFailure('default-gateway')
       if (gateway && this.gatewayBaseline && gateway !== this.gatewayBaseline) {
         events.push(
@@ -316,7 +350,7 @@ export class NetworkInspector {
     }
     /* ---------- 3) Active sockets รายโปรเซส ---------- */
     try {
-      const sockets = await this.listSockets()
+      const sockets = await withProbeTimeout(this.listSockets(), this.probeTimeoutMs, 'socket-list')
       this.clearProbeFailure('socket-list')
       const hostIp = this.opts.getHostIp()
       const hostPort = this.opts.getHostPort?.() ?? null
@@ -328,7 +362,14 @@ export class NetworkInspector {
         if (isLoopback(socket.peerAddress)) continue
         // เครื่องแม่อนุญาตเฉพาะพอร์ตสอบ (ไม่ยกเว้นทั้ง IP จนเข้าบริการอื่นได้)
         if (hostIp && socket.peerAddress === hostIp && (hostPort === null || socket.peerPort === hostPort)) continue
-        if (socket.localPort === proxyPort || socket.peerPort === proxyPort) continue
+        // VULN-55: ยกเว้นเฉพาะท่อที่ไปยัง proxy บน loopback — ไม่ยกเว้นพอร์ตเดียวกันบนเครื่องปลายทางอื่น
+        if (
+          proxyPort > 0 &&
+          socket.peerPort === proxyPort &&
+          isLoopback(socket.peerAddress)
+        ) {
+          continue
+        }
         // Phase 9.5: โปรเซสลูกของ code-ide sandbox (เซิร์ฟเวอร์ backend / CLI run)
         // หลุดออกนอก loopback = ฟ้องรหัสเฉพาะ STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL ทันที
         if (this.opts.isAuthorizedPid?.(socket.pid) === true) {

@@ -27,7 +27,39 @@ export interface LocalConnectProxyOptions {
   logAllowed: (payload: DocsUrlLogPayload) => void
   /** inject ตอนทดสอบ (default: dns.lookup) — คืน IP หรือ null หากแก้ไม่ได้ */
   resolveHost?: (hostname: string) => Promise<string | null>
+  /** VULN-56: พอร์ตที่อนุญาตให้ CONNECT (default 80/443/8080/8443) */
+  allowedPorts?: readonly number[]
+  /** ใช้เฉพาะ test ที่ต้องต่อ upstream พอร์ตสุ่ม */
+  allowAnyPort?: boolean
+  /** ใช้เฉพาะ test — production ต้องปฏิเสธ private/loopback resolution (DNS rebinding) */
+  allowPrivateResolution?: boolean
   now: () => number
+}
+
+const DEFAULT_ALLOWED_PORTS = [80, 443, 8080, 8443] as const
+
+/** ที่อยู่ private/loopback/link-local — ใช้กัน DNS rebinding ไปอุปกรณ์ใน LAN */
+export function isPrivateOrLocalAddress(address: string): boolean {
+  const normalized = address.trim().replace(/^\[|\]$/g, '')
+  if (normalized === '' || normalized === '::1' || normalized === '::' || normalized === '0.0.0.0') {
+    return true
+  }
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(normalized)
+  const ipv4 = (mapped?.[1] ?? normalized).trim()
+  const parts = ipv4.split('.').map((part) => Number.parseInt(part, 10))
+  if (parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
+    const [a, b] = parts as [number, number, number, number]
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    )
+  }
+  const lower = normalized.toLowerCase()
+  return lower.startsWith('fc') || lower.startsWith('fd') || lower.startsWith('fe80')
 }
 
 interface OpenTunnel {
@@ -106,15 +138,51 @@ export class LocalConnectProxy {
       .then((entry) => entry.address)
       .catch(() => null)
   }
-  /** เปิดท่อไปปลายทางด้วย IP ที่เรา resolve เอง (คืน null ถ้า resolve/ต่อไม่สำเร็จ) */
-  private async openUpstream(hostname: string, port: number): Promise<net.Socket | null> {
-    const ip = await this.resolveIp(hostname)
-    if (!ip) return null
+
+  private allowedPorts(): readonly number[] {
+    return this.opts.allowedPorts ?? DEFAULT_ALLOWED_PORTS
+  }
+
+  /** VULN-56: ตรวจพอร์ตก่อนเปิดท่อ (กันใช้โดเมนที่อนุญาตเป็น SSH/VNC relay) */
+  private isPortAllowed(port: number): boolean {
+    if (this.opts.allowAnyPort === true) return true
+    return this.allowedPorts().includes(port)
+  }
+
+  /** เปิดท่อไปปลายทางด้วย IP ที่ resolve เอง (คืน null ถ้าต่อไม่สำเร็จ) */
+  private openUpstreamTo(ip: string, port: number): Promise<net.Socket | null> {
     return new Promise<net.Socket>((resolve, reject) => {
       const socket = net.connect(port, ip)
       socket.once('connect', () => resolve(socket))
       socket.once('error', reject)
     })
+  }
+
+  /**
+   * resolve + ตรวจ DNS rebinding (private/loopback) ก่อนต่อ
+   * คืน null = ต้องปฏิเสธ (emit event แล้ว)
+   */
+  private async resolveSafe(hostname: string, portText: string): Promise<string | null> {
+    const ip = await this.resolveIp(hostname)
+    if (!ip) return null
+    if (this.opts.allowPrivateResolution !== true && isPrivateOrLocalAddress(ip)) {
+      this.opts.emit(
+        makeDetectionEvent(
+          'DIRECT_IP_PROXY_ATTEMPT',
+          'connect-proxy',
+          {
+            hostname: `${hostname}:${portText || '80'}`,
+            reason: 'private-resolution',
+            resolvedIp: ip.slice(0, 60),
+            mode: this.opts.getEnforcement()
+          },
+          undefined,
+          this.opts.now
+        )
+      )
+      return null
+    }
+    return ip
   }
 
   private tunnelTo(clientSocket: net.Socket, head: Buffer, upstream: net.Socket): void {
@@ -143,10 +211,22 @@ export class LocalConnectProxy {
     }
   }
 
-  /** ประเมินโดเมนเป้าหมาย → event + คืนว่าจะบล็อกหรือไม่ */
+  /** ประเมินโดเมน/พอร์ตเป้าหมาย → event + คืนว่าจะบล็อกหรือไม่ */
   private judgeTarget(hostname: string, portText: string): boolean {
+    const port = Number.parseInt(portText, 10)
     const verdict = evaluateHostnameAgainstWhitelist(hostname, this.opts.getAllowedDomains())
     if (verdict === 'allowed') {
+      // VULN-56: โดเมนผ่านแต่พอร์ตนอก allowlist = บล็อกเสมอ (ไม่ขึ้นกับ warn/block)
+      if (!this.isPortAllowed(port)) {
+        this.opts.emit(
+          makeDetectionEvent('PROXY_DOMAIN_VIOLATION', 'connect-proxy', {
+            hostname: `${hostname}:${portText || '?'}`,
+            reason: 'port-not-allowed',
+            mode: this.opts.getEnforcement()
+          }, undefined, this.opts.now)
+        )
+        return true
+      }
       this.opts.logAllowed({
         url: `${hostname}:${portText || '?'}`,
         source: 'proxy',
@@ -187,8 +267,13 @@ export class LocalConnectProxy {
       return
     }
     try {
-      // โดเมนที่จับได้ว่าเป็น IP ล้วน = ต่อตรงด้วย IP เอง; โดมเดนปกติ = resolve เองเสมอ
-      const upstream = await this.openUpstream(hostname, port)
+      // resolve เอง + กัน DNS rebinding ไป private/loopback
+      const ip = await this.resolveSafe(hostname, portText)
+      if (!ip) {
+        this.replyProxyError(clientSocket, 'forbidden')
+        return
+      }
+      const upstream = await this.openUpstreamTo(ip, port)
       if (!upstream) {
         this.replyProxyError(clientSocket, 'fail')
         return
@@ -225,7 +310,7 @@ export class LocalConnectProxy {
     try {
       // resolve DNS เองด้วยชั้น resolveIp เสมอ — แล้ว request ไปที่ IP โดยตรง
       // (โฮสต์จริงคงอยู่ใน header host ให้ upstream เห็นเดิม)
-      const ip = await this.resolveIp(hostname)
+      const ip = await this.resolveSafe(hostname, portText)
       if (!ip) throw new Error('DNS_LOOKUP_FAILED')
       const portForUrl = portText !== '' ? `:${portText}` : ''
       const upstreamReq = http.request(`http://${ip}${portForUrl}${rawUrl}`, {

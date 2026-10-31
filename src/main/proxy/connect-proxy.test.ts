@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import http from 'node:http'
 import net from 'node:net'
-import { LocalConnectProxy } from './connect-proxy'
+import { isPrivateOrLocalAddress, LocalConnectProxy } from './connect-proxy'
 import type { DetectionEvent } from '@shared/policy-schema'
 
 /* ============================================================
@@ -56,6 +56,8 @@ function connectToProxy(port: number, targetHost: string, targetPort: number): P
 async function makeProxy(opts: {
   allowed: string[]
   enforcement: 'warn' | 'block'
+  allowAnyPort?: boolean
+  allowPrivateResolution?: boolean
 }): Promise<{ proxy: LocalConnectProxy; events: DetectionEvent[]; allowedLog: string[]; port: number }> {
   const events: DetectionEvent[] = []
   const allowedLog: string[] = []
@@ -65,6 +67,9 @@ async function makeProxy(opts: {
     emit: (event) => events.push(event),
     logAllowed: (payload) => allowedLog.push(payload.url),
     resolveHost: () => Promise.resolve('127.0.0.1'),
+    // test upstream เป็น echo server พอร์ตสุ่มบน loopback
+    allowAnyPort: opts.allowAnyPort ?? true,
+    allowPrivateResolution: opts.allowPrivateResolution ?? true,
     now: () => 1_700_000_000_000
   })
   const port = await proxy.listen()
@@ -179,5 +184,49 @@ describe('LocalConnectProxy', () => {
     proxy.close()
     expect(proxy.isListening).toBe(false)
     expect(proxy.getBoundPort()).toBe(0)
+  })
+
+  it('VULN-56: โดเมนอนุญาตแต่พอร์ตนอก allowlist → 403 แม้ enforcement = warn', async () => {
+    const { proxy, events, port } = await makeProxy({
+      allowed: ['docs.python.org'],
+      enforcement: 'warn',
+      allowAnyPort: false,
+      allowPrivateResolution: true
+    })
+    const socket = await connectToProxy(port, 'docs.python.org', 22)
+    const response = await waitForMatch(socket, 'HTTP/1.1 403')
+    expect(response).toContain('403')
+    expect(events.some((event) => event.code === 'PROXY_DOMAIN_VIOLATION' && event.detail.reason === 'port-not-allowed')).toBe(true)
+    socket.destroy()
+    proxy.close()
+  })
+
+  it('VULN-56: DNS rebinding ไป loopback/private → DIRECT_IP_PROXY_ATTEMPT', async () => {
+    const { proxy, events, port } = await makeProxy({
+      allowed: ['docs.python.org'],
+      enforcement: 'warn',
+      allowAnyPort: true,
+      allowPrivateResolution: false
+    })
+    const socket = await connectToProxy(port, 'docs.python.org', 443)
+    const response = await waitForMatch(socket, 'HTTP/1.1 403')
+    expect(response).toContain('403')
+    expect(events.some((event) => event.code === 'DIRECT_IP_PROXY_ATTEMPT' && event.detail.reason === 'private-resolution')).toBe(true)
+    socket.destroy()
+    proxy.close()
+  })
+})
+
+describe('isPrivateOrLocalAddress', () => {
+  it('แยก private/loopback/link-local ออกจาก public', () => {
+    expect(isPrivateOrLocalAddress('127.0.0.1')).toBe(true)
+    expect(isPrivateOrLocalAddress('10.0.0.5')).toBe(true)
+    expect(isPrivateOrLocalAddress('192.168.1.20')).toBe(true)
+    expect(isPrivateOrLocalAddress('172.16.5.5')).toBe(true)
+    expect(isPrivateOrLocalAddress('169.254.1.1')).toBe(true)
+    expect(isPrivateOrLocalAddress('::1')).toBe(true)
+    expect(isPrivateOrLocalAddress('::ffff:127.0.0.1')).toBe(true)
+    expect(isPrivateOrLocalAddress('8.8.8.8')).toBe(false)
+    expect(isPrivateOrLocalAddress('104.18.32.7')).toBe(false)
   })
 })

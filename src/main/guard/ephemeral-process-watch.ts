@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { runCommand } from './system-probes'
+import { resolveTrustedExecutable } from './trusted-binary'
 
 /* ============================================================
  * Portable short-lived process watcher (Phase 3a — non-Windows)
@@ -108,7 +109,7 @@ async function linuxSnapshot(): Promise<Map<number, string>> {
 
 async function macSnapshot(): Promise<Map<number, string>> {
   const result = new Map<number, string>()
-  const output = await runCommand('ps', ['-axo', 'pid=,comm='], 3_000)
+  const output = await runCommand(resolveTrustedExecutable('ps'), ['-axo', 'pid=,comm='], 3_000)
   for (const line of output.split(/\r?\n/)) {
     const match = /^\s*(\d+)\s+(.+)$/.exec(line)
     if (!match) continue
