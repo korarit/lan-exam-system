@@ -105,6 +105,8 @@ export interface CreateRoomRequest {
   roomName: string
   mode: 'closed' | 'in-app-docs' | 'external-tools'
   enforcement: 'report-only' | 'block-and-report'
+  /** จำนวนนักเรียนสูงสุดที่ห้องนี้รับ (1-1000) */
+  maxStudents: number
 }
 export interface HostRoomInfo {
   roomId: string
@@ -382,7 +384,10 @@ export interface HostScreenLiveSegmentEvent {
 /** ฝั่ง renderer นักเรียน: บอกให้เริ่ม/หยุด screen worker และโหมด live */
 export interface StudentScreenSessionEvent {
   active: boolean
-  thumbnailIntervalMs?: number | undefined
+  /** ช่วงเวลาสุ่มขั้นต่ำระหว่างภาพย่อ (ms) */
+  thumbnailMinIntervalMs?: number | undefined
+  /** ช่วงเวลาสุ่มสูงสุดระหว่างภาพย่อ (ms) */
+  thumbnailMaxIntervalMs?: number | undefined
   reason?: string | undefined
 }
 export interface StudentScreenInspectEvent {
@@ -1129,7 +1134,8 @@ export const IpcInvokeSchemas: {
       .object({
         roomName: z.string().min(1).max(80),
         mode: ExamModeSchema,
-        enforcement: EnforcementModeSchema
+        enforcement: EnforcementModeSchema,
+        maxStudents: z.number().int().min(1).max(1000)
       })
       .strict(),
     response: HostRoomInfoSchema
@@ -2163,7 +2169,8 @@ export const IpcEventSchemas: {
   'screen:session': z
     .object({
       active: z.boolean(),
-      thumbnailIntervalMs: z.number().int().min(250).max(30_000).optional(),
+      thumbnailMinIntervalMs: z.number().int().min(1000).max(60_000).optional(),
+      thumbnailMaxIntervalMs: z.number().int().min(1000).max(60_000).optional(),
       reason: z.string().max(200).optional()
     })
     .strict(),

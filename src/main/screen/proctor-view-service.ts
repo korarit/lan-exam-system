@@ -144,7 +144,7 @@ export class ProctorViewService {
    */
   getStaleStudents(
     nowMs: number = Date.now(),
-    maxAgeMs = 15_000
+    maxAgeMs = 45_000
   ): Array<{ studentId: string; ageMs: number }> {
     const stale: Array<{ studentId: string; ageMs: number }> = []
     for (const [studentId, startedAtMs] of this.screenSessionStartedAtMs) {

@@ -63,7 +63,8 @@ export class ScreenStreamController {
   private readonly captureManager = new CaptureManager()
   private ringBuffer: EncryptedRingBuffer | null = null
   private sessionKey: Buffer | null = null
-  private thumbnailIntervalMs = 1000
+  private thumbnailMinIntervalMs = 5_000
+  private thumbnailMaxIntervalMs = 15_000
   private readonly activeInspectRequests = new Set<string>()
 
   /* ---------- UDP transport (live segment stream + playback fetch) ---------- */
@@ -90,11 +91,13 @@ export class ScreenStreamController {
       return
     }
     this.sessionKey = key
-    this.thumbnailIntervalMs = payload.thumbnailIntervalMs
+    this.thumbnailMinIntervalMs = payload.thumbnailMinIntervalMs
+    this.thumbnailMaxIntervalMs = payload.thumbnailMaxIntervalMs
     this.ringBuffer = new EncryptedRingBuffer({ sessionId, key })
     this.opts.sendRendererEvent('screen:session', {
       active: true,
-      thumbnailIntervalMs: this.thumbnailIntervalMs
+      thumbnailMinIntervalMs: this.thumbnailMinIntervalMs,
+      thumbnailMaxIntervalMs: this.thumbnailMaxIntervalMs
     })
     this.opts.onStatus?.(`ring buffer started at ${this.ringBuffer.directory}`)
     // ตั้งช่องทาง UDP (ถ้าเครื่องแม่ประกาศพอร์ตไว้) → SCREEN_UDP_REGISTER ผ่าน TLS

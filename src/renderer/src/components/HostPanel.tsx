@@ -127,6 +127,7 @@ export default function HostPanel(): React.JSX.Element {
   const [roomName, setRoomName] = useState('ห้องสอบ 401')
   const [mode, setMode] = useState<ExamMode>('closed')
   const [enforcement, setEnforcement] = useState<EnforcementMode>('report-only')
+  const [maxStudents, setMaxStudents] = useState(60)
   const [creating, setCreating] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
 
@@ -415,7 +416,9 @@ export default function HostPanel(): React.JSX.Element {
   async function createRoom(): Promise<void> {
     setCreating(true)
     try {
-      const info = await window.ztExam.createRoom({ roomName, mode, enforcement })
+      const maxStudentsValue = Number.isFinite(maxStudents) ? Math.round(maxStudents) : 60
+      const limit = Math.min(1000, Math.max(1, maxStudentsValue))
+      const info = await window.ztExam.createRoom({ roomName, mode, enforcement, maxStudents: limit })
       setRoom(info)
       setConnectionState('connected')
       // ค่าเริ่มต้นของการบังคับโดเมนสืบจาก enforcement ของห้อง (ครูตั้งทับได้ในการ์ด)
@@ -511,10 +514,22 @@ export default function HostPanel(): React.JSX.Element {
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="max-students">จำนวนนักเรียนสูงสุด</Label>
+              <Input
+                id="max-students"
+                type="number"
+                min={1}
+                max={1000}
+                value={maxStudents}
+                onChange={(e) => setMaxStudents(Number(e.target.value))}
+              />
+              <p className="text-xs text-muted-foreground">รับได้ 1-1000 คน (ค่าเริ่มต้น 60)</p>
+            </div>
             <Button
               type="button"
               className="w-full"
-              disabled={creating || roomName.trim().length === 0}
+              disabled={creating || roomName.trim().length === 0 || !Number.isFinite(maxStudents) || maxStudents < 1}
               onClick={() => void createRoom()}
             >
               {creating ? 'กำลังสร้างคีย์ + เปิด TLS…' : 'เปิดห้องสอบ'}

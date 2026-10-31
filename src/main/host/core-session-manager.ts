@@ -29,6 +29,10 @@ import { gradeAnswer, type GradeResult } from './auto-grader'
  * - บันทึกผลทั้งหมดผ่าน ResultStore (AES-256-GCM + rowHmac)
  * ============================================================ */
 
+/** ช่วงเวลาสุ่มระหว่างภาพย่อหน้าจอ (5-15 วินาที) — ลดภาระเครื่องแม่เมื่อมีนักเรียนจำนวนมาก */
+const THUMBNAIL_MIN_INTERVAL_MS = 5_000
+const THUMBNAIL_MAX_INTERVAL_MS = 15_000
+
 export type ExamAnomalySender = (source: string | null, reason: string) => void
 
 export interface ExamHostEventSender {
@@ -252,7 +256,7 @@ export class CoreSessionManager {
     room.setExamStatus('in-progress')
     this.opts.onExamStarted?.(roomId, policyBody)
 
-    // Phase 3c: คีย์ ring buffer ใหม่ต่อรอบสอบ (คิวภาพย่อ 2000ms เมื่อห้องเกิน 50 คน)
+    // Phase 3c: คีย์ ring buffer ใหม่ต่อรอบสอบ (ภาพย่อสุ่มทุก 5-15 วินาที)
     this.screenBufferKey = generateRandomBytes(32)
     for (const student of room.students) {
       this.sendScreenSessionToStudent(student.studentId)
@@ -600,11 +604,11 @@ export class CoreSessionManager {
     const tlsServer = room?.tlsServerInstance
     if (!tlsServer || !this.screenBufferKey) return
     const udpScreenPort = this.opts.getScreenUdpPort?.() ?? null
-    const thumbnailIntervalMs = (room.students.length ?? 0) > 50 ? 2000 : 1000
     const screenBufferKey = this.screenBufferKey.toString('base64')
     tlsServer.sendToStudent(studentId, NetMsgType.screenSession, {
       screenBufferKey,
-      thumbnailIntervalMs,
+      thumbnailMinIntervalMs: THUMBNAIL_MIN_INTERVAL_MS,
+      thumbnailMaxIntervalMs: THUMBNAIL_MAX_INTERVAL_MS,
       ...(udpScreenPort !== null ? { udpScreenPort } : {})
     })
     this.opts.onScreenSessionSent?.(studentId, screenBufferKey, udpScreenPort)

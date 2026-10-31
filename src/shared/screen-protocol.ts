@@ -64,8 +64,10 @@ export const ScreenSessionPayloadSchema = z
   .object({
     /** คีย์ AES-256 ต่อเซสชัน (base64 32 bytes) — ห้ามเขียนลงดิสก์ */
     screenBufferKey: z.string().min(1).max(64),
-    /** ระยะห่างภาพย่อ ms (15000 ปกติ — live ขึ้น UDP / ดูย้อนหลัง) */
-    thumbnailIntervalMs: z.number().int().min(250).max(30_000),
+    /** ช่วงเวลาสุ่มขั้นต่ำระหว่างภาพย่อ (ms) — ค่าเริ่มต้น 5000 */
+    thumbnailMinIntervalMs: z.number().int().min(1000).max(60_000),
+    /** ช่วงเวลาสุ่มสูงสุดระหว่างภาพย่อ (ms) — ค่าเริ่มต้น 15000 */
+    thumbnailMaxIntervalMs: z.number().int().min(1000).max(60_000),
     /** พอร์ต UDP ที่เครื่องแม่เปิดรับสตรีมหน้าจอ (ไม่มี = ปิดใช้งาน UDP ใช้ TCP fallback เท่านั้น) */
     udpScreenPort: z.number().int().min(1024).max(65535).optional()
   })

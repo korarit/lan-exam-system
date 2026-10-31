@@ -20,6 +20,8 @@ export interface HostRoomConfig {
   roomName: string
   mode: 'closed' | 'in-app-docs' | 'external-tools'
   enforcement: 'report-only' | 'block-and-report'
+  /** จำนวนนักเรียนสูงสุดของห้องนี้ (ไม่ระบุ = ใช้ค่าของ manager หรือ 60) */
+  maxStudents?: number
   hostName?: string
 }
 
@@ -102,11 +104,12 @@ export class HostRoomManager extends EventEmitter {
     const roomPin = generateRoomPin()
     const pinKey = derivePinKey(roomPin, roomId)
 
+    const maxStudents = config.maxStudents ?? this.opts.maxStudents ?? 60
     const tlsServer = new ExamTlsServer({
       cert,
       pinKey,
       roomId,
-      ...(this.opts.maxStudents !== undefined ? { maxStudents: this.opts.maxStudents } : {}),
+      maxStudents,
       ...(this.opts.roster !== undefined ? { roster: this.opts.roster } : {}),
       ...(this.opts.maxReconnectsPerStudent !== undefined
         ? { maxReconnectsPerStudent: this.opts.maxReconnectsPerStudent }

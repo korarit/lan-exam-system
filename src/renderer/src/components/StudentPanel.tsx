@@ -120,7 +120,7 @@ export default function StudentPanel(): React.JSX.Element {
       const worker = getScreenWorker()
       if (event.active) {
         void worker
-          .start(event.thumbnailIntervalMs ?? 1000)
+          .start(event.thumbnailMinIntervalMs ?? 5000, event.thumbnailMaxIntervalMs ?? 15000)
           .catch((err: unknown) => {
             notify({
               severity: 'warning',

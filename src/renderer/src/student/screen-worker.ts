@@ -3,7 +3,7 @@ import type { ScreenSourceInfo } from '@shared/ipc-channels'
 /* ============================================================
  * Phase 3c: ScreenWorker (renderer นักเรียน)
  * - เปิด getUserMedia ต่อทุกจอ (chromeMediaSource desktop) ที่ 1280x720, 30 fps
- * - Thumbnail ทุก thumbnailIntervalMs (ค่าเริ่มต้น 15s เมื่อใช้ transport เดิม TCP)
+ * - Thumbnail สุ่มเวลาทุก 5-15s (กำหนดช่วงจากเครื่องแม่) — กันภาระพร้อมกันทั้งห้อง
  * - Recorder 2 วินาทีต่อเซกเมนต์ (1.5 Mbps, สลับตัวเก่า-ใหม่ไม่ให้ภาพขาดช่วง)
  *   → ลง ring buffer ทาง main เสมอ + สตรีมสดผ่าน UDP ขณะผู้คุมเปิดดู (DVR-style)
  * - Live mode jpeg-fallback: 1280px, JPEG q0.7, ~5 fps ผ่าน TLS (เฉพาะเมื่อ UDP ไม่พร้อม)
@@ -23,7 +23,7 @@ interface DisplayCapture {
   seqNo: number
   activeRecorder: MediaRecorder | null
   recorderTimer: ReturnType<typeof setTimeout> | null
-  thumbnailTimer: ReturnType<typeof setInterval> | null
+  thumbnailTimer: ReturnType<typeof setTimeout> | null
   liveTimer: ReturnType<typeof setInterval> | null
   /** จะส่งเซกเมนต์เพื่อสตรีมสดหรือไม่ (จอที่ผู้คุมกำลังดู) */
   liveDisplayFilter: boolean
@@ -33,7 +33,8 @@ interface DisplayCapture {
 export class ScreenWorker {
   private captures: DisplayCapture[] = []
   private active = false
-  private thumbnailIntervalMs = 1000
+  private thumbnailMinIntervalMs = 5_000
+  private thumbnailMaxIntervalMs = 15_000
   private liveRequestId: string | null = null
   /** transport ของ live mode ล่าสุด ('udp-segments' = main สตรีมเซกเมนต์ทาง UDP) */
   private liveTransport: 'udp-segments' | 'jpeg-fallback' | null = null
@@ -43,7 +44,7 @@ export class ScreenWorker {
   }
 
   /** เริ่มจับทุกจอ (เรียกเมื่อได้รับ screen:session active=true) */
-  async start(thumbnailIntervalMs: number): Promise<void> {
+  async start(thumbnailMinIntervalMs: number, thumbnailMaxIntervalMs: number): Promise<void> {
     await this.stop()
     const { environment, sources } = await window.ztExam.getScreenSources()
     if (!environment.ok) {
@@ -51,10 +52,13 @@ export class ScreenWorker {
       throw new Error(environment.reason ?? 'SCREEN_CAPTURE_PERMISSION_DENIED')
     }
     this.active = true
-    this.thumbnailIntervalMs = thumbnailIntervalMs
+    this.thumbnailMinIntervalMs = Math.max(1_000, Math.min(thumbnailMinIntervalMs, thumbnailMaxIntervalMs))
+    this.thumbnailMaxIntervalMs = Math.max(this.thumbnailMinIntervalMs, thumbnailMaxIntervalMs)
     for (const source of sources) {
       try {
-        this.captures.push(await this.openDisplay(source))
+        const capture = await this.openDisplay(source)
+        this.captures.push(capture)
+        this.scheduleThumbnail(capture)
       } catch (err) {
         console.warn(`[screen] เปิดจอ ${source.displayIndex} ไม่สำเร็จ:`, err)
       }
@@ -146,13 +150,20 @@ export class ScreenWorker {
     // 1) Recorder 2 วินาที: ring buffer + (ขณะถูกดู) สตรีมสดผ่าน UDP — double-buffered ไม่ให้ภาพขาดช่วง
     this.rotateRecorder(capture)
 
-    // 2) Thumbnail ตามช่วงที่เครื่องแม่กำหนด (ผ่าน TLS)
-    capture.thumbnailTimer = setInterval(() => {
-      if (!this.active) return
-      void this.captureFrame(capture, THUMB_WIDTH, 'image/webp', 0.55, 'thumbnail')
-    }, this.thumbnailIntervalMs)
-
     return capture
+  }
+
+  /** ตั้งเวลาภาพย่อครั้งถัดไปแบบสุ่ม 5-15s (ไม่ให้ทุกเครื่องส่งพร้อมกัน) */
+  private scheduleThumbnail(capture: DisplayCapture): void {
+    if (!this.active || !this.captures.includes(capture)) return
+    const spread = this.thumbnailMaxIntervalMs - this.thumbnailMinIntervalMs
+    const delayMs = this.thumbnailMinIntervalMs + Math.floor(Math.random() * (spread + 1))
+    capture.thumbnailTimer = setTimeout(() => {
+      if (!this.active || !this.captures.includes(capture)) return
+      void this.captureFrame(capture, THUMB_WIDTH, 'image/webp', 0.55, 'thumbnail').finally(() => {
+        this.scheduleThumbnail(capture)
+      })
+    }, delayMs)
   }
 
   /** สลับ recorder: เริ่มตัวใหม่ก่อน แล้วหยุดตัวเก่า (แต่ละไฟล์เล่นได้ในตัว) — เซกเมนต์ละ 2 วินาที */
@@ -244,7 +255,7 @@ export class ScreenWorker {
 
   private teardownCapture(capture: DisplayCapture): void {
     if (capture.recorderTimer) clearTimeout(capture.recorderTimer)
-    if (capture.thumbnailTimer) clearInterval(capture.thumbnailTimer)
+    if (capture.thumbnailTimer) clearTimeout(capture.thumbnailTimer)
     if (capture.liveTimer) clearInterval(capture.liveTimer)
     try {
       capture.activeRecorder?.stop()

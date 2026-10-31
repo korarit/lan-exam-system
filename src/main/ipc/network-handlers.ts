@@ -33,7 +33,8 @@ export function registerNetworkHandlers(
     const info = await services.getRoomManager().createRoom({
       roomName: req.roomName,
       mode: req.mode,
-      enforcement: req.enforcement
+      enforcement: req.enforcement,
+      maxStudents: req.maxStudents
     })
     return info
   })

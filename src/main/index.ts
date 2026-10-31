@@ -531,14 +531,16 @@ function ensureProctorViewService(): ProctorViewService {
 
 /**
  * VULN-51/52: host ตรวจว่าเครื่องที่ควรส่งภาพยังส่งจริง
- * ไม่มีเฟรมเกิน 15s = หลักฐานหน้าจอขาดตอน (ไม่รอ client รายงาน)
+ * ภาพย่อถูกสุ่มส่งทุก 5-15s → เผื่อ 3 รอบ (45s) ก่อนตัดสินว่าหลักฐานขาดตอน
  */
+const SCREEN_EVIDENCE_STALE_MS = 45_000
+
 function startScreenLivenessMonitor(): void {
   if (screenLivenessTimer) return
   screenLivenessTimer = setInterval(() => {
     let stale: Array<{ studentId: string; ageMs: number }> = []
     try {
-      stale = ensureProctorViewService().getStaleStudents(Date.now(), 15_000)
+      stale = ensureProctorViewService().getStaleStudents(Date.now(), SCREEN_EVIDENCE_STALE_MS)
     } catch {
       return
     }
@@ -804,7 +806,11 @@ function ensureStudentClient(): ExamTlsClient {
         }
         // Phase 3c: เปิดเซสชันบันทึกหน้าจอ (คีย์จากเครื่องแม่ผ่านหน่วยความจำ)
         if (type === NetMsgType.screenSession) {
-          const session = payload as { screenBufferKey: string; thumbnailIntervalMs: number }
+          const session = payload as {
+            screenBufferKey: string
+            thumbnailMinIntervalMs: number
+            thumbnailMaxIntervalMs: number
+          }
           if (lastJoinedRoomId) {
             ensureScreenStreamController().startSession(lastJoinedRoomId, session)
           }
