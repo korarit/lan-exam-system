@@ -1,7 +1,8 @@
 import {
   AttestationChallengeSchema,
   type AttestationChallenge,
-  type AttestationResponse
+  type AttestationResponse,
+  type RuntimeBinding
 } from '@shared/attestation-schema'
 import { NetMsgType } from '@shared/protocol-schema'
 import { computeAttestationHmac } from './manifest-core'
@@ -34,6 +35,8 @@ export interface AttestationClientOptions {
   isDev?: () => boolean
   /** inject native signer ใน unit test (default = native-attestation module) */
   nativeSigner?: NativeAttestationSigner
+  /** runtime binding ที่ host ใช้ตรวจ wrapper (VULN-05/62) */
+  getRuntimeBinding?: () => RuntimeBinding | null
   now?: () => number
 }
 
@@ -96,6 +99,7 @@ export class AttestationResponder {
     }
 
     const includeManifest = challenge.requireManifest || !this.sentManifestIn.has('once')
+    const runtimeBinding = this.opts.getRuntimeBinding?.() ?? null
     const payload: AttestationResponse = {
       challengeId: challenge.challengeId,
       responseHmac: computeAttestationHmac(exporter, {
@@ -105,7 +109,8 @@ export class AttestationResponder {
         sampleDigests: digests
       }).toString('base64'),
       manifestHash,
-      sampleCount: challenge.sampleRanges.length
+      sampleCount: challenge.sampleRanges.length,
+      ...(runtimeBinding ? { runtimeBinding } : {})
     }
     if (nativeSignature) payload.nativeSignature = nativeSignature
     if (includeManifest && snapshot.manifest) {

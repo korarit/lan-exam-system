@@ -16,6 +16,8 @@ import { InputClipboardGuard } from './input-clipboard-guard'
 import { SelfIntegrityGuard } from './self-integrity-guard'
 import { HardwareVmGuard } from './hardware-vm-guard'
 import { SessionSwitchGuard } from './session-switch-guard'
+import { RuntimeIntegrityGuard, type RuntimeExpectation } from './runtime-integrity-guard'
+import { AccessibilityGuard } from './accessibility-guard'
 import { authorizedChildProcesses } from '@modules/code-ide/main/authorized-process-registry'
 
 /* ============================================================
@@ -35,6 +37,12 @@ export interface GuardEngineOptions {
   /** พอร์ต TLS ของห้องสอบ (ใช้ยกเว้นเฉพาะท่อสอบ ไม่ใช่ทั้ง IP) */
   getHostPort?: () => number | null
   getLocalProxyPort: () => number
+  /** true = packaged build (ใช้ตรวจ wrapper ที่รันโค้ดจากที่อื่น) */
+  isPackaged?: boolean
+  /** Electron: accessibility tree เปิดอยู่หรือไม่ */
+  isAccessibilityTreeEnabled?: () => boolean
+  /** override expectation สำหรับ test */
+  getRuntimeExpectation?: () => RuntimeExpectation
   now?: () => number
 }
 
@@ -51,6 +59,8 @@ export class GuardEngine {
   private readonly selfIntegrityGuard: SelfIntegrityGuard
   private readonly hardwareVmGuard: HardwareVmGuard
   private readonly sessionSwitchGuard: SessionSwitchGuard
+  private readonly runtimeIntegrityGuard: RuntimeIntegrityGuard
+  private readonly accessibilityGuard: AccessibilityGuard
   private readonly now: () => number
   private eventQueue: DetectionEvent[] = []
   private flushTimer: NodeJS.Timeout | null = null
@@ -89,6 +99,24 @@ export class GuardEngine {
     })
     // VULN-48: Linux VT switch / macOS console user switch
     this.sessionSwitchGuard = new SessionSwitchGuard({ emit })
+    // VULN-05/16: ตรวจ wrapper/injection + โมดูลทั้งหมด (รวม macOS)
+    this.runtimeIntegrityGuard = new RuntimeIntegrityGuard({
+      emit,
+      getExpectation: () =>
+        opts.getRuntimeExpectation?.() ?? {
+          packaged: opts.isPackaged === true,
+          addonPath: null,
+          // dev: native addon / node_modules อยู่ใต้ project root
+          ...(opts.isPackaged === true ? {} : { allowedRoots: [process.cwd()] })
+        }
+    })
+    // VULN-38: accessibility/UIA client ระหว่างสอบ
+    this.accessibilityGuard = new AccessibilityGuard({
+      emit,
+      ...(opts.isAccessibilityTreeEnabled !== undefined
+        ? { isAccessibilityTreeEnabled: opts.isAccessibilityTreeEnabled }
+        : {})
+    })
   }
 
   get process(): ProcessInspector {
@@ -158,7 +186,9 @@ export class GuardEngine {
       this.overlayInspector,
       this.networkInspector,
       this.selfIntegrityGuard,
-      this.sessionSwitchGuard
+      this.sessionSwitchGuard,
+      this.runtimeIntegrityGuard,
+      this.accessibilityGuard
     ]) {
       this.watchdog.register(detector)
     }
@@ -169,6 +199,8 @@ export class GuardEngine {
     this.inputClipboardGuard.start()
     this.hardwareVmGuard.start()
     this.sessionSwitchGuard.start()
+    this.runtimeIntegrityGuard.start()
+    this.accessibilityGuard.start()
     this.scheduler.start()
     this.flushTimer = setInterval(() => this.flushEvents(), EVENT_FLUSH_INTERVAL_MS)
   }
@@ -185,6 +217,8 @@ export class GuardEngine {
     this.selfIntegrityGuard.stop()
     this.hardwareVmGuard.stop()
     this.sessionSwitchGuard.stop()
+    this.runtimeIntegrityGuard.stop()
+    this.accessibilityGuard.stop()
     if (this.flushTimer) clearInterval(this.flushTimer)
     this.flushTimer = null
     this.flushEvents()
@@ -197,6 +231,8 @@ export class GuardEngine {
       this.overlayInspector.scanOnce(),
       this.networkInspector.scanOnce(),
       this.selfIntegrityGuard.scanOnce(),
+      this.runtimeIntegrityGuard.scanOnce(),
+      this.accessibilityGuard.scanOnce(),
       Promise.resolve(this.hardwareVmGuard.scanOnce())
     ])
   }

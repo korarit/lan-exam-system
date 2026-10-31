@@ -94,6 +94,23 @@ describe('NativeKeyboardGuard — event mapping + dedupe', () => {
     expect(events).toHaveLength(3)
   })
 
+  it('อินพุตสังเคราะห์ (LLKHF_INJECTED) → SYNTHETIC_INPUT_INJECTED (critical 60)', () => {
+    const events: unknown[] = []
+    const guard = new NativeKeyboardGuard({
+      getMainWindow: () => null,
+      emitEvent: (event) => {
+        events.push(event)
+      },
+      addonPath: 'nonexistent/addon/path.node'
+    })
+    const event = guard.onBlockedShortcut('synthetic-input')
+    expect(event.code).toBe('SYNTHETIC_INPUT_INJECTED')
+    expect(event.severity).toBe('critical')
+    expect(event.score).toBe(60)
+    expect(event.detail.synthetic).toBe('true')
+    expect(events).toHaveLength(1)
+  })
+
   it('ปุ่มเดิมกดซ้ำภายใน 800ms → ไม่บวก event ซ้ำ (กันผลซ้ำเทว)', () => {
     let now = 1_000
     const events: unknown[] = []

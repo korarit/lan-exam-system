@@ -18,12 +18,23 @@ import { powershellExecutable } from './trusted-binary'
 
 export interface ProcessSnapshot {
   pid: number
+  /** parent process id (ถ้า probe อ่านได้) */
+  ppid?: number
   /** ชื่อไฟล์ executable lowercase เช่น 'ollama.exe' */
   exeName: string
   exePath: string
   commandLine: string
   memBytes: number
   cpuPercent: number
+}
+
+/** ชื่อ/คำสั่งของเครื่องมือฉีดโค้ดหรือ debugger ที่ไม่ควรมีระหว่างสอบ */
+const INJECTOR_PATTERN =
+  /(^|[\\/_\-. ])(frida(?:-server)?|inject(?:or|ion)?|x64dbg|x32dbg|ollydbg|windbg|cheatengine|processhacker|apimonitor|minhook|detours|vehdebug|speedhack)([\\/_\-. .]|$)/i
+
+/** pure: ตรวจชื่อ/command line ว่าเป็นเครื่องมือฉีดโค้ดที่รู้จัก (ไม่พึ่ง policy) */
+export function isKnownInjectionTool(exeName: string, commandLine: string): boolean {
+  return INJECTOR_PATTERN.test(exeName) || INJECTOR_PATTERN.test(commandLine)
 }
 
 export interface ListeningPort {
@@ -207,6 +218,7 @@ export function makeDetectionEvent(
 
 interface SiProcessEntry {
   pid: number
+  parentPid?: number
   name?: string
   command?: string
   mem?: number
@@ -221,6 +233,7 @@ async function listProcessesWithSi(): Promise<ProcessSnapshot[]> {
     .filter((p: SiProcessEntry) => typeof p.pid === 'number' && p.pid > 0)
     .map((p: SiProcessEntry) => ({
       pid: p.pid,
+      ...(typeof p.parentPid === 'number' && p.parentPid > 0 ? { ppid: p.parentPid } : {}),
       exeName: (p.name ?? '').toLowerCase(),
       exePath: p.path ?? '',
       commandLine: p.command ?? '',
@@ -459,6 +472,14 @@ export class ProcessInspector {
     const uncached = processes
       .filter((p) => p.exePath && !this.metadataCache.hasCached(p.exePath))
       .map((p) => p.exePath)
+      // ไฟล์ไม่มีอยู่จริง = อ่าน metadata ไม่ได้ — ไม่ต้อง spawn PowerShell
+      .filter((filePath) => {
+        try {
+          return fs.existsSync(filePath)
+        } catch {
+          return false
+        }
+      })
     if (uncached.length > 0 && process.platform === 'win32') {
       const batch = await readPeVersionInfoBatch([...new Set(uncached)].slice(0, 128))
       for (const [key, metadata] of batch) this.metadataCache.prime(key, metadata)
@@ -469,9 +490,10 @@ export class ProcessInspector {
       if (snapshot.pid === process.pid) continue
       // โปรเซสลูกของ sandbox: ข้ามการเทียบรายชื่อ
       const authorized = this.opts.isAuthorizedPid?.(snapshot.pid) === true
+      const metadataKey = !authorized && snapshot.exePath ? statFile(snapshot.exePath) : null
       const metadata =
-        !authorized && snapshot.exePath && process.platform === 'win32'
-          ? await this.metadataCache.get(snapshot.exePath, statFile(snapshot.exePath))
+        metadataKey && snapshot.exePath && process.platform === 'win32'
+          ? await this.metadataCache.get(snapshot.exePath, metadataKey)
           : null
       // allowlist ที่ครูอนุมัติ: ตรวจ hash ก่อนถ้ามีรายการ hash
       if (
@@ -483,6 +505,27 @@ export class ProcessInspector {
       ) {
         const sha = await this.verifyFileHash(snapshot.exePath)
         if (sha) metadata.sha256 = sha
+      }
+      // VULN-05/21: process ลูกของแอปสอบที่มาจากโฟลเดอร์ผู้ใช้และไม่ได้ลงทะเบียน
+      // = ตัวฉีด/ตัวช่วยที่ถูก spawn ออกมา (powershell probe ของแอปเองอยู่ใน System32)
+      if (!authorized && snapshot.ppid === process.pid && isUserWritablePath(snapshot.exePath)) {
+        const signature = `injection-child:${snapshot.pid}`
+        if (this.shouldReport(signature, 30_000)) {
+          events.push(
+            makeDetectionEvent(
+              'INJECTION_TOOL_DETECTED',
+              this.detectorId,
+              {
+                pid: String(snapshot.pid),
+                processName: snapshot.exeName,
+                ppid: String(snapshot.ppid),
+                reason: 'untrusted-child-process'
+              },
+              undefined,
+              this.now
+            )
+          )
+        }
       }
       const allowMatch = authorized
         ? { matched: false, strong: false }
@@ -500,6 +543,26 @@ export class ProcessInspector {
             policy.rules,
             ports?.length ? { listeningPorts: ports } : undefined
           )
+      // VULN-05: heuristic เครื่องมือฉีดโค้ด — ใช้เมื่อ policy ของห้องไม่ครอบไว้
+      if (!authorized && matches.length === 0 && isKnownInjectionTool(snapshot.exeName, snapshot.commandLine)) {
+        const signature = `injection-tool:${snapshot.exeName}:${snapshot.pid}`
+        if (this.shouldReport(signature, 30_000)) {
+          events.push(
+            makeDetectionEvent(
+              'INJECTION_TOOL_DETECTED',
+              this.detectorId,
+              {
+                pid: String(snapshot.pid),
+                processName: snapshot.exeName,
+                commandLine: snapshot.commandLine.slice(0, 300),
+                reason: 'known-injection-tool'
+              },
+              undefined,
+              this.now
+            )
+          )
+        }
+      }
       for (const { rule, disguised } of matches) {
         const signature = `${rule.ruleId}:${snapshot.exeName}:${disguised ? 'd' : 'n'}`
         if (this.shouldReport(signature, disguised ? 30_000 : 15_000)) {
@@ -595,6 +658,27 @@ export class ProcessInspector {
     }
     this.noteEphemeralBurst(p)
     const matches = matchProcessRules({ exeName: p.name, commandLine: p.name }, null, policy.rules)
+    // ถ้ากฎของห้องจับได้อยู่แล้ว ไม่ต้องยิงซ้ำ — ใช้ heuristic นี้เฉพาะกรณีที่ policy ไม่ครอบ
+    if (matches.length === 0 && isKnownInjectionTool(p.name, p.name)) {
+      const signature = `injection-ephemeral:${p.name}`
+      if (this.shouldReport(signature, 15_000)) {
+        this.opts.emit(
+          makeDetectionEvent(
+            'INJECTION_TOOL_DETECTED',
+            this.detectorId,
+            {
+              pid: String(p.pid),
+              processName: p.name,
+              ppid: String(p.ppid),
+              ephemeral: 'true',
+              reason: 'known-injection-tool'
+            },
+            undefined,
+            this.now
+          )
+        )
+      }
+    }
     for (const { rule } of matches) {
       this.opts.emit(
         makeDetectionEvent(
@@ -639,8 +723,8 @@ export class ProcessInspector {
   }
 
   private shouldReport(signature: string, cooldownMs: number): boolean {
-    const last = this.reportedSignatures.get(signature) ?? 0
-    if (this.now() - last < cooldownMs) return false
+    const last = this.reportedSignatures.get(signature)
+    if (last !== undefined && this.now() - last < cooldownMs) return false
     this.reportedSignatures.set(signature, this.now())
     return true
   }
@@ -684,13 +768,20 @@ export class ProcessInspector {
       for (const entry of entries) {
         if (!/^\d+$/.test(entry)) continue
         try {
-          const comm = (await fs.promises.readFile(`/proc/${entry}/comm`, 'utf8')).trim()
-          const cmdline = (await fs.promises.readFile(`/proc/${entry}/cmdline`, 'utf8')).replace(/\0/g, ' ').trim()
+          const [comm, cmdline, status] = await Promise.all([
+            fs.promises.readFile(`/proc/${entry}/comm`, 'utf8'),
+            fs.promises.readFile(`/proc/${entry}/cmdline`, 'utf8'),
+            fs.promises.readFile(`/proc/${entry}/status`, 'utf8')
+          ])
+          const ppidMatch = /^PPid:\s+(\d+)/m.exec(status)
+          const ppid = ppidMatch ? Number(ppidMatch[1]) : 0
+          const commandLine = cmdline.replace(/\0/g, ' ').trim()
           result.push({
             pid: Number(entry),
-            exeName: comm.toLowerCase(),
+            ...(ppid > 0 ? { ppid } : {}),
+            exeName: comm.trim().toLowerCase(),
             exePath: '',
-            commandLine: cmdline || comm,
+            commandLine: commandLine || comm.trim(),
             memBytes: 0,
             cpuPercent: 0
           })

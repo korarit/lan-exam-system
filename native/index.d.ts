@@ -8,6 +8,8 @@ declare module 'os_guard.node' {
     attestationSign(requestJson: string): string | null
     /** raw Ed25519 public key 32 bytes เป็น hex (diagnostics เท่านั้น) */
     attestationPublicKey(): string
+    /** ใช้ Windows process mitigation policies (คืน JSON) */
+    applyProcessMitigations(): string
   }
   const addon: OsGuardAddon
   export default addon

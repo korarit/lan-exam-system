@@ -54,6 +54,12 @@ const char* ShortcutFromKey(WPARAM key, const KBDLLHOOKSTRUCT* p) {
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
   if (nCode >= 0 && (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN)) {
     const KBDLLHOOKSTRUCT* p = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+    // VULN-38/62: อินพุตที่ถูกฉีดด้วย SendInput/keybd_event (macro/automation)
+    // รายงาน + บล็อกระหว่าง kiosk — ฮาร์ดแวร์จริงและ IME ไม่มี flag นี้
+    if ((p->flags & LLKHF_INJECTED) != 0) {
+      os_guardNotifyBlocked("synthetic-input");
+      return 1;
+    }
     const char* shortcut = ShortcutFromKey(wParam, p);
     if (shortcut != nullptr) {
       os_guardNotifyBlocked(shortcut);

@@ -87,6 +87,24 @@ export const AttestationChallengeSchema = z
   .strict()
 export type AttestationChallenge = z.infer<typeof AttestationChallengeSchema>
 
+/**
+ * Runtime binding ที่ client รายงานให้ host ตรวจ (VULN-05/62)
+ * - host ใช้ตรวจว่า process ที่ขอ attestation ไม่ใช่ wrapper ที่รันโค้ดจากที่อื่น
+ * - ยังเป็น client-reported; native runtime guard เป็นชั้นตรวจจับฝั่งเครื่อง
+ */
+export const RuntimeBindingSchema = z
+  .object({
+    executablePath: z.string().min(1).max(500),
+    resourcesPath: z.string().max(500),
+    commandLine: z.string().max(2000),
+    packaged: z.boolean(),
+    defaultApp: z.boolean(),
+    platform: z.string().min(1).max(20),
+    addonPath: z.string().max(500).optional()
+  })
+  .strict()
+export type RuntimeBinding = z.infer<typeof RuntimeBindingSchema>
+
 export const AttestationResponseSchema = z
   .object({
     challengeId: z.string().min(1).max(64),
@@ -100,7 +118,9 @@ export const AttestationResponseSchema = z
     /** Ed25519 signature จาก native addon (base64) — ผูกกับไฟล์จริงที่ native hash เอง */
     nativeSignature: z.string().min(1).max(200).optional(),
     /** keyId ของ native key (optional, diagnostics) */
-    nativeKeyId: z.string().min(1).max(80).optional()
+    nativeKeyId: z.string().min(1).max(80).optional(),
+    /** runtime binding สำหรับตรวจ wrapper / การรันโค้ดจากที่อื่น */
+    runtimeBinding: RuntimeBindingSchema.optional()
   })
   .strict()
 export type AttestationResponse = z.infer<typeof AttestationResponseSchema>

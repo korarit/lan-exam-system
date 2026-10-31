@@ -19,6 +19,7 @@ import {
 import { trustedKeyPemSet, revokedManifestIdSet } from './trusted-keys'
 import { nativeTrustedPublicKeyHex } from './native-trusted-keys'
 import { ed25519VerifyRawPublicKeyHex } from '../crypto/primitives'
+import { findRuntimeBindingViolation } from './runtime-binding'
 
 /* ============================================================
  * ประเภทที่ใช้ (แยกเป็น structural type เพื่อไม่พึ่งคลาส concrete — ทดสอบ unit ได้)
@@ -85,6 +86,8 @@ export interface AttestationHostOptions {
   isSignatureEnforced: () => boolean
   /** build ต่ำสุดที่ยอมรับ (จาก signed deployment config) — กัน downgrade ไป build เก่า */
   minAppVersion?: () => string | null
+  /** production: บังคับให้ client รายงาน runtime binding และต้องผ่านการตรวจ */
+  requireRuntimeBinding?: () => boolean
   onVerified: (ok: AttestationSuccess, isNew: boolean) => void
   onFailed: (failure: AttestationFailure) => void
   /** inject trusted native public key (raw 32-byte hex) ใน unit test */
@@ -321,6 +324,14 @@ export class AttestationHostService {
       if (!ed25519VerifyRawPublicKeyHex(nativePayload, nativeSignature, nativeKeyHex)) {
         return this.reject(studentId, 'native-signature-invalid')
       }
+    }
+
+    // 5. VULN-05/62: ตรวจ runtime binding — กัน wrapper ที่รันโค้ดจากที่อื่น
+    const requireRuntimeBinding = this.opts.requireRuntimeBinding?.() === true
+    if (requireRuntimeBinding) {
+      if (!response.runtimeBinding) return this.reject(studentId, 'runtime-binding-missing')
+      const violation = findRuntimeBindingViolation(response.runtimeBinding)
+      if (violation) return this.reject(studentId, violation)
     }
 
     // ผ่านทั้งหมด → สุ่มเวลาถึงรอบถัดไป (45–120s)

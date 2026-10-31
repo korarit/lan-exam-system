@@ -37,6 +37,19 @@ const TRUSTED_PATHS: Record<string, Partial<Record<Platform, string[]>>> = {
   },
   codesign: {
     darwin: ['/usr/bin/codesign']
+  },
+  vmmap: {
+    darwin: ['/usr/bin/vmmap']
+  },
+  defaults: {
+    darwin: ['/usr/bin/defaults']
+  },
+  pgrep: {
+    darwin: ['/usr/bin/pgrep'],
+    linux: ['/usr/bin/pgrep', '/bin/pgrep']
+  },
+  gsettings: {
+    linux: ['/usr/bin/gsettings', '/bin/gsettings']
   }
 }
 

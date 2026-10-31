@@ -50,11 +50,13 @@ import { HardwareVmGuard } from './guard/hardware-vm-guard'
 import { TypingMonitor } from './guard/typing-monitor'
 import { signedOrDevEnv } from './policy-env'
 import { makeDetectionEvent } from './guard/process-inspector'
-import { NativeKeyboardGuard } from './guard/native-bridge'
+import { NativeKeyboardGuard, resolveNativeAddonPath } from './guard/native-bridge'
+import type { RuntimeBinding } from '@shared/attestation-schema'
 import { AttestationResponder } from './attestation/client-responder'
 import { AttestationHostService, type AttestationFailure } from './attestation/host-verifier'
 import { ensureLocalManifestSnapshot } from './attestation/manifest'
 import { inspectLaunch, describeFindings, isAllowedInDev, type LaunchFinding } from './guard/launch-guard'
+import { applyProcessMitigations } from './guard/process-mitigations'
 
 /* ============================================================
  * Phase 4 — Launch Guard: วิ่งเป็นบรรทัดแรกสุด (ก่อนสิ่งใด ๆ ของแอป)
@@ -81,6 +83,31 @@ if (launchFindings.length > 0) {
     // ห้ามเปิดหน้าโหมดนักเรียน/เครื่องแม่ที่ถูกแก้ CLI (เช่น --remote-debugging-port, ELECTRON_RUN_AS_NODE)
     app.exit(1)
   }
+}
+
+/**
+ * VULN-01/05: ใช้ OS process mitigation policies ตั้งแต่ต้น boot (Windows)
+ * - ต้องทำก่อนเปิดพื้นผิวที่รับข้อมูลจากภายนอก
+ * - dev ไม่ทำ เพื่อไม่รบกวน debugger/hot reload
+ */
+const processMitigationResult = IS_PACKAGED ? applyProcessMitigations() : null
+if (processMitigationResult && processMitigationResult.failed.length > 0) {
+  console.warn(`[mitigation] ใช้ไม่สำเร็จ: ${processMitigationResult.failed.join(', ')}`)
+}
+
+/**
+ * VULN-38: ปิด accessibility tree ระหว่างแอปสอบ
+ * (ค่าเริ่มต้นของ Electron เปิดเมื่อตรวจพบ screen reader — ช่องอ่านโจทย์ผ่าน UIA)
+ */
+try {
+  app.setAccessibilitySupportEnabled(false)
+} catch {
+  // บางแพลตฟอร์ม/ช่วงเวลายังตั้งไม่ได้ — guard ยังรายงานสถานะจริง
+}
+try {
+  app.commandLine.appendSwitch('disable-renderer-accessibility')
+} catch {
+  // switch ถูกตั้งไปแล้ว/ไม่รองรับ — ข้าม
 }
 
 /** โหมดบังคับตรวจลายเซ็นจริงแม้ใน dev (env หรือสวิตช์จากหน้าตั้งค่าห้องสอบ) */
@@ -863,7 +890,17 @@ function ensureGuardEngine(): GuardEngine {
     getHostIp: () => lastJoinedHostIp,
     getHostPort: () => lastJoinedHostPort,
     // Phase 5: proxy ของโหมดข้อสอบที่พิเศษ (0 = ปิด → NetworkInspector ตัดตัวเองออกชั่วคราว)
-    getLocalProxyPort: () => connectProxy?.getBoundPort() ?? 0
+    getLocalProxyPort: () => connectProxy?.getBoundPort() ?? 0,
+    // VULN-05: packaged build ต้องรันจาก resources root ของตัวเองเท่านั้น
+    isPackaged: IS_PACKAGED,
+    // VULN-38: accessibility tree ต้องปิดระหว่างสอบ
+    isAccessibilityTreeEnabled: () => {
+      try {
+        return app.isAccessibilitySupportEnabled()
+      } catch {
+        return false
+      }
+    }
   })
   // VULN-50: ผูก display hotplug/metrics จริง (เดิม wireElectronScreen ไม่มีผู้เรียก)
   try {
@@ -990,13 +1027,28 @@ function closeFloatingHud(): void {
   floatingHudWindow = null
 }
 
+/** VULN-05/62: runtime binding ที่ host ใช้ตรวจว่าไม่ได้รันจาก wrapper */
+function currentRuntimeBinding(): RuntimeBinding {
+  const addonPath = resolveNativeAddonPath(!IS_PACKAGED)
+  return {
+    executablePath: process.execPath,
+    resourcesPath: typeof process.resourcesPath === 'string' ? process.resourcesPath : '',
+    commandLine: process.argv.join(' '),
+    packaged: IS_PACKAGED,
+    defaultApp: process.defaultApp === true,
+    platform: process.platform,
+    ...(addonPath ? { addonPath } : {})
+  }
+}
+
 /** Phase 4: นักเรียน — ผู้ตอบคำถามความถูกต้องของไฟล์แอป (ผูกกับ TLS session) */
 function ensureAttestationResponder(resetOnly: boolean): AttestationResponder {
   attestationResponder ??= new AttestationResponder({
     sendToHost: (type, payload) => ensureStudentClient().sendExamMessage(type, payload),
     getTlsExporter: () => studentClient?.exporter ?? null,
     getSnapshot: () => ensureLocalManifestSnapshot(IS_DEV_BUILD),
-    isDev: () => IS_DEV_BUILD
+    isDev: () => IS_DEV_BUILD,
+    getRuntimeBinding: () => currentRuntimeBinding()
   })
   void resetOnly
   return attestationResponder
@@ -1009,6 +1061,7 @@ function ensureAttestationHostService(): AttestationHostService {
     isDev: () => IS_DEV_BUILD,
     isSignatureEnforced: () => attestationStrictToggle.enforced,
     minAppVersion: () => deploymentConfig?.minAppVersion ?? null,
+    requireRuntimeBinding: () => IS_PACKAGED,
     onVerified: (ok, isNew) => {
       if (isNew && ok.signedOnDevice) {
         console.warn(`[attestation] ยืนยันไฟล์แอปผ่าน (ลายเซ็นตรง): ${ok.studentId}`)

@@ -80,6 +80,14 @@ export function buildEventSummary(event: DetectionEvent): string {
       return 'ตรวจพบ Debugger แนบกับแอป'
     case 'FOREIGN_MODULE_INJECTED':
       return 'ตรวจพบโมดูลแปลกปลอมถูกฉีดเข้าแอป'
+    case 'INJECTED_THREAD_DETECTED':
+      return `ตรวจพบเธรดที่ไม่ได้มาจากโมดูลของแอป (Injected Thread)${d.startAddress ? ` ที่ ${d.startAddress}` : ''}`
+    case 'INJECTION_TOOL_DETECTED':
+      return `ตรวจพบเครื่องมือฉีดโค้ด/ดีบักที่ต้องห้าม: ${process || d.commandLine || 'ไม่ทราบชื่อ'}`
+    case 'RUNTIME_PATH_TAMPERED':
+      return `ไบนารี/พาธรันไทม์ไม่ตรงกับ build ที่ลงทะเบียน: ${d.reason ?? 'ไม่ทราบสาเหตุ'}`
+    case 'ACCESSIBILITY_EXFILTRATION_DETECTED':
+      return `ตรวจพบโปรแกรมอ่านหน้าจอ/ข้อความ (Accessibility) ระหว่างสอบ: ${d.detail ?? d.processName ?? 'ไม่ทราบชื่อ'}`
     case 'WINDOW_BLUR_PROLONGED': {
       const seconds = d.durationMs ? (Number(d.durationMs) / 1000).toFixed(1) : null
       return seconds ? `หน้าจอเสียโฟกัส ${seconds} วินาที` : 'หน้าจอเสียโฟกัสเป็นเวลานาน'

@@ -5,6 +5,7 @@
       "sources": [
         "src/os_guard.cc",
         "src/attestation_native.cc",
+        "src/process_mitigations.cc",
         "src/vendor/tweetnacl_ed25519.c",
         "src/vendor/sha256.c"
       ],

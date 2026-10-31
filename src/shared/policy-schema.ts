@@ -135,6 +135,11 @@ export type DetectionSeverity = z.infer<typeof DetectionSeveritySchema>
 export const DetectionEventCatalog = {
   CAPTURE_EVADING_WINDOW_DETECTED: { category: 'stealth-overlay', severity: 'critical', score: 80 },
   FOREIGN_MODULE_INJECTED: { category: 'memory-debugger', severity: 'critical', score: 80 },
+  INJECTED_THREAD_DETECTED: { category: 'memory-debugger', severity: 'critical', score: 80 },
+  INJECTION_TOOL_DETECTED: { category: 'memory-debugger', severity: 'critical', score: 70 },
+  RUNTIME_PATH_TAMPERED: { category: 'app-tamper', severity: 'critical', score: 70 },
+  ACCESSIBILITY_EXFILTRATION_DETECTED: { category: 'memory-debugger', severity: 'critical', score: 60 },
+  ACCESSIBILITY_CLIENT_DETECTED: { category: 'automation-macro', severity: 'warning', score: 20 },
   DEBUGGER_ATTACHED: { category: 'memory-debugger', severity: 'critical', score: 80 },
   DISGUISED_PROCESS_DETECTED: { category: 'memory-debugger', severity: 'critical', score: 70 },
   UNLISTED_PROCESS_DETECTED: { category: 'automation-macro', severity: 'warning', score: 20 },

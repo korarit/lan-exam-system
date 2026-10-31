@@ -18,6 +18,7 @@ export type BlockedShortcutCode =
   | 'ctrl-esc'
   | 'alt-f4'
   | 'printscreen'
+  | 'synthetic-input'
 
 export interface NativeGuardAddon {
   start(callback: (code: string) => void): boolean
@@ -144,6 +145,22 @@ export class NativeKeyboardGuard {
 
   /** รายงานเหตุการณ์ปุ่มถูกบล็อกให้เครื่องแม่ทันที (dedupe เฉพาะปุ่มเดิมที่กดค้าง) */
   private toEvent(code: BlockedShortcutCode, occurredAtMs: number, suppressed: boolean): DetectionEvent {
+    // VULN-38/62: อินพุตสังเคราะห์ = macro/automation ไม่ใช่ปุ่มลัด
+    if (code === 'synthetic-input') {
+      return {
+        eventId: randomUUID(),
+        code: 'SYNTHETIC_INPUT_INJECTED',
+        severity: 'critical',
+        score: suppressed ? 0 : 60,
+        detectorId: 'native-keyboard-guard',
+        detail: {
+          synthetic: 'true',
+          guardMode: this.mode,
+          suppressed: suppressed ? 'true' : 'false'
+        },
+        occurredAtMs
+      }
+    }
     return {
       eventId: randomUUID(),
       code: 'BLOCKED_SYSTEM_SHORTCUT',
@@ -161,25 +178,30 @@ export class NativeKeyboardGuard {
 
   /** แหล่งที่ .node อยู่: dev = native/build/Release จากโปรเจกต์, package = extraResource */
   private defaultAddonPath(): string | null {
-    const moduleName = `os_guard_${process.platform}_${process.arch}.node`
-    const plainName = 'os_guard.node'
-    if (this.opts.allowEnvOverrides !== false) {
-      const explicitEnvironment = process.env.ZTEXAM_NATIVE_ADDON
-      if (explicitEnvironment && fs.existsSync(explicitEnvironment)) return explicitEnvironment
-    }
-    const candidates: string[] = []
-    // dev: out/main → native/build/Release/os_guard.node
-    candidates.push(path.resolve(__dirname, '../../native/build/Release'))
-    if (process.resourcesPath) {
-      // package: extraResources native/
-      candidates.push(path.join(process.resourcesPath, 'native'))
-    }
-    for (const dir of candidates) {
-      for (const name of [moduleName, plainName]) {
-        const candidate = path.join(dir, name)
-        if (fs.existsSync(candidate)) return candidate
-      }
-    }
-    return null
+    return resolveNativeAddonPath(this.opts.allowEnvOverrides !== false)
   }
+}
+
+/** resolve ตำแหน่ง os_guard.node (ใช้ร่วมกับ process mitigations) */
+export function resolveNativeAddonPath(allowEnvOverrides = false): string | null {
+  const moduleName = `os_guard_${process.platform}_${process.arch}.node`
+  const plainName = 'os_guard.node'
+  if (allowEnvOverrides) {
+    const explicitEnvironment = process.env.ZTEXAM_NATIVE_ADDON
+    if (explicitEnvironment && fs.existsSync(explicitEnvironment)) return explicitEnvironment
+  }
+  const candidates: string[] = []
+  // dev: out/main → native/build/Release/os_guard.node
+  candidates.push(path.resolve(__dirname, '../../native/build/Release'))
+  if (process.resourcesPath) {
+    // package: extraResources native/
+    candidates.push(path.join(process.resourcesPath, 'native'))
+  }
+  for (const dir of candidates) {
+    for (const name of [moduleName, plainName]) {
+      const candidate = path.join(dir, name)
+      if (fs.existsSync(candidate)) return candidate
+    }
+  }
+  return null
 }

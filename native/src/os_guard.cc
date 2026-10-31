@@ -23,6 +23,9 @@ bool os_guardUninstallLowLevelHook();
 // native/src/attestation_native.cc — native file hash + Ed25519 signer
 void RegisterAttestationFunctions(Napi::Env env, Napi::Object exports);
 
+// native/src/process_mitigations.cc — Windows process mitigation policies
+void RegisterProcessMitigationFunctions(Napi::Env env, Napi::Object exports);
+
 namespace {
 
 Napi::Value Start(const Napi::CallbackInfo& info) {
@@ -100,6 +103,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("isRunning", Napi::Function::New(env, IsRunning));
   exports.Set("lastBlocked", Napi::Function::New(env, GetLastBlocked));
   RegisterAttestationFunctions(env, exports);
+  RegisterProcessMitigationFunctions(env, exports);
   return exports;
 }
 
