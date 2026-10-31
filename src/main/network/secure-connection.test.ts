@@ -17,6 +17,7 @@ function createFakeSocketPair(): [TLSSocket, TLSSocket] {
     const emitter = new EventEmitter()
     const side = {
       remoteAddress: remote,
+      writable: true,
       write: (chunk: Buffer): boolean => {
         void outgoing.write(chunk)
         return true

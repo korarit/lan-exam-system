@@ -54,6 +54,15 @@ function overlaps(a: Rect, b: Rect): boolean {
   return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
 }
 
+/** สัดส่วนพื้นที่ทับเทียบกับพื้นที่หน้าต่างข้อสอบ */
+function overlapRatio(a: Rect, b: Rect): number {
+  const width = Math.min(a.right, b.right) - Math.max(a.left, b.left)
+  const height = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+  if (width <= 0 || height <= 0) return 0
+  const examArea = Math.max(1, (b.right - b.left) * (b.bottom - b.top))
+  return (width * height) / examArea
+}
+
 /**
  * จำแนกหน้าต่างต้องสงสัย (pure — ทดสอบได้ไม่พึ่ง OS)
  * - capture evasion → CRITICAL สูงสุด (โปรแกรมปกติไม่ซ่อนตัวจากการจับภาพในห้องสอบ)
@@ -67,8 +76,8 @@ export function classifyWindows(
   const events: DetectionEvent[] = []
   for (const win of windows) {
     if (win.pid === ownPid) continue
-    if (OS_WHITELIST_EXES.has(win.exeName)) continue
     const bounds: Rect = { left: win.left, top: win.top, right: win.right, bottom: win.bottom }
+    // ตรวจ display affinity ก่อนข้ามรายชื่อ
     if (win.displayAffinity === WDA_EXCLUDEFROMCAPTURE || win.displayAffinity === WDA_MONITOR) {
       events.push(
         makeDetectionEvent('CAPTURE_EVADING_WINDOW_DETECTED', 'overlay-inspector', {
@@ -80,23 +89,36 @@ export function classifyWindows(
       )
       continue
     }
+    if (OS_WHITELIST_EXES.has(win.exeName)) continue
     const topmost = (win.exStyle & WS_EX_TOPMOST) !== 0
     const clickThrough = (win.exStyle & WS_EX_TRANSPARENT) !== 0
     const layered = (win.exStyle & WS_EX_LAYERED) !== 0
-    if (topmost && examBounds && overlaps(bounds, examBounds)) {
-      // หน้าต่าง topmost ที่ไม่ click-through (เช่น dialog จาก OS) ยังเป็นได้ทั้งสองทาง —
-      // โปร่งใสคลิกทะลุ = ลักษณะเฉพาะของ overlay โกง จึงน้ำหนักสูงสุด
-      if (clickThrough || layered) {
-        events.push(
-          makeDetectionEvent('TOPMOST_OVERLAY_WINDOW_DETECTED', 'overlay-inspector', {
-            pid: String(win.pid),
-            processName: win.exeName,
-            title: win.title.slice(0, 120),
-            clickThrough: String(clickThrough),
-            layered: String(layered)
-          })
-        )
-      }
+    if (!topmost || !examBounds || !overlaps(bounds, examBounds)) continue
+    if (clickThrough || layered) {
+      events.push(
+        makeDetectionEvent('TOPMOST_OVERLAY_WINDOW_DETECTED', 'overlay-inspector', {
+          pid: String(win.pid),
+          processName: win.exeName,
+          title: win.title.slice(0, 120),
+          clickThrough: String(clickThrough),
+          layered: String(layered),
+          overlayKind: 'layered'
+        })
+      )
+      continue
+    }
+    // topmost ที่คลุมพื้นที่มาก
+    if (overlapRatio(bounds, examBounds) >= 0.25) {
+      events.push(
+        makeDetectionEvent('LARGE_TOPMOST_WINDOW_DETECTED', 'overlay-inspector', {
+          pid: String(win.pid),
+          processName: win.exeName,
+          title: win.title.slice(0, 120),
+          clickThrough: 'false',
+          layered: 'false',
+          overlayKind: 'topmost'
+        })
+      )
     }
   }
   return events

@@ -56,16 +56,33 @@ describe('classifyWindows — Stealth Overlay Detection', () => {
     expect(events).toHaveLength(0)
   })
 
-  it('หน้าต่างของ shell OS (explorer/taskbar) ไม่ถูกฟ้อง', () => {
+  it('topmost ธรรมดาที่คลุมพื้นที่สอบชัดเจน → TOPMOST_OVERLAY_WINDOW_DETECTED (น้ำหนักต่ำ)', () => {
     const events = classifyWindows(
-      [
-        win({ exeName: 'explorer.exe', displayAffinity: 0x11, exStyle: 0x8 | 0x20 }),
-        win({ exeName: 'searchhost.exe', exStyle: 0x8 | 0x20 })
-      ],
+      [win({ exStyle: 0x8, left: 0, top: 0, right: 1920, bottom: 1080 })],
       examBounds,
       1
     )
-    expect(events).toHaveLength(0)
+    expect(events).toHaveLength(1)
+    expect(events[0]!.code).toBe('LARGE_TOPMOST_WINDOW_DETECTED')
+    expect(events[0]!.detail.overlayKind).toBe('topmost')
+    expect(events[0]!.score).toBe(15)
+  })
+
+  it('หน้าต่าง shell OS ปกติไม่ถูกฟ้อง แต่ถ้าซ่อนจากการจับภาพต้องฟ้อง', () => {
+    const normal = classifyWindows(
+      [win({ exeName: 'searchhost.exe', exStyle: 0x8 | 0x20 })],
+      examBounds,
+      1
+    )
+    expect(normal).toHaveLength(0)
+
+    const hidden = classifyWindows(
+      [win({ exeName: 'explorer.exe', displayAffinity: 0x11, exStyle: 0x8 | 0x20 })],
+      examBounds,
+      1
+    )
+    expect(hidden).toHaveLength(1)
+    expect(hidden[0]!.code).toBe('CAPTURE_EVADING_WINDOW_DETECTED')
   })
 
   it('หน้าต่างของตัวแอปสอบเอง (ownPid) ถูกข้าม', () => {

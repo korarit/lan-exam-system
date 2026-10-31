@@ -38,9 +38,9 @@ function buildCommand(
   const absEntry = path.join(runDir, entryPoint)
   switch (language) {
     case 'python': case 'python-backend':
-      return { cmd: 'python', args: [absEntry], cwd: runDir }
+      return { cmd: 'python', args: ['-B', absEntry], cwd: runDir }
     case 'javascript': case 'node-backend':
-      return { cmd: 'node', args: [absEntry], cwd: runDir }
+      return { cmd: 'node', args: ['--max-old-space-size=256', absEntry], cwd: runDir }
     case 'typescript':
       // ใช้ node + ts transpile หน้างานไม่ได้ — ต้อง bundle ด้วย esbuild ก่อน (ดู frontend-runner)
       return { error: 'TypeScript ต้อง bundle ด้วย esbuild ก่อนรัน — หรือรันผ่าน tsx ถ้าติดตั้งในเครื่อง' }
@@ -138,9 +138,29 @@ function spawnWithTimeout(
     let stdout = ''
     let stderr = ''
     let timedOut = false
+    const isWindows = process.platform === 'win32'
+    let spawnCmd = cmd
+    let spawnArgs = args
+    if (!isWindows) {
+      // จำกัดทรัพยากรระดับ process (CPU/ไฟล์/จำนวนโปรเซส) แบบ best-effort
+      const cpuSeconds = Math.max(2, Math.ceil(opts.timeoutMs / 1000) + 2)
+      const limits =
+        `ulimit -t ${cpuSeconds} 2>/dev/null; ` +
+        'ulimit -f 65536 2>/dev/null; ' +
+        'ulimit -u 64 2>/dev/null; ' +
+        'exec "$@"'
+      spawnCmd = 'sh'
+      spawnArgs = ['-c', limits, '--', cmd, ...args]
+    }
     let child: ReturnType<typeof spawn>
     try {
-      child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env, windowsHide: true, timeout: opts.timeoutMs })
+      child = spawn(spawnCmd, spawnArgs, {
+        cwd: opts.cwd,
+        env: opts.env,
+        windowsHide: true,
+        timeout: opts.timeoutMs,
+        detached: !isWindows
+      })
       // Phase 9.5: ลงทะเบียน pid ชั่วคราวให้ guard ข้ามการฟ้องโปรเซสลูกของ sandbox เอง
       if (child.pid !== undefined) {
         authorizedChildProcesses.register(child.pid, opts.reason ?? 'cli-run', opts.timeoutMs + 60_000)
@@ -156,8 +176,11 @@ function spawnWithTimeout(
     const timer = setTimeout(() => {
       timedOut = true
       try {
-        if (process.platform === 'win32') { try { require('node:child_process').execSync(`taskkill /pid ${child.pid} /T /F`) } catch { child.kill('SIGKILL') } }
-        else child.kill('SIGKILL')
+        if (isWindows) {
+          try { require('node:child_process').execSync(`taskkill /pid ${child.pid} /T /F`) } catch { child.kill('SIGKILL') }
+        } else if (child.pid !== undefined) {
+          try { process.kill(-child.pid, 'SIGKILL') } catch { child.kill('SIGKILL') }
+        }
       } catch { /* noop */ }
     }, opts.timeoutMs)
     child.stdout?.on('data', (d: Buffer) => {

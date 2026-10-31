@@ -1,6 +1,7 @@
 import os from 'node:os'
 import type { DetectionEvent, DetectionPolicyBody } from '@shared/policy-schema'
 import { makeDetectionEvent } from './process-inspector'
+import { runPowerShell } from './system-probes'
 
 /* ============================================================
  * HardwareVmGuard — Phase 3a.7
@@ -88,6 +89,17 @@ export function analyzeVmFingerprint(input: {
   return { isVm: signals.length > 0, signals }
 }
 
+/** Windows: ชื่อ session ที่กำลังใช้งานจริง (บรรทัดที่ขึ้นต้นด้วย > จาก query session) */
+export async function readActiveSessionNameWindows(): Promise<string | null> {
+  const output = await runPowerShell('query session 2>$null')
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.trimStart().startsWith('>')) continue
+    const name = line.replace(/^\s*>/, '').trim().split(/\s+/)[0]
+    if (name) return name
+  }
+  return null
+}
+
 export interface DisplaySnapshot {
   id: number
   label: string
@@ -98,6 +110,8 @@ export interface HardwareVmGuardOptions {
   emit: (event: DetectionEvent) => void
   /** ต่อ display เมื่อเกิด hotplug (จาก electron screen module) */
   onDisplayChanged?: (change: 'added' | 'removed' | 'metrics-changed') => void
+  /** ชื่อ session ที่ใช้งานอยู่ (inject ได้เพื่อทดสอบ) */
+  getActiveSessionName?: () => Promise<string | null>
   now?: () => number
 }
 
@@ -107,12 +121,22 @@ export class HardwareVmGuard {
   private started = false
   private lastTickAtMs = 0
   private displayCount = 0
-  private initialSessionName: string | null = null
   private unsubscribeDisplay: (() => void) | null = null
+  private lastVmScanAtMs = 0
+  private remoteReported = false
+  private lastSessionCheckAtMs = 0
+  private cachedSessionName: string | null = null
+  private readonly getActiveSessionName: () => Promise<string | null>
+  private static readonly VM_SCAN_INTERVAL_MS = 5 * 60_000
+  private static readonly SESSION_CHECK_INTERVAL_MS = 15_000
 
   constructor(private readonly opts: HardwareVmGuardOptions) {
     this.now = opts.now ?? Date.now
-    this.initialSessionName = process.env.SESSIONNAME ?? null
+    this.getActiveSessionName =
+      opts.getActiveSessionName ??
+      (process.platform === 'win32'
+        ? readActiveSessionNameWindows
+        : async () => process.env.SESSIONNAME ?? null)
   }
 
   getLastTickAtMs(): number {
@@ -132,6 +156,12 @@ export class HardwareVmGuard {
 
   /** ตรวจ VM ครั้งเดียวตอนเข้า Lobby (รายงานสถานะ ไม่ใช่การตัดสิน) */
   async scanVmEnvironment(): Promise<DetectionEvent | null> {
+    const event = await this.detectVmEnvironment()
+    if (event) this.opts.emit(event)
+    return event
+  }
+
+  private async detectVmEnvironment(): Promise<DetectionEvent | null> {
     try {
       const si = (await import('systeminformation')).default
       const [system, graphics] = await Promise.all([si.system(), si.graphics()])
@@ -146,15 +176,13 @@ export class HardwareVmGuard {
         macAddresses: macs
       })
       if (!fingerprint.isVm) return null
-      const event = makeDetectionEvent(
+      return makeDetectionEvent(
         'VM_ENVIRONMENT_DETECTED',
         this.detectorId,
         { signals: fingerprint.signals.join(';') },
         undefined,
         this.now
       )
-      this.opts.emit(event)
-      return event
     } catch {
       return null
     }
@@ -175,22 +203,39 @@ export class HardwareVmGuard {
     )
   }
 
-  /** ตรวจ remote session ที่ต่างจากตอนเริ่ม (RDP/ข้ามเครื่อง) */
-  scanOnce(): DetectionEvent[] {
+  /** ตรวจ remote session และสภาพแวดล้อมเสมือนเป็นระยะ */
+  async scanOnce(): Promise<DetectionEvent[]> {
     this.lastTickAtMs = this.now()
     const events: DetectionEvent[] = []
-    const current = process.env.SESSIONNAME ?? null
-    // RDP จะเปลี่ยน SESSIONNAME จาก Console เป็น RDP-Tcp#N
     if (
-      this.initialSessionName === 'Console' &&
-      current &&
-      current.toLowerCase().startsWith('rdp')
+      this.lastSessionCheckAtMs === 0 ||
+      this.now() - this.lastSessionCheckAtMs >= HardwareVmGuard.SESSION_CHECK_INTERVAL_MS
     ) {
-      events.push(
-        makeDetectionEvent('REMOTE_SESSION_SUSPECTED', this.detectorId, {
-          sessionName: current
-        })
-      )
+      this.lastSessionCheckAtMs = this.now()
+      try {
+        this.cachedSessionName = await this.getActiveSessionName()
+      } catch {
+        this.cachedSessionName = null
+      }
+    }
+    const current = this.cachedSessionName ?? process.env.SESSIONNAME ?? null
+    // ตรวจ session ที่ขึ้นต้นด้วย RDP (รายงานครั้งเดียวต่อรอบการตรวจจับ)
+    if (current && current.toLowerCase().startsWith('rdp')) {
+      if (!this.remoteReported) {
+        this.remoteReported = true
+        events.push(
+          makeDetectionEvent('REMOTE_SESSION_SUSPECTED', this.detectorId, {
+            sessionName: current
+          })
+        )
+      }
+    } else {
+      this.remoteReported = false
+    }
+    if (this.now() - this.lastVmScanAtMs >= HardwareVmGuard.VM_SCAN_INTERVAL_MS) {
+      this.lastVmScanAtMs = this.now()
+      const vmEvent = await this.detectVmEnvironment()
+      if (vmEvent) events.push(vmEvent)
     }
     for (const event of events) this.opts.emit(event)
     return events

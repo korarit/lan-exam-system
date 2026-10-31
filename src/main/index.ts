@@ -1,9 +1,10 @@
 import { app, BrowserWindow } from 'electron'
+import fs from 'node:fs'
 import path from 'node:path'
 import { pbkdf2Sync } from 'node:crypto'
 import { IpcEventSchemas, type IpcEventChannel } from '@shared/ipc-channels'
 import { NetMsgType } from '@shared/protocol-schema'
-import { parseRuntimeArgs } from './runtime-args'
+import { applyRuntimeArgPolicy, parseRuntimeArgs } from './runtime-args'
 import { IpcRouter, createElectronIpcRegistrar } from './ipc/router'
 import { registerAppHandlers, type AppRuntimeState } from './ipc/app-handlers'
 import { registerNetworkHandlers, forwardConnectionState } from './ipc/network-handlers'
@@ -42,6 +43,7 @@ import { RoomDiscoveryListener } from './network/discovery'
 import { ExamTlsClient } from './network/tls-client'
 import { CoreSessionManager } from './host/core-session-manager'
 import { GuardEngine } from './guard/guard-engine'
+import { makeDetectionEvent } from './guard/process-inspector'
 import { NativeKeyboardGuard } from './guard/native-bridge'
 import { AttestationResponder } from './attestation/client-responder'
 import { AttestationHostService, type AttestationFailure } from './attestation/host-verifier'
@@ -52,7 +54,8 @@ import { inspectLaunch, describeFindings, isAllowedInDev, type LaunchFinding } f
  * Phase 4 — Launch Guard: วิ่งเป็นบรรทัดแรกสุด (ก่อนสิ่งใด ๆ ของแอป)
  * Production: พบ flag/env อันตราย → ปฏิเสธการรันทันที (fail-closed)
  * ============================================================ */
-const IS_DEV_BUILD = process.env.NODE_ENV !== 'production'
+const IS_PACKAGED = app.isPackaged
+const IS_DEV_BUILD = !IS_PACKAGED
 const rawLaunchFindings = inspectLaunch({
   argv: process.argv.slice(1),
   execArgv: process.execArgv,
@@ -78,7 +81,16 @@ if (launchFindings.length > 0) {
 const attestationStrictToggle = { enforced: process.env.ZTEXAM_STRICT_ATTESTATION === '1' }
 
 /* ---------- จัดการ isolation ของ multi-instance ก่อนพร้อมใช้งาน ---------- */
-const runtime = parseRuntimeArgs(process.argv)
+const runtime = applyRuntimeArgPolicy(parseRuntimeArgs(process.argv), {
+  production: IS_PACKAGED,
+  ...(process.env.ZTEXAM_ALLOWED_PROFILES !== undefined
+    ? {
+        allowedProfiles: process.env.ZTEXAM_ALLOWED_PROFILES.split(',')
+          .map((id) => id.trim())
+          .filter((id) => id.length > 0)
+      }
+    : {})
+})
 const defaultUserData = app.getPath('userData')
 // แยก userData ต่อ profile เพื่อไม่ให้ cache/cookies/SQLite ของ host กับ student ชนกัน
 app.setPath('userData', path.join(defaultUserData, `instance-${runtime.profileId}`))
@@ -116,6 +128,14 @@ let attestationHost: AttestationHostService | null = null
 let lastJoinedHostIp: string | null = null
 /** Room ID ที่เข้าล่าสุด (ring buffer ใช้ตั้งชื่อโฟลเดอร์ชั่วคราว — Phase 3c) */
 let lastJoinedRoomId: string | null = null
+/** สถานะออนไลน์รอบก่อนของแต่ละคน (ใช้ตรวจการเปลี่ยนสถานะ) */
+const studentOnlineState = new Map<string, boolean>()
+/** ช่วงสอบฝั่งนักเรียนกำลังทำงานอยู่หรือไม่ (ใช้ตัดสินว่าจะรายงาน focus หรือไม่) */
+let studentExamRunning = false
+let studentExamMode: 'closed' | 'in-app-docs' | 'external-tools' = 'closed'
+let blurStartedAtMs = 0
+let blurBriefTimer: NodeJS.Timeout | null = null
+let blurProlongedTimer: NodeJS.Timeout | null = null
 
 /** late-bound hook: เรียกเมื่อนักเรียน reconnect/handshake สำเร็จ */
 let studentEstablishedHandler: ((studentId: string) => void) | null = null
@@ -445,6 +465,22 @@ function ensureRoomManager(): HostRoomManager {
       sendEventToWindow('host:students-updated', { students })
       // Phase 3b: สถานะหลุด/กลับมาเชื่อมต่อ → triage (ลำดับความสำคัญของ DISCONNECTED)
       for (const student of students) {
+        const wasOnline = studentOnlineState.get(student.studentId)
+        if (wasOnline === true && !student.online) {
+          try {
+            ensureTriageService().recordHostEvent(
+              student.studentId,
+              'STUDENT_LINK_LOST',
+              'warning',
+              'ขาดการเชื่อมต่อระหว่างการสอบ',
+              { lastSeenAtMs: student.lastSeenAtMs ?? 0 },
+              10
+            )
+          } catch {
+            // chain ยังไม่พร้อม — triage ยังแสดงสถานะหลุดตามปกติ
+          }
+        }
+        studentOnlineState.set(student.studentId, student.online)
         triageService?.setStudentConnection(student.studentId, student.online)
         // Phase 4: หลุดการรับ → ยก pending challenge (จะถูกท้าถามใหม่ตอน reconnect)
         if (!student.online) attestationHost?.forget(student.studentId)
@@ -452,6 +488,7 @@ function ensureRoomManager(): HostRoomManager {
     },
     onRoomClosed: () => {
       sendEventToWindow('host:students-updated', { students: [] })
+      studentOnlineState.clear()
       // Phase 3a-plus: เก็บกวาดของค้างของห้องเก่า (preview + ค่าทับ enforcement)
       docPreview?.close()
       ensureDomainAllowlist().setEnforcementOverride(null)
@@ -477,9 +514,47 @@ function ensureRoomManager(): HostRoomManager {
   return roomManager
 }
 
+/** ที่เก็บโทเคนเชื่อมต่อกลับต่อ (room, student) — ใช้ภายในเครื่องนักเรียนเท่านั้น */
+function reconnectTokenPath(): string {
+  return path.join(app.getPath('userData'), 'sessions', 'reconnect.json')
+}
+
+function loadReconnectToken(roomId: string, studentId: string): string | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(reconnectTokenPath(), 'utf8')) as Record<string, unknown>
+    const value = raw[`${roomId}:${studentId}`]
+    return typeof value === 'string' ? value : null
+  } catch {
+    return null
+  }
+}
+
+function saveReconnectToken(roomId: string, studentId: string, token: string): void {
+  try {
+    const file = reconnectTokenPath()
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    let map: Record<string, string> = {}
+    try {
+      map = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, string>
+    } catch {
+      map = {}
+    }
+    map[`${roomId}:${studentId}`] = token
+    fs.writeFileSync(file, JSON.stringify(map), { encoding: 'utf8', mode: 0o600 })
+  } catch {
+    // เขียนไม่ได้ — การเชื่อมต่อรอบนี้ยังใช้โทเคนในหน่วยความจำได้
+  }
+}
+
 function ensureStudentClient(): ExamTlsClient {
   studentClient ??= new ExamTlsClient({
+    getReconnectToken: loadReconnectToken,
+    onReconnectToken: saveReconnectToken,
     onConnectionState: (status) => {
+      if (status.state === 'closed' || status.state === 'rejected') {
+        studentExamRunning = false
+        clearBlurTimers()
+      }
       // Phase 4: ท่อใหม่ = exporter คนละค่า — เครื่องนักเรียนต้องส่ง manifest ใหม่หลัง reconnect
       if (status.state === 'connecting') ensureAttestationResponder(true).resetOnReconnect()
       // Phase 5: หลุดการเชื่อมต่อ → ซ่อนแผงเอกสาร (fail-closed) / กลับมาเมื่อ reconnect สำเร็จ
@@ -493,7 +568,25 @@ function ensureStudentClient(): ExamTlsClient {
       onNetMessage: (type, payload) => {
         // Phase 5: เริ่มการสอบ → เตรียมโครง Mode 2/3 (แผงเอกสาร, proxy, floating HUD)
         if (type === NetMsgType.examStarted) {
-          void prepareExamModeSurface(payload as { examMode?: string; docsUrl?: string | null })
+          const started = payload as { examMode?: 'closed' | 'in-app-docs' | 'external-tools'; docsUrl?: string | null }
+          studentExamRunning = true
+          studentExamMode = started.examMode ?? 'closed'
+          clearBlurTimers()
+          try {
+            ensureStudentClient().setExamUiState('focused', null)
+          } catch {
+            // client ยังไม่พร้อม — heartbeat รอบถัดไปจะอัปเดตเอง
+          }
+          void prepareExamModeSurface(started)
+        }
+        if (type === NetMsgType.stateRecovery) {
+          const recovered = payload as { examMode?: 'closed' | 'in-app-docs' | 'external-tools' }
+          studentExamRunning = true
+          if (recovered.examMode) studentExamMode = recovered.examMode
+        }
+        if (type === NetMsgType.timeUp || type === NetMsgType.examCompleted) {
+          studentExamRunning = false
+          clearBlurTimers()
         }
         // Phase 2 (ท่อกลาง modules): ack งานที่ส่ง + state เริ่มต้นของโมดูล
         if (type === NetMsgType.moduleAck) {
@@ -743,13 +836,78 @@ function sendEventToWindow(channel: string, payload: unknown): void {
   }
 }
 
+function clearBlurTimers(): void {
+  if (blurBriefTimer) clearTimeout(blurBriefTimer)
+  if (blurProlongedTimer) clearTimeout(blurProlongedTimer)
+  blurBriefTimer = null
+  blurProlongedTimer = null
+}
+
+function handleStudentWindowBlur(): void {
+  if (state.role !== 'student' || !studentExamRunning) return
+  if (studentExamMode === 'external-tools') return
+  clearBlurTimers()
+  blurStartedAtMs = Date.now()
+  try {
+    ensureStudentClient().setExamUiState('blurred', null)
+  } catch {
+    // ยังไม่มี client — ข้ามการอัปเดตสถานะ
+  }
+  blurBriefTimer = setTimeout(() => {
+    blurBriefTimer = null
+    if (state.role !== 'student' || !studentExamRunning || studentExamMode === 'external-tools') return
+    ensureGuardEngine().pushExternalEvent(
+      makeDetectionEvent('WINDOW_BLUR_BRIEF', 'focus-guard', {
+        durationMs: String(Date.now() - blurStartedAtMs)
+      })
+    )
+  }, 1_000)
+  blurProlongedTimer = setTimeout(() => {
+    blurProlongedTimer = null
+    if (state.role !== 'student' || !studentExamRunning || studentExamMode === 'external-tools') return
+    ensureGuardEngine().pushExternalEvent(
+      makeDetectionEvent('WINDOW_BLUR_PROLONGED', 'focus-guard', {
+        durationMs: String(Date.now() - blurStartedAtMs)
+      })
+    )
+  }, 15_000)
+}
+
+function handleStudentWindowFocus(): void {
+  if (state.role !== 'student') return
+  clearBlurTimers()
+  blurStartedAtMs = 0
+  try {
+    ensureStudentClient().setExamUiState('focused', null)
+  } catch {
+    // ยังไม่มี client — ข้ามการอัปเดตสถานะ
+  }
+}
+
 function createWindow(): void {
   mainWindow = createMainWindow({
     role: state.role,
-    isDev: process.env.NODE_ENV !== 'production'
+    isDev: IS_DEV_BUILD
   })
-  enforceKioskInputBlocking(mainWindow)
+  enforceKioskInputBlocking(mainWindow, () => state.role === 'student' && studentExamRunning)
+  mainWindow.webContents.on('before-input-event' as never, (event: { preventDefault(): void }, input: { key: string; control: boolean; meta: boolean; shift: boolean; alt: boolean }) => {
+    if (state.role !== 'student' || !studentExamRunning) return
+    const isPaste =
+      (input.control || input.meta) &&
+      (input.key === 'v' || input.key === 'V') &&
+      !input.shift &&
+      !input.alt
+    if (!isPaste) return
+    try {
+      if (!ensureGuardEngine().clipboard.interceptPaste()) event.preventDefault()
+    } catch {
+      // guard ยังไม่พร้อม — ปล่อยผ่าน
+    }
+  })
+  mainWindow.on('blur', handleStudentWindowBlur)
+  mainWindow.on('focus', handleStudentWindowFocus)
   mainWindow.on('closed', () => {
+    clearBlurTimers()
     mainWindow = null
   })
 }

@@ -1,3 +1,4 @@
+import { app } from 'electron'
 import type { IpcRouter } from './router'
 import type { SelectRoleRequest, SelectRoleResponse, AppInfo } from '@shared/ipc-channels'
 import { AppRoleSchema } from '@shared/types/role'
@@ -34,7 +35,7 @@ export function registerAppHandlers(
       platform: process.platform,
       profileId: state.profileId,
       role: state.role,
-      isDev: process.env.NODE_ENV !== 'production'
+      isDev: !app.isPackaged
     }
   })
 }

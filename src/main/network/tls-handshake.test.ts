@@ -113,6 +113,51 @@ describe('TLS 1.3 + PIN handshake (integration)', () => {
     expect(server.studentCount).toBe(0)
   })
 
+  it('requires the issued token before an existing identity can rejoin', async () => {
+    const pin = generateRoomPin()
+    const { port } = await startServer(pin)
+
+    const first = new ExamTlsClient({ onConnectionState: () => undefined })
+    CLEANUPS.push(() => first.stop())
+    const joined = await first.connect({
+      host: '127.0.0.1',
+      port,
+      roomId: ROOM_ID,
+      roomPin: pin,
+      studentId: 'std-rejoin',
+      studentName: 'ผู้เรียนเดิม'
+    })
+    expect(joined.reconnectToken.length).toBeGreaterThanOrEqual(16)
+    first.stop()
+    await wait(150)
+
+    const impostor = new ExamTlsClient({ onConnectionState: () => undefined })
+    CLEANUPS.push(() => impostor.stop())
+    await expect(
+      impostor.connect({
+        host: '127.0.0.1',
+        port,
+        roomId: ROOM_ID,
+        roomPin: pin,
+        studentId: 'std-rejoin',
+        studentName: 'ผู้มาแทน'
+      })
+    ).rejects.toBeInstanceOf(JoinRejectedError)
+
+    const returning = new ExamTlsClient({ onConnectionState: () => undefined })
+    CLEANUPS.push(() => returning.stop())
+    const again = await returning.connect({
+      host: '127.0.0.1',
+      port,
+      roomId: ROOM_ID,
+      roomPin: pin,
+      studentId: 'std-rejoin',
+      studentName: 'ผู้เรียนเดิม',
+      reconnectToken: joined.reconnectToken
+    })
+    expect(again.reconnectToken).toBe(joined.reconnectToken)
+  }, 15000)
+
   it('replies HEARTBEAT_PONG with host-authoritative time', async () => {
     const pin = generateRoomPin()
     const { port } = await startServer(pin)

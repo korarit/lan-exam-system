@@ -20,6 +20,7 @@ interface StudentRecord {
   currentQuestionIndex: number | null
   lastSeenAtMs: number | null
   exporter: Buffer | null
+  reconnectToken: string
 }
 
 interface PendingHandshake {
@@ -244,6 +245,7 @@ export class ExamTlsServer {
           studentId: string
           studentName: string
           clientAuthHmac: string
+          reconnectToken?: string
         }
         const { clientNonce, serverNonce } = pending
         if (!clientNonce || !serverNonce) {
@@ -263,9 +265,22 @@ export class ExamTlsServer {
           return
         }
         const existing = this.students.get(req.studentId)
-        if (existing && existing.online) {
-          this.rejectJoin(connection, 'duplicate-id')
-          return
+        if (existing) {
+          // ตรวจโทเคนของช่องเดิมก่อนรับ join
+          if (!req.reconnectToken || req.reconnectToken !== existing.reconnectToken) {
+            this.rejectJoin(connection, 'duplicate-id')
+            return
+          }
+          // ปิดท่อเก่าก่อนรับท่อใหม่
+          for (const old of this.liveConnections.get(existing.studentId) ?? []) {
+            try {
+              old.destroy()
+            } catch {
+              // ปิดไปแล้ว
+            }
+          }
+          this.liveConnections.delete(existing.studentId)
+          existing.online = false
         }
         if (!existing && this.students.size >= (this.opts.maxStudents ?? 60)) {
           this.rejectJoin(connection, 'room-full')
@@ -291,7 +306,8 @@ export class ExamTlsServer {
           dynamicSessionKey: record.sessionKey.toString('base64'),
           serverTimeMs: Date.now(),
           remainingExamSeconds: this.remainingSeconds(),
-          studentCount: this.students.size
+          studentCount: this.students.size,
+          reconnectToken: record.reconnectToken
         })
         connection.setSessionKey(record.sessionKey)
         this.pending.delete(connection)
@@ -307,11 +323,12 @@ export class ExamTlsServer {
 
   private finishJoin(
     connection: SecureConnection,
-    req: { studentId: string; studentName: string }
+    req: { studentId: string; studentName: string; reconnectToken?: string }
   ): void {
     const sessionToken = generateSessionToken()
     const sessionKey = randomBytes(32)
     const exporter = connection.exportKeyingMaterial(32, TLS_EXPORTER_LABEL)
+    const reconnectToken = req.reconnectToken ?? generateSessionToken()
     const record: StudentRecord = {
       studentId: req.studentId,
       studentName: req.studentName,
@@ -321,7 +338,8 @@ export class ExamTlsServer {
       focusState: null,
       currentQuestionIndex: null,
       lastSeenAtMs: Date.now(),
-      exporter
+      exporter,
+      reconnectToken
     }
     this.students.set(req.studentId, record)
     // ส่ง JOIN_ACCEPTED ก่อนตั้ง session key ฝั่ง server:
@@ -332,7 +350,8 @@ export class ExamTlsServer {
       dynamicSessionKey: sessionKey.toString('base64'),
       serverTimeMs: Date.now(),
       remainingExamSeconds: this.remainingSeconds(),
-      studentCount: this.students.size
+      studentCount: this.students.size,
+      reconnectToken
     })
     connection.setSessionKey(sessionKey)
     this.pending.delete(connection)

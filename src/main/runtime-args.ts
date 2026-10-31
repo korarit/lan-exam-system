@@ -5,6 +5,15 @@ export interface RuntimeArgs {
   windowedKiosk: boolean
 }
 
+export interface RuntimeArgPolicy {
+  /** true = release build (packaged) */
+  production: boolean
+  /** deployment opt-in when a non-standard window mode is required */
+  allowWindowedKiosk?: boolean
+  /** optional allowlist for profile ids in production */
+  allowedProfiles?: readonly string[]
+}
+
 const ROLE_VALUES = new Set(['host', 'student'])
 
 export function parseRuntimeArgs(argv: readonly string[]): RuntimeArgs {
@@ -37,4 +46,19 @@ export function parseRuntimeArgs(argv: readonly string[]): RuntimeArgs {
     }
   }
   return args
+}
+
+/**
+ * ปรับค่าที่อ่านได้ตามนโยบายของ build
+ * - release build: ปิด windowed kiosk เว้นแต่ deployment เปิด opt-in
+ * - release build + allowlist: profile นอกรายการถูกตีกลับเป็นค่าเริ่มต้น
+ */
+export function applyRuntimeArgPolicy(args: RuntimeArgs, policy: RuntimeArgPolicy): RuntimeArgs {
+  if (!policy.production) return args
+  const next: RuntimeArgs = { ...args }
+  if (!policy.allowWindowedKiosk) next.windowedKiosk = false
+  if (policy.allowedProfiles !== undefined) {
+    if (!policy.allowedProfiles.includes(next.profileId)) next.profileId = 'default'
+  }
+  return next
 }

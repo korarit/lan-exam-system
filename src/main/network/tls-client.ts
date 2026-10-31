@@ -29,6 +29,7 @@ export interface ConnectOptions {
   studentName: string
   focusState?: FocusState
   currentQuestionIndex?: number | null
+  reconnectToken?: string
 }
 
 export interface JoinResult {
@@ -38,6 +39,7 @@ export interface JoinResult {
   serverTimeMs: number
   remainingExamSeconds: number
   studentCount: number
+  reconnectToken: string
 }
 
 export class JoinRejectedError extends Error {
@@ -57,6 +59,10 @@ export interface ExamTlsClientOptions {
   onMessage?: (type: string, payload: unknown) => void
   /** Phase 3c: binary frame จากเครื่องแม่ (segment ที่ขอ) */
   onBinary?: (subType: number, payload: Buffer) => void
+  /** โหลดโทเคนเชื่อมต่อกลับที่เก็บไว้ (ไม่บังคับ) */
+  getReconnectToken?: (roomId: string, studentId: string) => string | null
+  /** เก็บโทเคนเชื่อมต่อกลับหลัง join สำเร็จ (ไม่บังคับ) */
+  onReconnectToken?: (roomId: string, studentId: string, token: string) => void
 }
 
 /**
@@ -77,6 +83,7 @@ export class ExamTlsClient {
   private connectOptions: ConnectOptions | null = null
   private sessionToken: string | null = null
   private dynamicSessionKey: Buffer | null = null
+  private reconnectToken: string | null = null
 
   constructor(private readonly opts: ExamTlsClientOptions) {}
 
@@ -109,11 +116,12 @@ export class ExamTlsClient {
     this.currentQuestionIndex = currentQuestionIndex
   }
 
-  /** ส่งข้อความ exam ของ renderer (SUBMIT_ANSWER / AUTOSAVE_DRAFT / ฯลฯ) ผ่าน HMAC envelope */
-  sendExamMessage(type: string, payload: unknown): void {
-    if (this.stopped) return
+  /** ส่งข้อความ exam ของ renderer (SUBMIT_ANSWER / AUTOSAVE_DRAFT / ฯลฯ) ผ่าน HMAC envelope — false = ส่งไม่ได้ */
+  sendExamMessage(type: string, payload: unknown): boolean {
+    if (this.stopped) return false
     const connection = this.connection
-    if (connection && !connection.isDestroyed) connection.send(type, payload)
+    if (!connection || connection.isDestroyed) return false
+    return connection.send(type, payload)
   }
 
   /** Phase 3c: ส่ง binary frame ไปเครื่องแม่ (thumbnail / ฯลฯ) */
@@ -125,10 +133,16 @@ export class ExamTlsClient {
   async connect(options: ConnectOptions): Promise<JoinResult> {
     this.teardown()
     this.stopped = false
-    this.connectOptions = options
+    const stored =
+      options.reconnectToken ??
+      this.opts.getReconnectToken?.(options.roomId, options.studentId) ??
+      undefined
+    const nextOptions: ConnectOptions = stored ? { ...options, reconnectToken: stored } : options
+    this.connectOptions = nextOptions
+    this.reconnectToken = stored ?? null
     this.reconnectAttempt = 0
     this.setState('connecting')
-    const result = await this.connectOnce(options)
+    const result = await this.connectOnce(nextOptions)
     this.sessionToken = result.sessionToken
     return result
   }
@@ -223,7 +237,8 @@ export class ExamTlsClient {
     connection.send(NetMsgType.joinRequest, {
       studentId: options.studentId,
       studentName: options.studentName,
-      clientAuthHmac: clientAuth.toString('base64')
+      clientAuthHmac: clientAuth.toString('base64'),
+      ...(options.reconnectToken ? { reconnectToken: options.reconnectToken } : {})
     })
 
     // 6. JOIN_ACCEPTED / JOIN_REJECTED
@@ -243,10 +258,18 @@ export class ExamTlsClient {
       serverTimeMs: number
       remainingExamSeconds: number
       studentCount: number
+      reconnectToken?: string
     }
     const dynamicSessionKey = Buffer.from(accepted.dynamicSessionKey, 'base64')
     connection.setSessionKey(dynamicSessionKey)
     this.dynamicSessionKey = dynamicSessionKey
+    if (accepted.reconnectToken) {
+      this.reconnectToken = accepted.reconnectToken
+      if (this.connectOptions) {
+        this.connectOptions = { ...this.connectOptions, reconnectToken: accepted.reconnectToken }
+      }
+      this.opts.onReconnectToken?.(options.roomId, options.studentId, accepted.reconnectToken)
+    }
 
     const result: JoinResult = {
       sessionToken: accepted.sessionToken,
@@ -254,7 +277,8 @@ export class ExamTlsClient {
       tlsExporter,
       serverTimeMs: accepted.serverTimeMs,
       remainingExamSeconds: accepted.remainingExamSeconds,
-      studentCount: accepted.studentCount
+      studentCount: accepted.studentCount,
+      reconnectToken: accepted.reconnectToken ?? this.reconnectToken ?? ''
     }
     this.tlsExporter = tlsExporter
     this.sessionToken = accepted.sessionToken

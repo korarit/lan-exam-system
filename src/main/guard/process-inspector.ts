@@ -47,6 +47,21 @@ export function normalizeExeName(name: string): string {
   return name.toLowerCase().trim()
 }
 
+const USER_WRITABLE_MARKERS = [
+  '\\appdata\\',
+  '\\temp\\',
+  '\\downloads\\',
+  '\\desktop\\',
+  '\\users\\public\\'
+]
+
+/** ไฟล์ที่ผู้ใช้ทั่วไปเขียนทับได้ (ใช้เป็นสัญญาณประกอบการตรวจโปรเซสใหม่) */
+export function isUserWritablePath(filePath: string): boolean {
+  if (!filePath) return false
+  const lower = filePath.toLowerCase()
+  return USER_WRITABLE_MARKERS.some((marker) => lower.includes(marker))
+}
+
 function textMatches(haystack: string | undefined, needles: string[] | undefined): boolean {
   if (!haystack || !needles || needles.length === 0) return false
   const lower = haystack.toLowerCase()
@@ -124,6 +139,7 @@ interface SiProcessEntry {
   command?: string
   mem?: number
   cpu?: number
+  path?: string
 }
 
 async function listProcessesWithSi(): Promise<ProcessSnapshot[]> {
@@ -134,7 +150,7 @@ async function listProcessesWithSi(): Promise<ProcessSnapshot[]> {
     .map((p: SiProcessEntry) => ({
       pid: p.pid,
       exeName: (p.name ?? '').toLowerCase(),
-      exePath: '',
+      exePath: p.path ?? '',
       commandLine: p.command ?? '',
       memBytes: p.mem ?? 0,
       cpuPercent: p.cpu ?? 0
@@ -173,6 +189,7 @@ async function listListeningPortsWithSi(): Promise<ListeningPort[]> {
 function startWindowsProcessTrace(
   onProcess: (p: EphemeralProcess) => void
 ): (() => void) | null {
+  if (process.platform !== 'win32') return null
   const script = [
     `$null = Register-CimIndicationEvent -Query "SELECT * FROM Win32_ProcessStartTrace"`,
     `while ($true) {`,
@@ -182,33 +199,63 @@ function startWindowsProcessTrace(
     `  Remove-Event -EventIdentifier $evt.EventIdentifier`,
     `}`
   ].join('\n')
+  let stopped = false
   let child: ChildProcess | null = null
-  try {
-    child = spawn(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-      { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
-    )
-  } catch {
-    return null
+  let restartTimer: NodeJS.Timeout | null = null
+
+  const scheduleRestart = (): void => {
+    if (stopped || restartTimer) return
+    restartTimer = setTimeout(() => {
+      restartTimer = null
+      launch()
+    }, 2_000)
   }
-  let buffer = ''
-  child.stdout?.on('data', (chunk: Buffer) => {
-    buffer += chunk.toString('utf8')
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() ?? ''
-    for (const p of parseJsonLines<EphemeralProcess>(lines.join('\n'))) {
-      if (typeof p.pid === 'number' && typeof p.name === 'string') {
-        onProcess({ pid: p.pid, name: p.name.toLowerCase(), ppid: p.ppid ?? 0 })
-      }
+
+  const launch = (): void => {
+    if (stopped) return
+    let proc: ChildProcess
+    try {
+      proc = spawn(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
+      )
+    } catch {
+      child = null
+      scheduleRestart()
+      return
     }
-  })
+    child = proc
+    let buffer = ''
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString('utf8')
+      const lines = buffer.split(/\r?\n/)
+      buffer = lines.pop() ?? ''
+      for (const p of parseJsonLines<EphemeralProcess>(lines.join('\n'))) {
+        if (typeof p.pid === 'number' && typeof p.name === 'string') {
+          onProcess({ pid: p.pid, name: p.name.toLowerCase(), ppid: p.ppid ?? 0 })
+        }
+      }
+    })
+    const handleGone = (): void => {
+      if (child === proc) child = null
+      scheduleRestart()
+    }
+    proc.once('exit', handleGone)
+    proc.once('error', handleGone)
+  }
+
+  launch()
   return () => {
+    stopped = true
+    if (restartTimer) clearTimeout(restartTimer)
+    restartTimer = null
     try {
       child?.kill()
     } catch {
       // ปล่อยผ่าน
     }
+    child = null
   }
 }
 
@@ -243,6 +290,7 @@ export class ProcessInspector {
   private stopTrace: (() => void) | null = null
   /** hash ที่แจ้งไปแล้ว กันยิง event เดิมซ้ำรัว ๆ */
   private readonly reportedSignatures = new Map<string, number>()
+  private baselineProcesses: Set<string> | null = null
   private traceEnabled = false
   private lastScanAtMs = 0
 
@@ -262,6 +310,7 @@ export class ProcessInspector {
   }
 
   start(): void {
+    this.baselineProcesses = null
     if (this.traceEnabled) return
     this.traceEnabled = true
     const stop = this.startProcessTrace((p) => this.handleEphemeralProcess(p))
@@ -306,6 +355,11 @@ export class ProcessInspector {
       return []
     }
 
+    const captureBaseline = this.baselineProcesses === null
+    if (captureBaseline) {
+      this.baselineProcesses = new Set(processes.map((p) => p.exeName))
+    }
+
     // Windows: อ่าน PE VersionInfo ของ path ที่ยังไม่เคยแคชทีเดียว (batch)
     const uncached = processes
       .filter((p) => p.exePath && !this.metadataCache.hasCached(p.exePath))
@@ -318,20 +372,21 @@ export class ProcessInspector {
     for (const snapshot of processes) {
       // ไม่ตรวจโปรเซสของตัวเอง
       if (snapshot.pid === process.pid) continue
-      // Phase 9.5: ไม่ฟ้องโปรเซสลูกที่ code-ide sandbox สั่งรันเอง (กัน false positive
-      // เช่น SUSPICIOUS_COMPUTE_SPIKE ใส่ python.exe ที่กำลังรันโค้ดนักเรียน)
-      if (this.opts.isAuthorizedPid?.(snapshot.pid) === true) continue
+      // โปรเซสลูกของ sandbox: ข้ามการเทียบรายชื่อ
+      const authorized = this.opts.isAuthorizedPid?.(snapshot.pid) === true
       const metadata =
-        snapshot.exePath && process.platform === 'win32'
+        !authorized && snapshot.exePath && process.platform === 'win32'
           ? await this.metadataCache.get(snapshot.exePath, statFile(snapshot.exePath))
           : null
       const ports = portByPid.get(snapshot.pid)
-      const matches = matchProcessRules(
-        snapshot,
-        metadata,
-        policy.rules,
-        ports?.length ? { listeningPorts: ports } : undefined
-      )
+      const matches = authorized
+        ? []
+        : matchProcessRules(
+            snapshot,
+            metadata,
+            policy.rules,
+            ports?.length ? { listeningPorts: ports } : undefined
+          )
       for (const { rule, disguised } of matches) {
         const signature = `${rule.ruleId}:${snapshot.exeName}:${disguised ? 'd' : 'n'}`
         if (this.shouldReport(signature, disguised ? 30_000 : 15_000)) {
@@ -375,6 +430,31 @@ export class ProcessInspector {
               this.now
             )
           )
+        }
+      }
+      if (
+        !authorized &&
+        !captureBaseline &&
+        this.baselineProcesses &&
+        !this.baselineProcesses.has(snapshot.exeName) &&
+        isUserWritablePath(snapshot.exePath)
+      ) {
+        const signature = `unlisted:${snapshot.exePath.toLowerCase()}`
+        if (this.shouldReport(signature, 60_000)) {
+          events.push(
+            makeDetectionEvent(
+              'UNLISTED_PROCESS_DETECTED',
+              this.detectorId,
+              {
+                pid: String(snapshot.pid),
+                processName: snapshot.exeName,
+                path: snapshot.exePath.slice(0, 300)
+              },
+              undefined,
+              this.now
+            )
+          )
+          this.baselineProcesses.add(snapshot.exeName)
         }
       }
     }

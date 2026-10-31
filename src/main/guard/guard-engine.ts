@@ -25,8 +25,8 @@ import { authorizedChildProcesses } from '@modules/code-ide/main/authorized-proc
  * ============================================================ */
 
 export interface GuardEngineOptions {
-  /** ส่งข้อความผ่าน TLS ไปเครื่องแม่ (ครอบ HMAC โดย SecureConnection แล้ว) */
-  sendToHost: (type: string, payload: unknown) => void
+  /** ส่งข้อความผ่าน TLS ไปเครื่องแม่ (ครอบ HMAC โดย SecureConnection แล้ว) — false = ส่งไม่สำเร็จ */
+  sendToHost: (type: string, payload: unknown) => boolean | void
   /** ขอบเขตหน้าต่างข้อสอบ (ตรวจ overlay ทับจอ) */
   getExamBounds: () => Rect | null
   /** IP เครื่องแม่ + พอร์ต proxy (Mode 3) */
@@ -150,6 +150,8 @@ export class GuardEngine {
     }
     this.watchdog.start()
     this.processInspector.start()
+    this.overlayInspector.start()
+    this.networkInspector.start()
     this.inputClipboardGuard.start()
     this.hardwareVmGuard.start()
     this.scheduler.start()
@@ -193,11 +195,21 @@ export class GuardEngine {
 
   private flushEvents(): void {
     if (this.eventQueue.length === 0) return
-    const events = this.eventQueue.splice(0, MAX_EVENTS_PER_REPORT)
+    const events = this.eventQueue.slice(0, MAX_EVENTS_PER_REPORT)
+    let delivered = false
     try {
-      this.opts.sendToHost(NetMsgType.guardEvent, { events })
+      delivered = this.opts.sendToHost(NetMsgType.guardEvent, { events }) !== false
     } catch {
-      // สายหลุด — event ชุดนี้เสีย แต่การสอบยังต่อ (audit ฝั่ง host จะหายชุดเล็ก ๆ ตอนหลุด)
+      delivered = false
+    }
+    if (delivered) {
+      this.eventQueue.splice(0, events.length)
+      return
+    }
+    // คงคิวไว้สำหรับรอบถัดไป พร้อมจำกัดขนาดคิว
+    const cap = MAX_EVENTS_PER_REPORT * 50
+    if (this.eventQueue.length > cap) {
+      this.eventQueue.splice(0, this.eventQueue.length - cap)
     }
   }
 

@@ -57,6 +57,8 @@ export function buildEventSummary(event: DetectionEvent): string {
       return `เปลี่ยนชื่อไฟล์แอบรัน: ${d.displayName ?? process} (ในชื่อ ${d.actualName ?? d.path ?? 'ไม่ทราบชื่อจริง'})`
     case 'BLACKLISTED_PROCESS_DETECTED':
       return `เปิดโปรแกรมต้องห้าม: ${process || d.commandLine || 'ไม่ทราบชื่อ'}`
+    case 'UNLISTED_PROCESS_DETECTED':
+      return `โปรเซสใหม่จากโฟลเดอร์ผู้ใช้: ${process || d.commandLine || 'ไม่ทราบชื่อ'}`
     case 'FORBIDDEN_DNS_QUERY_DETECTED':
     case 'UNAUTHORIZED_DOMAIN_DETECTED':
       return `พยายามติดต่อโดเมนที่ไม่อนุญาต: ${d.domain ?? 'ไม่ทราบโดเมน'}`
@@ -66,6 +68,8 @@ export function buildEventSummary(event: DetectionEvent): string {
       return `หน้าต่างซ่อนจากการจับภาพหน้าจอ (Stealth Overlay): ${d.windowTitle ?? process}`
     case 'TOPMOST_OVERLAY_WINDOW_DETECTED':
       return `หน้าต่างลอยทับข้อสอบ: ${d.windowTitle ?? process}`
+    case 'LARGE_TOPMOST_WINDOW_DETECTED':
+      return `หน้าต่างลอยขนาดใหญ่ทับข้อสอบ: ${d.windowTitle ?? process}`
     case 'KIOSK_ESCAPE_ATTEMPT':
       return 'พยายามหลบหนีโหมด Kiosk'
     case 'SYNTHETIC_INPUT_INJECTED':

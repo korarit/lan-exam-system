@@ -165,6 +165,8 @@ export interface NetworkInspectorOptions {
   emit: (event: DetectionEvent) => void
   listDnsCache?: () => Promise<string[]>
   listSockets?: () => Promise<SocketInfo[]>
+  /** ค่า default gateway ปัจจุบัน (inject ได้เพื่อทดสอบ) */
+  getDefaultGateway?: () => Promise<string | null>
   now?: () => number
 }
 
@@ -173,8 +175,10 @@ export class NetworkInspector {
   private readonly now: () => number
   private readonly listDnsCache: () => Promise<string[]>
   private readonly listSockets: () => Promise<SocketInfo[]>
+  private readonly getDefaultGateway: () => Promise<string | null>
   private dnsBaseline: Set<string> | null = null
   private nicBaseline: Set<string> | null = null
+  private gatewayBaseline: string | null = null
   private readonly reportedDomains = new Map<string, number>()
 
   constructor(private readonly opts: NetworkInspectorOptions) {
@@ -183,6 +187,17 @@ export class NetworkInspector {
       opts.listDnsCache ??
       (process.platform === 'win32' ? readDnsCacheWindows : async () => [])
     this.listSockets = opts.listSockets ?? listConnectionsWithSi
+    this.getDefaultGateway =
+      opts.getDefaultGateway ??
+      (async () => {
+        try {
+          const si = (await import('systeminformation')).default
+          const gateway = await si.networkGatewayDefault()
+          return typeof gateway === 'string' && gateway.length > 0 ? gateway : null
+        } catch {
+          return null
+        }
+      })
   }
 
   getLastTickAtMs(): number {
@@ -193,6 +208,14 @@ export class NetworkInspector {
     // จับ baseline ตอนเริ่มสอบ
     this.dnsBaseline = null
     this.nicBaseline = new Set(Object.keys(os.networkInterfaces()).map((n) => n.toLowerCase()))
+    this.gatewayBaseline = null
+    void this.getDefaultGateway()
+      .then((gateway) => {
+        this.gatewayBaseline = gateway
+      })
+      .catch(() => {
+        this.gatewayBaseline = null
+      })
     void this.listDnsCache()
       .then((entries) => {
         this.dnsBaseline = new Set(entries.map((e) => e.toLowerCase()))
@@ -238,6 +261,24 @@ export class NetworkInspector {
     }
     if (!this.nicBaseline) {
       this.nicBaseline = new Set(Object.keys(currentNics).map((n) => n.toLowerCase()))
+    }
+    /* ---------- 2b) เส้นทางออกหลักเปลี่ยน ---------- */
+    try {
+      const gateway = await this.getDefaultGateway()
+      if (gateway && this.gatewayBaseline && gateway !== this.gatewayBaseline) {
+        events.push(
+          makeDetectionEvent('NETWORK_TUNNEL_OR_PROXY_TAMPER', this.detectorId, {
+            gateway,
+            baseline: this.gatewayBaseline
+          })
+        )
+        // อัปเดตค่าอ้างอิงหลังรายงาน เพื่อไม่ให้ยิงซ้ำทุกรอบเมื่อเส้นทางเปลี่ยนถาวร
+        this.gatewayBaseline = gateway
+      } else if (!this.gatewayBaseline && gateway) {
+        this.gatewayBaseline = gateway
+      }
+    } catch {
+      // อ่าน gateway ไม่ได้ — ข้ามรอบนี้
     }
     /* ---------- 3) Active sockets รายโปรเซส ---------- */
     try {

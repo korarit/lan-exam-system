@@ -38,10 +38,11 @@ describe('analyzeVmFingerprint — VM / Hypervisor Fingerprinting', () => {
 })
 
 describe('HardwareVmGuard — Display Hotplug', () => {
-  function makeGuard(events: DetectionEvent[]): HardwareVmGuard {
+  function makeGuard(events: DetectionEvent[], sessionName = 'Console'): HardwareVmGuard {
     return new HardwareVmGuard({
       getPolicy: () => null,
       emit: (e) => events.push(e),
+      getActiveSessionName: async () => sessionName,
       now: () => 1_000
     })
   }
@@ -72,16 +73,11 @@ describe('HardwareVmGuard — Display Hotplug', () => {
     expect(events[0]!.detail.change).toBe('added')
   })
 
-  it('remote session ที่ต่างจากตอนเริ่ม (Console → RDP) → REMOTE_SESSION_SUSPECTED', () => {
+  it('remote session (RDP) ตรวจได้ทุกกรณี → REMOTE_SESSION_SUSPECTED', async () => {
     const events: DetectionEvent[] = []
-    const guard = makeGuard(events)
+    const guard = makeGuard(events, 'RDP-Tcp#0')
     guard.start()
-    process.env.SESSIONNAME = 'RDP-Tcp#0'
-    try {
-      const produced = guard.scanOnce()
-      expect(produced.some((e) => e.code === 'REMOTE_SESSION_SUSPECTED')).toBe(true)
-    } finally {
-      delete process.env.SESSIONNAME
-    }
+    const produced = await guard.scanOnce()
+    expect(produced.some((e) => e.code === 'REMOTE_SESSION_SUSPECTED')).toBe(true)
   })
 })

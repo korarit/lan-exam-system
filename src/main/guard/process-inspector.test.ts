@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { matchProcessRules, makeDetectionEvent, ProcessInspector, type ProcessSnapshot } from './process-inspector'
+import {
+  isUserWritablePath,
+  matchProcessRules,
+  makeDetectionEvent,
+  ProcessInspector,
+  type ProcessSnapshot
+} from './process-inspector'
 import type { BinaryMetadata } from './binary-metadata'
 import type { DetectionPolicyBody, DetectionEvent } from '@shared/policy-schema'
 import { buildDefaultPolicy, DetectionPolicyBodySchema } from '@shared/policy-schema'
@@ -151,7 +157,7 @@ describe('ProcessInspector.scanOnce — ephemeral & sweep', () => {
     expect(events).toEqual([])
   })
 
-  it('Phase 9.5: pid ลูกของ code-ide sandbox ถูกข้ามทั้งหมด (กัน false positive ใส่โค้ดนักเรียน)', async () => {
+  it('Phase 9.5: pid ลูกของ code-ide sandbox ไม่ถูกเทียบรายชื่อ แต่ยังเฝ้าดูภาระเครื่อง', async () => {
     const events: DetectionEvent[] = []
     const inspector = new ProcessInspector({
       getPolicy: () => policy,
@@ -166,7 +172,51 @@ describe('ProcessInspector.scanOnce — ephemeral & sweep', () => {
       now: () => 1_000_000
     })
     const produced = await inspector.scanOnce()
-    expect(produced).toEqual([])
-    expect(events).toEqual([])
+    expect(
+      produced.some((e) => e.code === 'BLACKLISTED_PROCESS_DETECTED' || e.code === 'DISGUISED_PROCESS_DETECTED')
+    ).toBe(false)
+    expect(produced.some((e) => e.code === 'SUSPICIOUS_COMPUTE_SPIKE')).toBe(true)
+    expect(events.length).toBeGreaterThan(0)
+  })
+})
+
+describe('ProcessInspector.scanOnce — new process from user-writable location', () => {
+  it('isUserWritablePath แยกโฟลเดอร์ผู้ใช้ออกจาก Program Files', () => {
+    expect(isUserWritablePath('C:\\Users\\a\\AppData\\Local\\Temp\\x.exe')).toBe(true)
+    expect(isUserWritablePath('C:\\Users\\a\\Downloads\\x.exe')).toBe(true)
+    expect(isUserWritablePath('C:\\Program Files\\App\\x.exe')).toBe(false)
+    expect(isUserWritablePath('')).toBe(false)
+  })
+
+  it('โปรเซสใหม่ที่เริ่มหลัง baseline และอยู่ในโฟลเดอร์ผู้ใช้ → UNLISTED_PROCESS_DETECTED', async () => {
+    const events: DetectionEvent[] = []
+    let current: ProcessSnapshot[] = [
+      { pid: 10, exeName: 'explorer.exe', exePath: 'C:\\Windows\\explorer.exe', commandLine: '', memBytes: 0, cpuPercent: 0 }
+    ]
+    let nowMs = 1_000_000
+    const inspector = new ProcessInspector({
+      getPolicy: () => policy,
+      emit: (e) => events.push(e),
+      listProcesses: async () => current,
+      listListeningPorts: async () => [],
+      startProcessTrace: () => () => {},
+      now: () => nowMs
+    })
+    await inspector.scanOnce()
+    nowMs += 1_000
+    current = [
+      ...current,
+      {
+        pid: 20,
+        exeName: 'helper.exe',
+        exePath: 'C:\\Users\\a\\AppData\\Local\\Temp\\helper.exe',
+        commandLine: 'helper.exe',
+        memBytes: 0,
+        cpuPercent: 0
+      }
+    ]
+    const produced = await inspector.scanOnce()
+    expect(produced.some((e) => e.code === 'UNLISTED_PROCESS_DETECTED')).toBe(true)
+    expect(events.some((e) => e.code === 'UNLISTED_PROCESS_DETECTED')).toBe(true)
   })
 })

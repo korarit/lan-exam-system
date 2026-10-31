@@ -67,15 +67,18 @@ export class ClipboardStateTracker {
     this.lastInternalHash = sha256Hex(text)
   }
 
+  /** เนื้อหานี้มาจากการคัดลอกภายในแอปหรือไม่ */
+  isInternalText(text: string): boolean {
+    return text.length > 0 && sha256Hex(text) === this.lastInternalHash
+  }
+
   /** hash ของเนื้อหาปัจจุบันในคลิปบอร์ด (main เรียกทุก 1.5 วิ) */
   checkExternalInjection(clipboardText: string): ClipboardCheckResult {
     if (!clipboardText) return { injected: false, event: null }
-    const currentHash = sha256Hex(clipboardText)
-    if (currentHash === this.lastInternalHash) {
+    if (this.isInternalText(clipboardText)) {
       return { injected: false, event: null }
     }
     // เนื้อหาแปลกปลอม → บันทึกหลักฐานแล้วให้ผู้เรียกล้างคลิปบอร์ดทันที
-    this.lastInternalHash = currentHash
     const event = makeDetectionEvent('EXTERNAL_CLIPBOARD_INJECTION', 'input-clipboard-guard', {
       length: String(clipboardText.length),
       preview: clipboardText.slice(0, 100)
@@ -175,6 +178,28 @@ export class InputClipboardGuard {
     )
     this.opts.emit(event)
     return event
+  }
+
+  /** ตรวจก่อนวางเนื้อหาจากคลิปบอร์ด — false = ไม่ควรอนุญาตให้วาง */
+  interceptPaste(): boolean {
+    const text = this.readClipboardText()
+    if (!text) return true
+    if (this.tracker.isInternalText(text)) return true
+    this.clearClipboard()
+    this.opts.emit(
+      makeDetectionEvent(
+        'EXTERNAL_CLIPBOARD_INJECTION',
+        this.detectorId,
+        {
+          length: String(text.length),
+          preview: text.slice(0, 100),
+          source: 'paste'
+        },
+        undefined,
+        this.now
+      )
+    )
+    return false
   }
 
   private async pollOnce(): Promise<void> {

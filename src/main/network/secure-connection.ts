@@ -96,9 +96,9 @@ export class SecureConnection extends EventEmitter {
     return this.sessionKey !== null
   }
 
-  /** ส่งข้อความแบบ typed (seq เพิ่มอัตโนมัติ, แนบ HMAC เมื่อมี sessionKey) */
-  send(type: string, payload: unknown): void {
-    if (this.destroyed) return
+  /** ส่งข้อความแบบ typed (seq เพิ่มอัตโนมัติ, แนบ HMAC เมื่อมี sessionKey) — false = สายปิดอยู่ */
+  send(type: string, payload: unknown): boolean {
+    if (this.destroyed) return false
     const envelope: NetEnvelope = {
       msgId: randomUUID(),
       seq: ++this.lastSentSeq,
@@ -109,7 +109,17 @@ export class SecureConnection extends EventEmitter {
     if (this.sessionKey) {
       envelope.hmac = this.computeEnvelopeHmac(envelope).toString('base64')
     }
-    writeJsonFrame(this.socket, envelope)
+    if (this.socket.writable === false) {
+      this.destroy()
+      return false
+    }
+    try {
+      writeJsonFrame(this.socket, envelope)
+      return true
+    } catch {
+      this.destroy()
+      return false
+    }
   }
 
   /** ส่ง binary frame (Phase 3c: thumbnail / segment) — ใช้ความปลอดภัยจาก TLS โดยตรง */

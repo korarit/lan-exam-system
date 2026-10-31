@@ -140,7 +140,9 @@ export const JoinRequestPayloadSchema = z
     studentId: z.string().min(1).max(40),
     studentName: z.string().min(1).max(80),
     /** HMAC(roomPinKey, certFingerprint + serverNonce + clientNonce + studentId) */
-    clientAuthHmac: hmacSchema
+    clientAuthHmac: hmacSchema,
+    /** โทเคนเชื่อมต่อกลับ (ไม่บังคับ) */
+    reconnectToken: z.string().min(16).max(128).optional()
   })
   .strict()
 
@@ -161,7 +163,8 @@ export const JoinAcceptedPayloadSchema = z
     dynamicSessionKey: sessionKeySchema,
     serverTimeMs: z.number().int(),
     remainingExamSeconds: z.number().int().nonnegative(),
-    studentCount: z.number().int().nonnegative()
+    studentCount: z.number().int().nonnegative(),
+    reconnectToken: z.string().min(16).max(128).optional()
   })
   .strict()
 

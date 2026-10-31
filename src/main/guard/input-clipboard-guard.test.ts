@@ -93,4 +93,24 @@ describe('InputClipboardGuard — end-to-end (injected probes)', () => {
     expect(event!.code).toBe('ABNORMAL_TYPING_PATTERN')
     expect(events).toHaveLength(1)
   })
+
+  it('interceptPaste ปล่อยผ่านเมื่อเป็นข้อความที่คัดลอกภายในแอป', () => {
+    const cleared = { value: false }
+    const text = 'ข้อความที่คัดลอกเอง'
+    const { guard, events } = makeGuard(() => text, cleared)
+    guard.markInternalCopy(text)
+    expect(guard.interceptPaste()).toBe(true)
+    expect(cleared.value).toBe(false)
+    expect(events).toHaveLength(0)
+  })
+
+  it('interceptPaste บล็อกและล้างเมื่อเป็นข้อความจากภายนอก', () => {
+    const cleared = { value: false }
+    const { guard, events } = makeGuard(() => 'ข้อความจากภายนอก', cleared)
+    expect(guard.interceptPaste()).toBe(false)
+    expect(cleared.value).toBe(true)
+    expect(events).toHaveLength(1)
+    expect(events[0]!.code).toBe('EXTERNAL_CLIPBOARD_INJECTION')
+    expect(events[0]!.detail.source).toBe('paste')
+  })
 })

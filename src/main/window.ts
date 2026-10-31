@@ -140,9 +140,15 @@ export function createFloatingHudWindow(options: { isDev: boolean }): BrowserWin
  * - บล็อกเมนูคลิกขวา
  * - (window open/navigate ถูกปิดอยู่แล้วใน createMainWindow)
  */
-const BLOCKED_SHORTCUTS: Array<{
-  test: (input: { key: string; control: boolean; alt: boolean; shift: boolean; meta: boolean }) => boolean
-}> = [
+type ShortcutTest = (input: {
+  key: string
+  control: boolean
+  alt: boolean
+  shift: boolean
+  meta: boolean
+}) => boolean
+
+const ALWAYS_BLOCKED_SHORTCUTS: Array<{ test: ShortcutTest }> = [
   { test: (i) => i.key === 'F5' },
   { test: (i) => i.key === 'F12' },
   { test: (i) => i.control && i.shift && (i.key === 'I' || i.key === 'i') },
@@ -153,7 +159,21 @@ const BLOCKED_SHORTCUTS: Array<{
   { test: (i) => i.alt && (i.key === 'ArrowLeft' || i.key === 'ArrowRight') }
 ]
 
-export function enforceKioskInputBlocking(win: BrowserWindow): void {
+const KIOSK_ONLY_SHORTCUTS: Array<{ test: ShortcutTest }> = [
+  { test: (i) => i.key === 'F11' },
+  { test: (i) => i.key === 'PrintScreen' },
+  { test: (i) => i.control && i.shift && i.key === 'Escape' },
+  { test: (i) => i.control && (i.key === 'w' || i.key === 'W') },
+  { test: (i) => i.control && (i.key === 'n' || i.key === 'N') },
+  { test: (i) => i.control && (i.key === 't' || i.key === 'T') },
+  { test: (i) => i.meta && (i.key === 'r' || i.key === 'R') },
+  { test: (i) => i.alt && i.key === 'F4' }
+]
+
+export function enforceKioskInputBlocking(
+  win: BrowserWindow,
+  isKioskActive: () => boolean = () => true
+): void {
   win.webContents.on('context-menu' as never, (event: Event) => {
     event.preventDefault()
   })
@@ -163,7 +183,9 @@ export function enforceKioskInputBlocking(win: BrowserWindow): void {
       event: Event,
       input: { key: string; control: boolean; alt: boolean; shift: boolean; meta: boolean }
     ) => {
-      const blocked = BLOCKED_SHORTCUTS.some(({ test }) => test(input))
+      const blocked =
+        ALWAYS_BLOCKED_SHORTCUTS.some(({ test }) => test(input)) ||
+        (isKioskActive() && KIOSK_ONLY_SHORTCUTS.some(({ test }) => test(input)))
       if (blocked) event.preventDefault()
     }
   )
