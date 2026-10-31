@@ -21,6 +21,8 @@ interface StudentRecord {
   lastSeenAtMs: number | null
   exporter: Buffer | null
   reconnectToken: string
+  /** จำนวนครั้งที่กลับเข้ามาหลัง join แรก (ใช้จำกัด reconnect) */
+  reconnectCount: number
 }
 
 interface PendingHandshake {
@@ -37,6 +39,14 @@ export interface ExamTlsServerOptions {
   examEndsAtMs?: number
   maxStudents?: number
   maxConnectionsPerIp?: number
+  /**
+   * รายชื่อ studentId ที่อนุญาต (roster ของห้อง)
+   * - undefined = ไม่บังคับ
+   * - [] = ไม่มีใครเข้าได้ (deny-all)
+   */
+  roster?: readonly string[]
+  /** จำนวน reconnect สูงสุดต่อคนหลัง join แรก (0 = ไม่จำกัด, default 5) */
+  maxReconnectsPerStudent?: number
   onStudentsChanged: (students: HostStudentStatus[]) => void
   onStudentJoined?: (studentId: string, studentName: string) => void
   /** เรียกเมื่อ handshake/RESUME สำเร็จ — CoreSessionManager ใช้ส่ง STATE_RECOVERY */
@@ -264,6 +274,10 @@ export class ExamTlsServer {
           this.rejectJoin(connection, 'bad-auth')
           return
         }
+        if (!this.isRosterAllowed(req.studentId)) {
+          this.rejectJoin(connection, 'not-on-roster')
+          return
+        }
         const existing = this.students.get(req.studentId)
         if (existing) {
           // ตรวจโทเคนของช่องเดิมก่อนรับ join
@@ -271,6 +285,11 @@ export class ExamTlsServer {
             this.rejectJoin(connection, 'duplicate-id')
             return
           }
+          if (this.reconnectLimitReached(existing)) {
+            this.rejectJoin(connection, 'too-many-reconnects')
+            return
+          }
+          existing.reconnectCount += 1
           // ปิดท่อเก่าก่อนรับท่อใหม่
           for (const old of this.liveConnections.get(existing.studentId) ?? []) {
             try {
@@ -286,7 +305,7 @@ export class ExamTlsServer {
           this.rejectJoin(connection, 'room-full')
           return
         }
-        this.finishJoin(connection, req)
+        this.finishJoin(connection, req, existing?.reconnectCount ?? 0)
         return
       }
 
@@ -299,6 +318,15 @@ export class ExamTlsServer {
           this.rejectJoin(connection, 'unknown-message')
           return
         }
+        if (!this.isRosterAllowed(record.studentId)) {
+          this.rejectJoin(connection, 'not-on-roster')
+          return
+        }
+        if (this.reconnectLimitReached(record)) {
+          this.rejectJoin(connection, 'too-many-reconnects')
+          return
+        }
+        record.reconnectCount += 1
         record.online = true
         record.lastSeenAtMs = Date.now()
         connection.send(NetMsgType.joinAccepted, {
@@ -323,7 +351,8 @@ export class ExamTlsServer {
 
   private finishJoin(
     connection: SecureConnection,
-    req: { studentId: string; studentName: string; reconnectToken?: string }
+    req: { studentId: string; studentName: string; reconnectToken?: string },
+    reconnectCount = 0
   ): void {
     const sessionToken = generateSessionToken()
     const sessionKey = randomBytes(32)
@@ -339,7 +368,8 @@ export class ExamTlsServer {
       currentQuestionIndex: null,
       lastSeenAtMs: Date.now(),
       exporter,
-      reconnectToken
+      reconnectToken,
+      reconnectCount
     }
     this.students.set(req.studentId, record)
     // ส่ง JOIN_ACCEPTED ก่อนตั้ง session key ฝั่ง server:
@@ -409,8 +439,18 @@ export class ExamTlsServer {
     this.opts.onStudentEstablished?.(record.studentId)
   }
 
-  private checkOfflineStudents(): void {
-    const now = Date.now()
+  private isRosterAllowed(studentId: string): boolean {
+    const roster = this.opts.roster
+    if (roster === undefined) return true
+    return roster.includes(studentId)
+  }
+
+  private reconnectLimitReached(record: StudentRecord): boolean {
+    const max = this.opts.maxReconnectsPerStudent ?? 5
+    return max > 0 && record.reconnectCount >= max
+  }
+
+  private checkOfflineStudents(): void {    const now = Date.now()
     let changed = false
     for (const record of this.students.values()) {
       if (record.online && record.lastSeenAtMs !== null && now - record.lastSeenAtMs > 8000) {

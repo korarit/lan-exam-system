@@ -1,10 +1,11 @@
-import { app, BrowserWindow } from 'electron'
-import fs from 'node:fs'
+import { app, BrowserWindow, clipboard, safeStorage } from 'electron'
 import path from 'node:path'
 import { pbkdf2Sync } from 'node:crypto'
 import { IpcEventSchemas, type IpcEventChannel } from '@shared/ipc-channels'
 import { NetMsgType } from '@shared/protocol-schema'
-import { applyRuntimeArgPolicy, parseRuntimeArgs } from './runtime-args'
+import { applyRuntimeArgPolicy, parseRuntimeArgs, type RuntimeArgPolicy } from './runtime-args'
+import { loadDeploymentConfig } from './deployment-config'
+import { ReconnectTokenStore } from './network/token-store'
 import { IpcRouter, createElectronIpcRegistrar } from './ipc/router'
 import { registerAppHandlers, type AppRuntimeState } from './ipc/app-handlers'
 import { registerNetworkHandlers, forwardConnectionState } from './ipc/network-handlers'
@@ -43,6 +44,7 @@ import { RoomDiscoveryListener } from './network/discovery'
 import { ExamTlsClient } from './network/tls-client'
 import { CoreSessionManager } from './host/core-session-manager'
 import { GuardEngine } from './guard/guard-engine'
+import { TypingMonitor } from './guard/typing-monitor'
 import { makeDetectionEvent } from './guard/process-inspector'
 import { NativeKeyboardGuard } from './guard/native-bridge'
 import { AttestationResponder } from './attestation/client-responder'
@@ -81,16 +83,37 @@ if (launchFindings.length > 0) {
 const attestationStrictToggle = { enforced: process.env.ZTEXAM_STRICT_ATTESTATION === '1' }
 
 /* ---------- จัดการ isolation ของ multi-instance ก่อนพร้อมใช้งาน ---------- */
-const runtime = applyRuntimeArgPolicy(parseRuntimeArgs(process.argv), {
-  production: IS_PACKAGED,
-  ...(process.env.ZTEXAM_ALLOWED_PROFILES !== undefined
-    ? {
-        allowedProfiles: process.env.ZTEXAM_ALLOWED_PROFILES.split(',')
-          .map((id) => id.trim())
-          .filter((id) => id.length > 0)
-      }
-    : {})
-})
+/** config ที่ลงลายเซ็น (ถ้ามี) — ใช้แทน env ที่ผู้ใช้แก้เองได้ */
+const deploymentConfig = loadDeploymentConfig(
+  process.env.ZTEXAM_DEPLOYMENT_CONFIG ??
+    (IS_PACKAGED && process.resourcesPath
+      ? path.join(process.resourcesPath, 'deployment.json')
+      : null)
+)
+
+function envProfileAllowlist(): readonly string[] | undefined {
+  const raw = process.env.ZTEXAM_ALLOWED_PROFILES
+  if (raw === undefined) return undefined
+  return raw
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0)
+}
+
+const runtimePolicy: RuntimeArgPolicy = { production: IS_PACKAGED }
+const allowedProfiles = deploymentConfig?.allowedProfiles ?? envProfileAllowlist()
+if (allowedProfiles !== undefined) runtimePolicy.allowedProfiles = allowedProfiles
+if (deploymentConfig?.allowedRoles !== undefined) {
+  runtimePolicy.allowedRoles = deploymentConfig.allowedRoles
+}
+if (deploymentConfig?.lockedRole !== undefined) {
+  runtimePolicy.lockedRole = deploymentConfig.lockedRole
+}
+const allowWindowedKiosk =
+  deploymentConfig?.allowWindowedKiosk ?? process.env.ZTEXAM_ALLOW_WINDOWED_KIOSK === '1'
+if (allowWindowedKiosk) runtimePolicy.allowWindowedKiosk = true
+
+const runtime = applyRuntimeArgPolicy(parseRuntimeArgs(process.argv), runtimePolicy)
 const defaultUserData = app.getPath('userData')
 // แยก userData ต่อ profile เพื่อไม่ให้ cache/cookies/SQLite ของ host กับ student ชนกัน
 app.setPath('userData', path.join(defaultUserData, `instance-${runtime.profileId}`))
@@ -103,6 +126,9 @@ if (!app.requestSingleInstanceLock()) {
 const state: AppRuntimeState = {
   profileId: runtime.profileId,
   role: runtime.role
+}
+if (deploymentConfig?.lockedRole !== undefined) {
+  state.lockedRole = deploymentConfig.lockedRole
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -121,6 +147,7 @@ let vsCodeController: VsCodeController | null = null
 let connectProxy: LocalConnectProxy | null = null
 let floatingHudWindow: BrowserWindow | null = null
 let guardEngine: GuardEngine | null = null
+let typingMonitor: TypingMonitor | null = null
 let nativeKeyboardGuard: NativeKeyboardGuard | null = null
 let attestationResponder: AttestationResponder | null = null
 let attestationHost: AttestationHostService | null = null
@@ -150,6 +177,7 @@ function ensureSessionManager(): CoreSessionManager {
     db: ensureHostDatabase(),
     getRoom: () => roomManager,
     sendHostEvent: sendEventToWindow,
+    disconnectFreezeMs: resolveDisconnectFreezeMs(),
     onAnomaly: (source, reason) => {
       // Phase 3b: anomaly ของ exam (cursor ผิด / ข้อความแปลกปลอม) ลง audit hash chain ด้วย
       console.warn(`[exam-anomaly] ${source ?? '?'}: ${reason}`)
@@ -457,10 +485,41 @@ function ensureDocPreview(): DocPreviewController {
   return docPreview
 }
 
+/** roster ของห้อง: signed config ก่อน แล้วค่อย env (สำหรับ dev/ฉุกเฉิน) */
+function resolveRoomRoster(): readonly string[] | undefined {
+  if (deploymentConfig?.roster !== undefined) return deploymentConfig.roster
+  const raw = process.env.ZTEXAM_ROSTER
+  if (raw === undefined) return undefined
+  return raw
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0)
+}
+
+function resolveMaxReconnects(): number {
+  if (deploymentConfig?.maxReconnectsPerStudent !== undefined) {
+    return deploymentConfig.maxReconnectsPerStudent
+  }
+  const raw = Number(process.env.ZTEXAM_MAX_RECONNECTS)
+  return Number.isInteger(raw) && raw >= 0 ? raw : 5
+}
+
+function resolveDisconnectFreezeMs(): number | null {
+  if (deploymentConfig?.disconnectFreezeMs !== undefined) {
+    return deploymentConfig.disconnectFreezeMs
+  }
+  const raw = Number(process.env.ZTEXAM_DISCONNECT_FREEZE_MS)
+  if (Number.isInteger(raw) && raw >= 0) return raw === 0 ? null : raw
+  return 30_000
+}
+
 function ensureRoomManager(): HostRoomManager {
+  const roster = resolveRoomRoster()
   roomManager ??= new HostRoomManager({
     db: ensureHostDatabase(),
     maxStudents: 60,
+    ...(roster !== undefined ? { roster } : {}),
+    maxReconnectsPerStudent: resolveMaxReconnects(),
     onStudentsChanged: (students) => {
       sendEventToWindow('host:students-updated', { students })
       // Phase 3b: สถานะหลุด/กลับมาเชื่อมต่อ → triage (ลำดับความสำคัญของ DISCONNECTED)
@@ -482,6 +541,8 @@ function ensureRoomManager(): HostRoomManager {
         }
         studentOnlineState.set(student.studentId, student.online)
         triageService?.setStudentConnection(student.studentId, student.online)
+        // VULN-04: หลุดระหว่างสอบเกินกำหนด → CoreSessionManager สั่ง freeze อัตโนมัติ
+        sessionManager?.handleStudentConnectionChange(student.studentId, student.online)
         // Phase 4: หลุดการรับ → ยก pending challenge (จะถูกท้าถามใหม่ตอน reconnect)
         if (!student.online) attestationHost?.forget(student.studentId)
       }
@@ -514,16 +575,40 @@ function ensureRoomManager(): HostRoomManager {
   return roomManager
 }
 
-/** ที่เก็บโทเคนเชื่อมต่อกลับต่อ (room, student) — ใช้ภายในเครื่องนักเรียนเท่านั้น */
-function reconnectTokenPath(): string {
-  return path.join(app.getPath('userData'), 'sessions', 'reconnect.json')
+/** ที่เก็บโทเคนเชื่อมต่อกลับต่อ (room, student) — เข้ารหัสด้วย OS keyring ถ้ามี */
+let reconnectTokenStore: ReconnectTokenStore | null = null
+
+function ensureReconnectTokenStore(): ReconnectTokenStore {
+  if (reconnectTokenStore) return reconnectTokenStore
+  const sessionsDir = path.join(app.getPath('userData'), 'sessions')
+  reconnectTokenStore = new ReconnectTokenStore({
+    filePath: path.join(sessionsDir, 'reconnect.enc.json'),
+    legacyFilePath: path.join(sessionsDir, 'reconnect.json'),
+    vault: {
+      encrypt: (plain) => {
+        try {
+          if (!safeStorage.isEncryptionAvailable()) return null
+          return safeStorage.encryptString(plain).toString('base64')
+        } catch {
+          return null
+        }
+      },
+      decrypt: (cipher) => {
+        try {
+          if (!safeStorage.isEncryptionAvailable()) return null
+          return safeStorage.decryptString(Buffer.from(cipher, 'base64'))
+        } catch {
+          return null
+        }
+      }
+    }
+  })
+  return reconnectTokenStore
 }
 
 function loadReconnectToken(roomId: string, studentId: string): string | null {
   try {
-    const raw = JSON.parse(fs.readFileSync(reconnectTokenPath(), 'utf8')) as Record<string, unknown>
-    const value = raw[`${roomId}:${studentId}`]
-    return typeof value === 'string' ? value : null
+    return ensureReconnectTokenStore().load(roomId, studentId)
   } catch {
     return null
   }
@@ -531,16 +616,7 @@ function loadReconnectToken(roomId: string, studentId: string): string | null {
 
 function saveReconnectToken(roomId: string, studentId: string, token: string): void {
   try {
-    const file = reconnectTokenPath()
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    let map: Record<string, string> = {}
-    try {
-      map = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, string>
-    } catch {
-      map = {}
-    }
-    map[`${roomId}:${studentId}`] = token
-    fs.writeFileSync(file, JSON.stringify(map), { encoding: 'utf8', mode: 0o600 })
+    ensureReconnectTokenStore().save(roomId, studentId, token)
   } catch {
     // เขียนไม่ได้ — การเชื่อมต่อรอบนี้ยังใช้โทเคนในหน่วยความจำได้
   }
@@ -554,6 +630,7 @@ function ensureStudentClient(): ExamTlsClient {
       if (status.state === 'closed' || status.state === 'rejected') {
         studentExamRunning = false
         clearBlurTimers()
+        typingMonitor?.stop()
       }
       // Phase 4: ท่อใหม่ = exporter คนละค่า — เครื่องนักเรียนต้องส่ง manifest ใหม่หลัง reconnect
       if (status.state === 'connecting') ensureAttestationResponder(true).resetOnReconnect()
@@ -572,6 +649,7 @@ function ensureStudentClient(): ExamTlsClient {
           studentExamRunning = true
           studentExamMode = started.examMode ?? 'closed'
           clearBlurTimers()
+          ensureTypingMonitor().start()
           try {
             ensureStudentClient().setExamUiState('focused', null)
           } catch {
@@ -582,11 +660,13 @@ function ensureStudentClient(): ExamTlsClient {
         if (type === NetMsgType.stateRecovery) {
           const recovered = payload as { examMode?: 'closed' | 'in-app-docs' | 'external-tools' }
           studentExamRunning = true
+          ensureTypingMonitor().start()
           if (recovered.examMode) studentExamMode = recovered.examMode
         }
         if (type === NetMsgType.timeUp || type === NetMsgType.examCompleted) {
           studentExamRunning = false
           clearBlurTimers()
+          typingMonitor?.stop()
         }
         // Phase 2 (ท่อกลาง modules): ack งานที่ส่ง + state เริ่มต้นของโมดูล
         if (type === NetMsgType.moduleAck) {
@@ -629,6 +709,7 @@ function ensureStudentClient(): ExamTlsClient {
       },
       onExamEnded: () => {
         guardEngine?.stop()
+        typingMonitor?.stop()
         // Phase 3c: จบสอบ → Zero-Trace Cleanup (ลบ ring buffer + คีย์ทันที)
         screenStreamController?.stopSession('exam-ended')
         // Phase 5: ทุกพื้นผิวของ Mode 2/3 หยุดพร้อมกัน
@@ -656,6 +737,23 @@ function ensureGuardEngine(): GuardEngine {
     getLocalProxyPort: () => connectProxy?.getBoundPort() ?? 0
   })
   return guardEngine
+}
+
+/**
+ * VULN-08: วัดจังหวะพิมพ์จาก main process (before-input-event)
+ * — ไม่พึ่ง renderer ที่ผู้สอบแก้ได้ และทำงานเหมือนกันทุก OS
+ */
+function ensureTypingMonitor(): TypingMonitor {
+  typingMonitor ??= new TypingMonitor({
+    onSample: (intervalsMs) => {
+      try {
+        ensureGuardEngine().ingestTypingSamples(intervalsMs, 'main')
+      } catch {
+        // guard ยังไม่พร้อม — ตัวอย่างนี้หายไป
+      }
+    }
+  })
+  return typingMonitor
 }
 
 /* ============================================================
@@ -890,18 +988,58 @@ function createWindow(): void {
     isDev: IS_DEV_BUILD
   })
   enforceKioskInputBlocking(mainWindow, () => state.role === 'student' && studentExamRunning)
-  mainWindow.webContents.on('before-input-event' as never, (event: { preventDefault(): void }, input: { key: string; control: boolean; meta: boolean; shift: boolean; alt: boolean }) => {
+  mainWindow.webContents.on('before-input-event' as never, (event: { preventDefault(): void }, input: {
+    type: string
+    key: string
+    control: boolean
+    meta: boolean
+    shift: boolean
+    alt: boolean
+  }) => {
     if (state.role !== 'student' || !studentExamRunning) return
+    if (input.type !== 'keyDown') return
+    const accel = input.control || input.meta
+    const plainAccel = accel && !input.shift && !input.alt
+    // VULN-09: main เป็นเจ้าของ mark "คัดลอกภายใน" (ไม่เชื่อ renderer)
+    if (plainAccel && (input.key === 'c' || input.key === 'C')) {
+      setTimeout(() => {
+        if (state.role !== 'student' || !studentExamRunning) return
+        void (async () => {
+          try {
+            const text = await clipboard.readText()
+            if (text) ensureGuardEngine().clipboard.markInternalCopy(text)
+          } catch {
+            // clipboard อ่านไม่ได้ — รอบถัดไปยังตรวจ paste ได้
+          }
+        })()
+      }, 30)
+      return
+    }
+    // paste: Ctrl/Cmd+V และ Shift+Insert (ทุกแพลตฟอร์ม)
     const isPaste =
-      (input.control || input.meta) &&
-      (input.key === 'v' || input.key === 'V') &&
-      !input.shift &&
-      !input.alt
-    if (!isPaste) return
-    try {
-      if (!ensureGuardEngine().clipboard.interceptPaste()) event.preventDefault()
-    } catch {
-      // guard ยังไม่พร้อม — ปล่อยผ่าน
+      (plainAccel && (input.key === 'v' || input.key === 'V')) ||
+      (input.shift && !input.control && !input.meta && !input.alt && input.key === 'Insert')
+    if (isPaste) {
+      // clipboard API ของ Electron เป็น async — บล็อกคีย์ก่อนแล้วค่อยวางเองถ้าผ่าน
+      event.preventDefault()
+      void (async () => {
+        try {
+          const allowed = await ensureGuardEngine().clipboard.interceptPaste()
+          const win = mainWindow
+          if (allowed && win && !win.isDestroyed()) win.webContents.paste()
+        } catch {
+          // guard ยังไม่พร้อม — บล็อกไว้ก่อน (fail-closed)
+        }
+      })()
+      return
+    }
+    // VULN-08: เก็บจังหวะพิมพ์ที่ main (ไม่ต้องพึ่ง renderer)
+    if (!input.control && !input.meta && !input.alt) {
+      try {
+        ensureTypingMonitor().handleKeyDown(input.key)
+      } catch {
+        // monitor ยังไม่พร้อม
+      }
     }
   })
   mainWindow.on('blur', handleStudentWindowBlur)
@@ -1079,6 +1217,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   studentClient?.abort()
+  typingMonitor?.stop()
   // Phase 4: ปลด native hook + หยุด attestation เสมอ (กันปล่อย keyboard hook ค้างระบบ)
   nativeKeyboardGuard?.stop()
   attestationHost?.stop()

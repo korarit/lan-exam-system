@@ -20,6 +20,8 @@ export interface BinaryMetadata {
   companyName?: string
   bundleId?: string
   sha256?: string
+  /** ผลตรวจลายเซ็นโค้ดของ OS (Windows Authenticode / macOS codesign) */
+  signatureStatus?: 'valid' | 'invalid' | 'unsigned' | 'unknown' | 'unavailable'
 }
 
 export interface CacheKeyInfo {
@@ -78,6 +80,23 @@ interface PsVersionInfoLine {
   product?: string
   desc?: string
   company?: string
+  signature?: string
+}
+
+type SignatureStatus = NonNullable<BinaryMetadata['signatureStatus']>
+
+function mapAuthenticodeStatus(status: string | undefined): SignatureStatus {
+  if (!status) return 'unknown'
+  switch (status.toLowerCase()) {
+    case 'valid':
+      return 'valid'
+    case 'notsigned':
+      return 'unsigned'
+    case 'unknownerror':
+      return 'unknown'
+    default:
+      return 'invalid'
+  }
 }
 
 /** อ่าน VersionInfo ของหลายไฟล์ในครั้งเดียว (ลด cost การ spawn PowerShell) */
@@ -88,7 +107,8 @@ export function readPeVersionInfoBatch(filePaths: string[]): Promise<Map<string,
   const script = [
     `Get-Item -LiteralPath @(${pathList}) -ErrorAction SilentlyContinue | ForEach-Object {`,
     '$v = $_.VersionInfo;',
-    `@{ path = $_.FullName; original = $v.OriginalFilename; internal = $v.InternalName; product = $v.ProductName; desc = $v.FileDescription; company = $v.CompanyName } | ConvertTo-Json -Compress`,
+    '$sig = (Get-AuthenticodeSignature -LiteralPath $_.FullName -ErrorAction SilentlyContinue).Status;',
+    `@{ path = $_.FullName; original = $v.OriginalFilename; internal = $v.InternalName; product = $v.ProductName; desc = $v.FileDescription; company = $v.CompanyName; signature = $sig } | ConvertTo-Json -Compress`,
     '}'
   ].join(' ')
   return runPowerShell(script).then((output) => {
@@ -100,6 +120,7 @@ export function readPeVersionInfoBatch(filePaths: string[]): Promise<Map<string,
       if (line.product) entry.productName = line.product
       if (line.desc) entry.fileDescription = line.desc
       if (line.company) entry.companyName = line.company
+      entry.signatureStatus = mapAuthenticodeStatus(line.signature)
       result.set(line.path.toLowerCase(), entry)
     }
     return result
@@ -127,6 +148,7 @@ export function createPlatformMetadataReader(): MetadataReader {
         const metadata: BinaryMetadata = { filePath }
         if (parsed.CFBundleIdentifier) metadata.bundleId = parsed.CFBundleIdentifier
         if (parsed.CFBundleName) metadata.productName = parsed.CFBundleName
+        metadata.signatureStatus = await readMacSignatureStatus(filePath)
         return metadata
       } catch {
         return null
@@ -134,7 +156,20 @@ export function createPlatformMetadataReader(): MetadataReader {
     }
   }
   // linux: ไม่มี metadata กลาง อ่านชื่อ comm เสริมให้ matcher ใช้
-  return async (filePath) => ({ filePath })
+  return async (filePath) => ({ filePath, signatureStatus: 'unavailable' })
+}
+
+/** macOS: codesign --verify --strict (ผ่าน = valid, ไม่ผ่าน = invalid/unsigned) */
+async function readMacSignatureStatus(filePath: string): Promise<SignatureStatus> {
+  const verify = await runCommand(
+    '/usr/bin/codesign',
+    ['--verify', '--strict', '--quiet', filePath]
+  )
+  if (verify !== '') return 'valid'
+  // codesign --verify เงียบเมื่อผ่าน; ถ้าไม่ผ่านจะเขียน stderr (runCommand ทิ้งไปแล้ว)
+  const display = await runCommand('/usr/bin/codesign', ['-dv', '--verbose=2', filePath])
+  if (display === '') return 'unsigned'
+  return display.includes('Authority=') ? 'valid' : 'invalid'
 }
 
 /** คำนวณ SHA-256 ของไฟล์ (แบบ stream — ไม่โหลดไฟล์ใหญ่เข้า RAM) */

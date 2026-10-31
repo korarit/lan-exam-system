@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { materializeExecutionSandbox, teardownRunDir } from '../workspace-materializer'
-import { buildSandboxEnv, scanDestructiveCode } from '../anti-delete-guard'
+import { buildSandboxEnv, phpSandboxArgs, scanDestructiveCode } from '../anti-delete-guard'
 import type { DepsCacheLayout } from '../code-deps-cache'
 import { authorizedChildProcesses } from '../authorized-process-registry'
 import { typedInputsToStdin, type CliTestCase, type SupportedCodeLanguage, type VirtualEntry } from '../../shared/code-schema'
@@ -32,15 +32,49 @@ function stdinFor(t: CliTestCase): string {
   return t.stdin
 }
 
+/**
+ * Cross-platform sandbox flags ต่อภาษา
+ * - Node: permission model (read/write เฉพาะ runDir + offline libs, spawn ลูกถูกบล็อก)
+ * - Python: ไม่โหลด user site-packages (-s) และไม่เขียน .pyc (-B)
+ * - PHP: open_basedir + disable_functions (ใช้ helper เดิม)
+ * คืน [] สำหรับภาษาที่ไม่มี flag เฉพาะ
+ */
+export function sandboxArgsFor(
+  language: SupportedCodeLanguage,
+  runDir: string,
+  readPaths: readonly string[] = []
+): string[] {
+  switch (language) {
+    case 'javascript':
+    case 'node-backend': {
+      const reads = [...new Set([runDir, ...readPaths].filter((p) => p.length > 0))]
+      return ['--permission', ...reads.map((p) => `--allow-fs-read=${p}`), `--allow-fs-write=${runDir}`]
+    }
+    case 'python':
+    case 'python-backend':
+      return ['-B', '-s']
+    case 'php':
+    case 'php-backend':
+      return phpSandboxArgs(runDir, runDir)
+    default:
+      return []
+  }
+}
+
 function buildCommand(
-  language: SupportedCodeLanguage, runDir: string, entryPoint: string, extraCp: string[] = []
+  language: SupportedCodeLanguage,
+  runDir: string,
+  entryPoint: string,
+  extraCp: string[] = [],
+  readPaths: readonly string[] = []
 ): { cmd: string; args: string[]; cwd: string } | { error: string } {
   const absEntry = path.join(runDir, entryPoint)
+  const sandbox = sandboxArgsFor(language, runDir, readPaths)
   switch (language) {
     case 'python': case 'python-backend':
-      return { cmd: 'python', args: ['-B', absEntry], cwd: runDir }
+      return { cmd: 'python', args: [...sandbox, absEntry], cwd: runDir }
     case 'javascript': case 'node-backend':
-      return { cmd: 'node', args: ['--max-old-space-size=256', absEntry], cwd: runDir }
+      return { cmd: 'node', args: ['--max-old-space-size=256', ...sandbox, absEntry], cwd: runDir }
     case 'typescript':
       // ใช้ node + ts transpile หน้างานไม่ได้ — ต้อง bundle ด้วย esbuild ก่อน (ดู frontend-runner)
       return { error: 'TypeScript ต้อง bundle ด้วย esbuild ก่อนรัน — หรือรันผ่าน tsx ถ้าติดตั้งในเครื่อง' }
@@ -50,7 +84,7 @@ function buildCommand(
       return { cmd: 'java', args: ['-Dfile.encoding=UTF-8', '-cp', cp, mainClassOf(entryPoint)], cwd: runDir }
     }
     case 'php': case 'php-backend':
-      return { cmd: 'php', args: [absEntry], cwd: runDir }
+      return { cmd: 'php', args: [...sandbox, absEntry], cwd: runDir }
     case 'c': case 'cpp': case 'rust': case 'go':
       return { error: `${language} ต้องคอมไพล์เป็นไบนารีก่อน (gcc/g++/rustc/go build) — ผูก runtime-locator แล้วรัน app.exe` }
     default:
@@ -97,7 +131,11 @@ export async function runCliTest(
   })
   const { runDir } = mat
   try {
-    const built = buildCommand(language, runDir, entryPoint, mat.javaCpExtras)
+    const built = buildCommand(language, runDir, entryPoint, mat.javaCpExtras, [
+      ...(opts.extraPathDirs ?? []),
+      ...(mat.linkEnv.NODE_PATH ? mat.linkEnv.NODE_PATH.split(path.delimiter) : []),
+      ...(mat.linkEnv.PYTHONPATH ? mat.linkEnv.PYTHONPATH.split(path.delimiter) : [])
+    ])
     if ('error' in built) {
       return { testId: test.testId, passed: null, actualStdout: '', stderr: built.error, exitCode: null, timedOut: false, note: built.error }
     }
@@ -145,6 +183,7 @@ function spawnWithTimeout(
       // จำกัดทรัพยากรระดับ process (CPU/ไฟล์/จำนวนโปรเซส) แบบ best-effort
       const cpuSeconds = Math.max(2, Math.ceil(opts.timeoutMs / 1000) + 2)
       const limits =
+        'umask 077; ' +
         `ulimit -t ${cpuSeconds} 2>/dev/null; ` +
         'ulimit -f 65536 2>/dev/null; ' +
         'ulimit -u 64 2>/dev/null; ' +

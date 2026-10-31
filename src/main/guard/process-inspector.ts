@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
-import type { DetectionPolicyBody, DetectionEvent, DetectionEventCode, ProcessSignatureRule } from '@shared/policy-schema'
+import type { DetectionPolicyBody, DetectionEvent, DetectionEventCode, ProcessSignatureRule, ProcessAllowlistEntry } from '@shared/policy-schema'
 import { DetectionEventCatalog } from '@shared/policy-schema'
 import { createPlatformMetadataReader, BinaryMetadataCache, readPeVersionInfoBatch, hashFileSha256, statFile, type BinaryMetadata } from './binary-metadata'
 import { parseJsonLines } from './system-probes'
@@ -62,8 +62,42 @@ export function isUserWritablePath(filePath: string): boolean {
   return USER_WRITABLE_MARKERS.some((marker) => lower.includes(marker))
 }
 
-function textMatches(haystack: string | undefined, needles: string[] | undefined): boolean {
-  if (!haystack || !needles || needles.length === 0) return false
+function normalizePathForMatch(filePath: string): string {
+  return filePath.replace(/\\/g, '/').toLowerCase()
+}
+
+/**
+ * โปรเซสนี้อยู่ใน allowlist ที่ครูอนุมัติหรือไม่ (pure)
+ * - exeNames: เทียบชื่อไฟล์ (ตัวพิมพ์ไม่สำคัญ)
+ * - pathPrefixes: path ขึ้นต้นด้วย prefix (รองรับทั้ง / และ \)
+ * - sha256Hashes: hash ที่อนุมัติ
+ */
+export function isAllowlistedProcess(
+  snapshot: Pick<ProcessSnapshot, 'exeName' | 'exePath'>,
+  metadata: BinaryMetadata | null,
+  allowlist: readonly ProcessAllowlistEntry[] | undefined
+): boolean {
+  if (!allowlist || allowlist.length === 0) return false
+  const exe = normalizeExeName(snapshot.exeName)
+  const path = normalizePathForMatch(snapshot.exePath)
+  const hash = (metadata?.sha256 ?? '').toLowerCase()
+  for (const entry of allowlist) {
+    if (entry.exeNames?.some((name) => name.toLowerCase() === exe)) return true
+    if (
+      path !== '' &&
+      entry.pathPrefixes?.some((prefix) => {
+        const p = normalizePathForMatch(prefix).replace(/\/+$/, '')
+        return p !== '' && (path === p || path.startsWith(`${p}/`))
+      })
+    ) {
+      return true
+    }
+    if (hash !== '' && entry.sha256Hashes?.some((h) => h.toLowerCase() === hash)) return true
+  }
+  return false
+}
+
+function textMatches(haystack: string | undefined, needles: string[] | undefined): boolean {  if (!haystack || !needles || needles.length === 0) return false
   const lower = haystack.toLowerCase()
   return needles.some((n) => lower.includes(n.toLowerCase()))
 }
@@ -323,6 +357,14 @@ export class ProcessInspector {
     this.stopTrace = null
   }
 
+  /**
+   * เริ่ม baseline ใหม่ (เรียกตอนเริ่มสอบจริง) — โปรเซสที่รันอยู่ก่อนเริ่มสอบ
+   * จะไม่ถูกนับเป็น "โปรเซสใหม่", ตัวที่เพิ่งโผล่หลังเริ่มสอบจะถูกจับ
+   */
+  resetBaseline(): void {
+    this.baselineProcesses = null
+  }
+
   /** รายงาน metadata ที่อ่านแล้วสำหรับ hash matching (ใช้ใน test) */
   async primeMetadata(entries: Array<{ snapshot: ProcessSnapshot; metadata: BinaryMetadata | null }>): Promise<void> {
     for (const { snapshot, metadata } of entries) {
@@ -378,8 +420,21 @@ export class ProcessInspector {
         !authorized && snapshot.exePath && process.platform === 'win32'
           ? await this.metadataCache.get(snapshot.exePath, statFile(snapshot.exePath))
           : null
+      // allowlist ที่ครูอนุมัติ: ตรวจ hash ก่อนถ้ามีรายการ hash
+      if (
+        !authorized &&
+        metadata &&
+        !metadata.sha256 &&
+        snapshot.exePath &&
+        policy.processAllowlist.some((entry) => (entry.sha256Hashes?.length ?? 0) > 0)
+      ) {
+        const sha = await this.verifyFileHash(snapshot.exePath)
+        if (sha) metadata.sha256 = sha
+      }
+      const allowlisted =
+        !authorized && isAllowlistedProcess(snapshot, metadata, policy.processAllowlist)
       const ports = portByPid.get(snapshot.pid)
-      const matches = authorized
+      const matches = authorized || allowlisted
         ? []
         : matchProcessRules(
             snapshot,
@@ -401,6 +456,7 @@ export class ProcessInspector {
                 category: rule.category,
                 originalFilename: metadata?.originalFilename ?? '',
                 productName: metadata?.productName ?? '',
+                signature: metadata?.signatureStatus ?? 'unknown',
                 listeningPorts: ports?.join(',') ?? ''
               },
               disguised ? rule.scoreWeight * 2 : rule.scoreWeight,
@@ -411,6 +467,7 @@ export class ProcessInspector {
       }
       // Local AI spike (Mode closed เท่านั้น)
       if (
+        !allowlisted &&
         policy.examMode === 'closed' &&
         snapshot.memBytes > this.spikeMemBytes &&
         snapshot.cpuPercent > this.spikeCpuPercent
@@ -434,6 +491,7 @@ export class ProcessInspector {
       }
       if (
         !authorized &&
+        !allowlisted &&
         !captureBaseline &&
         this.baselineProcesses &&
         !this.baselineProcesses.has(snapshot.exeName) &&
@@ -448,9 +506,10 @@ export class ProcessInspector {
               {
                 pid: String(snapshot.pid),
                 processName: snapshot.exeName,
-                path: snapshot.exePath.slice(0, 300)
+                path: snapshot.exePath.slice(0, 300),
+                signature: metadata?.signatureStatus ?? 'unknown'
               },
-              undefined,
+              metadata?.signatureStatus === 'valid' ? 10 : undefined,
               this.now
             )
           )
@@ -467,6 +526,9 @@ export class ProcessInspector {
     if (!policy) return
     if (p.pid === process.pid) return
     if (this.opts.isAuthorizedPid?.(p.pid) === true) return
+    if (isAllowlistedProcess({ exeName: p.name, exePath: '' }, null, policy.processAllowlist)) {
+      return
+    }
     const matches = matchProcessRules({ exeName: p.name, commandLine: p.name }, null, policy.rules)
     for (const { rule } of matches) {
       this.opts.emit(

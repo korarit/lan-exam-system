@@ -1,5 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest'
 import path from 'node:path'
+import fs from 'node:fs'
 import {
   checkRuntime,
   setCustomSdkPath,
@@ -8,14 +9,23 @@ import {
   getRuntimePathEntries
 } from './runtime-locator'
 
+/** หาโฟลเดอร์ที่มี binary `node` จริงจาก PATH (ทดสอบไม่ผูกกับ electron) */
+function findNodeDir(): string | null {
+  const exe = process.platform === 'win32' ? 'node.exe' : 'node'
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+    if (dir === '') continue
+    if (fs.existsSync(path.join(dir, exe))) return dir
+  }
+  return null
+}
+
 describe('runtime-locator custom SDK path (Phase 9.1)', () => {
   afterEach(() => {
     clearCustomSdkPaths()
   })
 
   it('โฟลเดอร์ที่มี node binary จริง → found พร้อม path เต็ม', async () => {
-    // node ที่รันเทสอยู่ย่อมมี binary จริงในโฟลเดอร์เดียวกันเสมอ (ทุก OS)
-    const nodeDir = path.dirname(process.execPath)
+    const nodeDir = findNodeDir() ?? path.dirname(process.execPath)
     setCustomSdkPath('node', nodeDir)
     expect(getCustomSdkPath('node')).toBe(nodeDir)
     const info = await checkRuntime('node')
@@ -34,7 +44,7 @@ describe('runtime-locator custom SDK path (Phase 9.1)', () => {
   })
 
   it('getRuntimePathEntries คืนเฉพาะโฟลเดอร์ที่มีอยู่จริง', () => {
-    const nodeDir = path.dirname(process.execPath)
+    const nodeDir = findNodeDir() ?? path.dirname(process.execPath)
     setCustomSdkPath('node', nodeDir)
     setCustomSdkPath('go', '/path/that/does/not/exist-zt')
     expect(getRuntimePathEntries(['node', 'go', 'rust'])).toEqual([nodeDir])

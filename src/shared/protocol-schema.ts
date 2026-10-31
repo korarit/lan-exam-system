@@ -152,7 +152,9 @@ export const JoinRejectedReasonSchema = z.enum([
   'room-full',
   'duplicate-id',
   'rate-limited',
-  'unknown-message'
+  'unknown-message',
+  'not-on-roster',
+  'too-many-reconnects'
 ])
 export type JoinRejectedReason = z.infer<typeof JoinRejectedReasonSchema>
 

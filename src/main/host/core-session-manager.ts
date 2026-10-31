@@ -19,6 +19,7 @@ import type { SecureConnection } from '../network/secure-connection'
 import { QuestionDispatcher } from './dispatcher'
 import { ResultStore } from './result-store'
 import { RecoveryManager } from './recovery'
+import { DisconnectWatch } from './disconnect-watch'
 import { gradeAnswer, type GradeResult } from './auto-grader'
 
 /* ============================================================
@@ -43,6 +44,11 @@ export interface CoreSessionManagerOptions {
   /** รายงาน anomaly เชิงการแอบอ้าง cursor / ข้อสอบ (เข้า audit ใน Phase 3b) */
   onAnomaly?: ExamAnomalySender
   gracePeriodMs?: number
+  /**
+   * หลุดต่อเนื่องเกินกี่ ms แล้วสั่ง freeze อัตโนมัติ (null/0 = ไม่ freeze)
+   * default 30s — ครูยังปลด freeze เองได้หลังตรวจ
+   */
+  disconnectFreezeMs?: number | null
   /** Phase 3a-plus: โดเมนที่ครูอนุมัติแล้วของห้อง (ฝังเป็น allowedDomains ใน policy) */
   getAllowedDomains?: () => string[]
   /** Phase 3a-plus: พฤติกรรมเมื่อนักเรียนใช้โดเมนนอกเหนือรายการ (warn/block) */
@@ -89,6 +95,7 @@ export class CoreSessionManager {
   private timer: NodeJS.Timeout | null = null
   private collectingDone = false
   private readonly gracePeriodMs: number
+  private readonly disconnectWatch: DisconnectWatch
 
   /** คะแนน auto-grade ต่อนักเรียน (เข้ารายงานสรุปฝั่งครู — ข้อ essay ให้ครูตรวจเอง) */
   private readonly grades = new Map<string, Map<string, GradeResult>>()
@@ -101,6 +108,11 @@ export class CoreSessionManager {
 
   constructor(private readonly opts: CoreSessionManagerOptions) {
     this.gracePeriodMs = opts.gracePeriodMs ?? 3000
+    this.disconnectWatch = new DisconnectWatch({
+      freezeAfterMs: opts.disconnectFreezeMs === undefined ? 30_000 : opts.disconnectFreezeMs,
+      onExpired: ({ studentId, offlineForMs }) =>
+        this.handleDisconnectExpired(studentId, offlineForMs)
+    })
   }
 
   get examState(): ExamState {
@@ -199,6 +211,7 @@ export class CoreSessionManager {
     this.seqPerQuestion.clear()
     this.finishReasons.clear()
     this.collectingDone = false
+    this.disconnectWatch.clear()
     this.examEndsAtMs = startedAtMs + exam.durationSeconds * 1000
     this.state = 'running'
 
@@ -294,6 +307,7 @@ export class CoreSessionManager {
       tlsServer?.sendToStudent(student.studentId, NetMsgType.examCompleted, { reason })
     }
     this.state = 'finished'
+    this.disconnectWatch.clear()
     if (this.timer) {
       clearInterval(this.timer)
       this.timer = null
@@ -479,6 +493,39 @@ export class CoreSessionManager {
     // Phase 5: แนบโหมดห้อง — renderer กู้เลย์เอาต์ (split เอกสาร / floating hud)
     const modePayload = room.examMode ? { examMode: room.examMode } : {}
     tlsServer.sendToStudent(studentId, NetMsgType.stateRecovery, { ...recoveryPayload, ...modePayload })
+  }
+
+  /**
+   * แจ้งการเปลี่ยนสถานะออนไลน์/ออฟไลน์ของนักเรียน (เรียกจาก main ทุกครั้งที่รายชื่อเปลี่ยน)
+   * - ระหว่างสอบ: หลุดเกิน disconnectFreezeMs → FREEZE_EXAM อัตโนมัติ
+   * - กลับมา: log ระยะเวลาที่หายไป (ไม่ปลด freeze เอง — ครูเท่านั้น)
+   */
+  handleStudentConnectionChange(studentId: string, online: boolean): void {
+    if (this.state !== 'running' && this.state !== 'collecting') {
+      if (online) this.disconnectWatch.markOnline(studentId)
+      return
+    }
+    if (online) {
+      const previous = this.disconnectWatch.markOnline(studentId)
+      if (previous && previous.offlineForMs > 0) {
+        this.opts.onAnomaly?.(
+          studentId,
+          `STUDENT_RECONNECTED_AFTER_${previous.offlineForMs}ms`
+        )
+      }
+      return
+    }
+    this.disconnectWatch.markOffline(studentId)
+  }
+
+  private handleDisconnectExpired(studentId: string, offlineForMs: number): void {
+    if (this.state !== 'running' && this.state !== 'collecting') return
+    const room = this.opts.getRoom()
+    room?.tlsServerInstance?.sendToStudent(studentId, NetMsgType.freezeExam, {
+      frozen: true,
+      reason: `ขาดการเชื่อมต่อระหว่างสอบ ${Math.round(offlineForMs / 1000)} วินาที`
+    })
+    this.opts.onAnomaly?.(studentId, `AUTO_FREEZE_DISCONNECTED_${offlineForMs}ms`)
   }
 
   /** Phase 3c: ส่ง SCREEN_SESSION (คีย์ ring buffer + พอร์ต UDP ถ้ามี) + จับคู่กุญแจฝั่งเครื่องแม่ */

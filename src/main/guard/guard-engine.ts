@@ -50,6 +50,7 @@ export class GuardEngine {
   private readonly now: () => number
   private eventQueue: DetectionEvent[] = []
   private flushTimer: NodeJS.Timeout | null = null
+  private lastPolicyId: string | null = null
 
   constructor(private readonly opts: GuardEngineOptions) {
     this.now = opts.now ?? Date.now
@@ -106,6 +107,11 @@ export class GuardEngine {
     this.policyBody = signed.body
     if (signed.body.expiresAtMs > 0 && this.now() > signed.body.expiresAtMs) {
       return false
+    }
+    // เริ่มนโยบายรอบใหม่ (เริ่มสอบ/เปลี่ยนห้อง) → baseline โปรเซสใหม่
+    if (this.lastPolicyId !== signed.body.policyId) {
+      this.lastPolicyId = signed.body.policyId
+      this.processInspector.resetBaseline()
     }
     this.start()
     return true
@@ -223,9 +229,9 @@ export class GuardEngine {
     this.enqueueEvent(event)
   }
 
-  /** renderer → guard: สถิติจังหวะการพิมพ์ (IKI ms) */
-  ingestTypingSamples(intervalsMs: number[]): void {
-    this.inputClipboardGuard.ingestTypingSamples(intervalsMs)
+  /** renderer/main → guard: สถิติจังหวะการพิมพ์ (IKI ms) */
+  ingestTypingSamples(intervalsMs: number[], source: 'main' | 'renderer' = 'renderer'): void {
+    this.inputClipboardGuard.ingestTypingSamples(intervalsMs, source)
   }
 
   /** รายงานสถานะ VM ครั้งเดียวตอนเข้า Lobby */

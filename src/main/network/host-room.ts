@@ -37,6 +37,10 @@ export interface HostRoomManagerOptions {
   db: HostDatabase
   hostName?: string
   maxStudents?: number
+  /** roster ของห้อง (undefined = ไม่บังคับ, [] = deny-all) */
+  roster?: readonly string[]
+  /** จำนวน reconnect สูงสุดต่อคน (0 = ไม่จำกัด) */
+  maxReconnectsPerStudent?: number
   onStudentsChanged: (students: HostStudentStatus[]) => void
   onRoomClosed?: () => void
   onAnomaly?: (source: string | null, reason: string) => void
@@ -103,6 +107,10 @@ export class HostRoomManager extends EventEmitter {
       pinKey,
       roomId,
       ...(this.opts.maxStudents !== undefined ? { maxStudents: this.opts.maxStudents } : {}),
+      ...(this.opts.roster !== undefined ? { roster: this.opts.roster } : {}),
+      ...(this.opts.maxReconnectsPerStudent !== undefined
+        ? { maxReconnectsPerStudent: this.opts.maxReconnectsPerStudent }
+        : {}),
       onStudentsChanged: (students) => {
         if (this.beacon) {
           this.beacon.studentCount = students.filter((s) => s.online).length

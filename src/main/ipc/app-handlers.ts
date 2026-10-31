@@ -7,6 +7,8 @@ import { AppRoleSchema } from '@shared/types/role'
 export interface AppRuntimeState {
   profileId: string
   role: 'unselected' | 'host' | 'student'
+  /** บทบาทที่ deployment ล็อกไว้ (ถ้ามี) — renderer เปลี่ยนไม่ได้ */
+  lockedRole?: 'host' | 'student'
 }
 
 export function registerAppHandlers(
@@ -22,6 +24,9 @@ export function registerAppHandlers(
     const role = AppRoleSchema.safeParse(req.role)
     if (!role.success || role.data === 'unselected') {
       throw new Error('Invalid role')
+    }
+    if (state.lockedRole !== undefined && role.data !== state.lockedRole) {
+      throw new Error('ROLE_LOCKED')
     }
     state.role = role.data
     hooks.onRoleSelected(role.data)

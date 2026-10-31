@@ -1,7 +1,8 @@
 import os from 'node:os'
+import fs from 'node:fs'
 import type { DetectionEvent, DetectionPolicyBody } from '@shared/policy-schema'
 import { makeDetectionEvent } from './process-inspector'
-import { runPowerShell } from './system-probes'
+import { runCommand, runPowerShell } from './system-probes'
 
 /* ============================================================
  * HardwareVmGuard — Phase 3a.7
@@ -100,6 +101,132 @@ export async function readActiveSessionNameWindows(): Promise<string | null> {
   return null
 }
 
+/* ============================================================
+ * Remote session (RDP/SSH/VNC/Screen Sharing) — ตรวจได้ทุก OS
+ * ============================================================ */
+
+export interface RemoteSessionInput {
+  platform: NodeJS.Platform
+  env: Record<string, string | undefined>
+  /** ผลดิบ `query session` (Windows) */
+  querySession?: string
+  /** ผลดิบ `loginctl show-session ... -p Remote -p Type` (Linux) */
+  loginctl?: string
+  /** ผลดิบ `who` (Linux/macOS) */
+  who?: string
+}
+
+export interface RemoteSessionVerdict {
+  remote: boolean
+  source: 'ssh' | 'rdp' | 'session' | 'who' | 'loginctl' | 'none'
+  detail: string
+}
+
+/**
+ * วิเคราะห์ว่า session ปัจจุบันเป็น remote หรือไม่ (pure — ทดสอบได้ทุก OS)
+ * ครอบ: SSH env, Windows session name (RDP/RCA), Linux loginctl Remote=yes,
+ * และ `who` ที่มี host ในวงเล็บ (SSH/X-forward/VNC)
+ */
+export function analyzeRemoteSession(input: RemoteSessionInput): RemoteSessionVerdict {
+  const env = input.env
+  const ssh = env.SSH_CONNECTION ?? env.SSH_CLIENT ?? env.SSH_TTY
+  if (ssh) return { remote: true, source: 'ssh', detail: ssh.slice(0, 120) }
+
+  if (input.platform === 'win32') {
+    const fromQuery = (input.querySession ?? '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => /^>\s*(rdp|rca|console)/i.test(line) || /rdp-tcp/i.test(line))
+    if (fromQuery) {
+      const lower = fromQuery.toLowerCase()
+      if (lower.includes('rdp') || lower.includes('rca')) {
+        return { remote: true, source: 'rdp', detail: fromQuery.slice(0, 120) }
+      }
+    }
+    const sessionName = env.SESSIONNAME
+    if (sessionName && /^rdp/i.test(sessionName)) {
+      return { remote: true, source: 'rdp', detail: sessionName }
+    }
+  }
+
+  if (input.loginctl) {
+    const remoteLine = input.loginctl.split(/\r?\n/).find((line) => /^Remote=/i.test(line.trim()))
+    if (remoteLine && /remote=yes/i.test(remoteLine)) {
+      return { remote: true, source: 'loginctl', detail: input.loginctl.replace(/\s+/g, ' ').slice(0, 120) }
+    }
+  }
+
+  const whoLine = (input.who ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => {
+      const match = /\(([^)]+)\)\s*$/.exec(line)
+      if (!match) return false
+      const host = match[1]!.trim()
+      return host.length > 0 && host.toLowerCase() !== 'console' && host.toLowerCase() !== ':0'
+    })
+  if (whoLine) return { remote: true, source: 'who', detail: whoLine.slice(0, 120) }
+
+  return { remote: false, source: 'none', detail: '' }
+}
+
+async function readRemoteSessionVerdict(
+  platform: NodeJS.Platform = process.platform,
+  env: Record<string, string | undefined> = process.env
+): Promise<RemoteSessionVerdict> {
+  if (platform === 'win32') {
+    const querySession = await runPowerShell('query session 2>$null')
+    return analyzeRemoteSession({ platform, env, querySession })
+  }
+  if (platform === 'linux') {
+    const who = await runCommand('who', [])
+    const sessionId = env.XDG_SESSION_ID
+    const loginctl =
+      sessionId !== undefined && sessionId !== ''
+        ? await runCommand('loginctl', [
+            'show-session',
+            sessionId,
+            '-p',
+            'Remote',
+            '-p',
+            'Type'
+          ])
+        : ''
+    return analyzeRemoteSession({ platform, env, who, loginctl })
+  }
+  // macOS: who แสดง remote login พร้อม host ในวงเล็บ
+  const who = await runCommand('/usr/bin/who', [])
+  return analyzeRemoteSession({ platform, env, who })
+}
+
+/* ============================================================
+ * Hypervisor signals (Linux systemd-detect-virt / DMI, macOS sysctl)
+ * ============================================================ */
+
+export async function readHypervisorSignals(
+  platform: NodeJS.Platform = process.platform
+): Promise<string[]> {
+  if (platform === 'darwin') {
+    const out = await runCommand('/usr/sbin/sysctl', ['-n', 'kern.hv_vmm_present'])
+    return out.trim() === '1' ? ['sysctl:kern.hv_vmm_present'] : []
+  }
+  if (platform === 'linux') {
+    const detected = (await runCommand('systemd-detect-virt', ['--vm'])).trim()
+    if (detected !== '' && detected !== 'none') return [`systemd-detect-virt:${detected}`]
+    try {
+      const vendor = fs.readFileSync('/sys/class/dmi/id/sys_vendor', 'utf8').trim()
+      const product = fs.readFileSync('/sys/class/dmi/id/product_name', 'utf8').trim()
+      const joined = `${vendor} ${product}`.toLowerCase()
+      if (/qemu|kvm|vmware|virtualbox|innotek|xen|bochs|parallels|hyper-v/.test(joined)) {
+        return [`dmi:${vendor} ${product}`.trim()]
+      }
+    } catch {
+      // ไม่มี DMI (container/WSL บางแบบ) — ปล่อยผ่าน
+    }
+  }
+  return []
+}
+
 export interface DisplaySnapshot {
   id: number
   label: string
@@ -112,6 +239,8 @@ export interface HardwareVmGuardOptions {
   onDisplayChanged?: (change: 'added' | 'removed' | 'metrics-changed') => void
   /** ชื่อ session ที่ใช้งานอยู่ (inject ได้เพื่อทดสอบ) */
   getActiveSessionName?: () => Promise<string | null>
+  /** ตรวจ remote session แบบเต็ม (inject ได้เพื่อทดสอบ) */
+  getRemoteSessionVerdict?: () => Promise<RemoteSessionVerdict>
   now?: () => number
 }
 
@@ -126,17 +255,24 @@ export class HardwareVmGuard {
   private remoteReported = false
   private lastSessionCheckAtMs = 0
   private cachedSessionName: string | null = null
-  private readonly getActiveSessionName: () => Promise<string | null>
+  private cachedRemoteVerdict: RemoteSessionVerdict | null = null
+  private readonly getActiveSessionName: (() => Promise<string | null>) | null
+  private readonly getRemoteSessionVerdict: () => Promise<RemoteSessionVerdict>
+  private readonly useSessionNameProbe: boolean
   private static readonly VM_SCAN_INTERVAL_MS = 5 * 60_000
   private static readonly SESSION_CHECK_INTERVAL_MS = 15_000
 
   constructor(private readonly opts: HardwareVmGuardOptions) {
     this.now = opts.now ?? Date.now
+    this.useSessionNameProbe = opts.getActiveSessionName !== undefined
     this.getActiveSessionName =
       opts.getActiveSessionName ??
       (process.platform === 'win32'
         ? readActiveSessionNameWindows
-        : async () => process.env.SESSIONNAME ?? null)
+        : null)
+    this.getRemoteSessionVerdict =
+      opts.getRemoteSessionVerdict ??
+      (() => readRemoteSessionVerdict(process.platform, process.env))
   }
 
   getLastTickAtMs(): number {
@@ -175,6 +311,10 @@ export class HardwareVmGuard {
         gpuNames: (graphics.controllers ?? []).map((c) => c.model ?? ''),
         macAddresses: macs
       })
+      // สัญญาณ hypervisor/VM จาก OS (Linux systemd-detect-virt/DMI, macOS sysctl)
+      const hypervisorSignals = await readHypervisorSignals()
+      for (const signal of hypervisorSignals) fingerprint.signals.push(signal)
+      if (hypervisorSignals.length > 0) fingerprint.isVm = true
       if (!fingerprint.isVm) return null
       return makeDetectionEvent(
         'VM_ENVIRONMENT_DETECTED',
@@ -207,25 +347,51 @@ export class HardwareVmGuard {
   async scanOnce(): Promise<DetectionEvent[]> {
     this.lastTickAtMs = this.now()
     const events: DetectionEvent[] = []
+    let remote = false
+    let remoteDetail = ''
+    let remoteSource = 'none'
     if (
       this.lastSessionCheckAtMs === 0 ||
       this.now() - this.lastSessionCheckAtMs >= HardwareVmGuard.SESSION_CHECK_INTERVAL_MS
     ) {
       this.lastSessionCheckAtMs = this.now()
-      try {
-        this.cachedSessionName = await this.getActiveSessionName()
-      } catch {
-        this.cachedSessionName = null
+      if (this.useSessionNameProbe && this.getActiveSessionName) {
+        try {
+          this.cachedSessionName = await this.getActiveSessionName()
+        } catch {
+          this.cachedSessionName = null
+        }
+        const current = this.cachedSessionName ?? process.env.SESSIONNAME ?? null
+        this.cachedRemoteVerdict = null
+        if (current && /^rdp/i.test(current)) {
+          remote = true
+          remoteSource = 'session'
+          remoteDetail = current
+        }
+      } else {
+        try {
+          this.cachedRemoteVerdict = await this.getRemoteSessionVerdict()
+        } catch {
+          this.cachedRemoteVerdict = null
+        }
       }
     }
-    const current = this.cachedSessionName ?? process.env.SESSIONNAME ?? null
-    // ตรวจ session ที่ขึ้นต้นด้วย RDP (รายงานครั้งเดียวต่อรอบการตรวจจับ)
-    if (current && current.toLowerCase().startsWith('rdp')) {
+    if (!this.useSessionNameProbe) {
+      const verdict = this.cachedRemoteVerdict
+      if (verdict?.remote) {
+        remote = true
+        remoteSource = verdict.source
+        remoteDetail = verdict.detail
+      }
+    }
+    // รายงานครั้งเดียวต่อการเปลี่ยนสถานะ remote (กัน event ซ้ำ)
+    if (remote) {
       if (!this.remoteReported) {
         this.remoteReported = true
         events.push(
           makeDetectionEvent('REMOTE_SESSION_SUSPECTED', this.detectorId, {
-            sessionName: current
+            source: remoteSource,
+            detail: remoteDetail.slice(0, 200)
           })
         )
       }

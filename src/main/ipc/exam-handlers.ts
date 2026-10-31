@@ -146,8 +146,8 @@ export function registerExamHandlers(
 
   /* ---------- Guard (Phase 3a) ---------- */
 
-  router.register('student:internal-copy', (req): StudentSubmitResponse => {
-    services.getGuardEngine()?.markInternalCopy(req.text)
+  router.register('student:internal-copy', (): StudentSubmitResponse => {
+    // VULN-09: renderer ปลอม mark ได้ — main ตั้ง hash เองจาก before-input-event เท่านั้น
     return { ok: true }
   })
 

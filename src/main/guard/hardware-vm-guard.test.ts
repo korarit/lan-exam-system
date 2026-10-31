@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { analyzeVmFingerprint, HardwareVmGuard } from './hardware-vm-guard'
+import {
+  analyzeRemoteSession,
+  analyzeVmFingerprint,
+  HardwareVmGuard
+} from './hardware-vm-guard'
 import type { DetectionEvent } from '@shared/policy-schema'
 
 describe('analyzeVmFingerprint — VM / Hypervisor Fingerprinting', () => {
@@ -34,6 +38,65 @@ describe('analyzeVmFingerprint — VM / Hypervisor Fingerprinting', () => {
     })
     expect(result.isVm).toBe(true)
     expect(result.signals.join(';')).toContain('08:00:27')
+  })
+})
+
+describe('analyzeRemoteSession — cross-platform remote detection', () => {
+  it('Windows: query session ที่ active เป็น RDP → remote', () => {
+    const verdict = analyzeRemoteSession({
+      platform: 'win32',
+      env: {},
+      querySession: ' SESSIONNAME       USERNAME   ID  STATE   TYPE\n>rdp-tcp#3         student     2  Active  rdpwd'
+    })
+    expect(verdict.remote).toBe(true)
+    expect(verdict.source).toBe('rdp')
+  })
+
+  it('Windows: console ที่ใช้งานปกติ → ไม่ remote', () => {
+    const verdict = analyzeRemoteSession({
+      platform: 'win32',
+      env: { SESSIONNAME: 'Console' },
+      querySession: ' SESSIONNAME       USERNAME   ID  STATE   TYPE\n>console           teacher     1  Active'
+    })
+    expect(verdict.remote).toBe(false)
+  })
+
+  it('Linux: SSH_CONNECTION → remote', () => {
+    const verdict = analyzeRemoteSession({
+      platform: 'linux',
+      env: { SSH_CONNECTION: '10.0.0.5 51234 10.0.0.1 22' }
+    })
+    expect(verdict.remote).toBe(true)
+    expect(verdict.source).toBe('ssh')
+  })
+
+  it('Linux: loginctl Remote=yes → remote', () => {
+    const verdict = analyzeRemoteSession({
+      platform: 'linux',
+      env: {},
+      loginctl: 'Remote=yes\nType=x11'
+    })
+    expect(verdict.remote).toBe(true)
+    expect(verdict.source).toBe('loginctl')
+  })
+
+  it('macOS: who มี host ในวงเล็บ → remote', () => {
+    const verdict = analyzeRemoteSession({
+      platform: 'darwin',
+      env: {},
+      who: 'student   ttys000   Oct 31 09:00 (10.0.0.55)'
+    })
+    expect(verdict.remote).toBe(true)
+    expect(verdict.source).toBe('who')
+  })
+
+  it('macOS: console ปกติ → ไม่ remote', () => {
+    const verdict = analyzeRemoteSession({
+      platform: 'darwin',
+      env: {},
+      who: 'student   console   Oct 31 08:00'
+    })
+    expect(verdict.remote).toBe(false)
   })
 })
 

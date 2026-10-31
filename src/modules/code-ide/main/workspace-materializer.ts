@@ -32,8 +32,24 @@ export function materializeExecutionSandbox(
   } = {}
 ): MaterializeResult {
   const runId = opts.runId ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  const runDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ztcode-exec-')), runId)
+  // realpath: กัน 8.3 short name บน Windows (เช่น MSI_GA~1) ที่ทำให้ open_basedir ไม่ตรง
+  let rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ztcode-exec-'))
+  try {
+    // .native คืน long path บน Windows (กัน MSI_GA~1 ที่ทำให้ PHP open_basedir เพี้ยน)
+    rootDir = fs.realpathSync.native(rootDir)
+  } catch {
+    // FS ไม่รองรับ realpath — ใช้ path เดิม
+  }
+  const runDir = path.join(rootDir, runId)
   fs.mkdirSync(runDir, { recursive: true })
+  // POSIX: ปิดสิทธิ์กลุ่ม/อื่นไม่ให้อ่านไฟล์งานนักเรียน (Windows ใช้ ACL ของ user อยู่แล้ว)
+  if (process.platform !== 'win32') {
+    try {
+      fs.chmodSync(runDir, 0o700)
+    } catch {
+      // FS ไม่รองรับ chmod (เช่น FAT) — ข้าม
+    }
+  }
   const linkEnv: Record<string, string> = {}
   const javaCpExtras: string[] = []
   if (opts.depsCache !== undefined) {

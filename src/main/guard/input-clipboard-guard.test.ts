@@ -62,13 +62,15 @@ describe('ClipboardStateTracker — EXTERNAL_CLIPBOARD_INJECTION', () => {
 describe('InputClipboardGuard — end-to-end (injected probes)', () => {
   function makeGuard(
     clipboardText: () => string,
-    cleared: { value: boolean }
+    cleared: { value: boolean },
+    formats: () => string[] = () => ['text/plain']
   ): { guard: InputClipboardGuard; events: DetectionEvent[] } {
     const events: DetectionEvent[] = []
     const guard = new InputClipboardGuard({
       getPolicy: () => policy,
       emit: (e) => events.push(e),
       readClipboardText: clipboardText,
+      getClipboardFormats: formats,
       clearClipboard: () => {
         cleared.value = true
       },
@@ -94,23 +96,31 @@ describe('InputClipboardGuard — end-to-end (injected probes)', () => {
     expect(events).toHaveLength(1)
   })
 
-  it('interceptPaste ปล่อยผ่านเมื่อเป็นข้อความที่คัดลอกภายในแอป', () => {
+  it('interceptPaste ปล่อยผ่านเมื่อเป็นข้อความที่คัดลอกภายในแอป', async () => {
     const cleared = { value: false }
     const text = 'ข้อความที่คัดลอกเอง'
     const { guard, events } = makeGuard(() => text, cleared)
     guard.markInternalCopy(text)
-    expect(guard.interceptPaste()).toBe(true)
+    expect(await guard.interceptPaste()).toBe(true)
     expect(cleared.value).toBe(false)
     expect(events).toHaveLength(0)
   })
 
-  it('interceptPaste บล็อกและล้างเมื่อเป็นข้อความจากภายนอก', () => {
+  it('interceptPaste บล็อกและล้างเมื่อเป็นข้อความจากภายนอก', async () => {
     const cleared = { value: false }
     const { guard, events } = makeGuard(() => 'ข้อความจากภายนอก', cleared)
-    expect(guard.interceptPaste()).toBe(false)
+    expect(await guard.interceptPaste()).toBe(false)
     expect(cleared.value).toBe(true)
     expect(events).toHaveLength(1)
     expect(events[0]!.code).toBe('EXTERNAL_CLIPBOARD_INJECTION')
     expect(events[0]!.detail.source).toBe('paste')
+  })
+
+  it('interceptPaste บล็อกรูป/ไฟล์ (non-text) แม้ไม่มีข้อความ', async () => {
+    const cleared = { value: false }
+    const { guard, events } = makeGuard(() => '', cleared, () => ['image/png'])
+    expect(await guard.interceptPaste()).toBe(false)
+    expect(cleared.value).toBe(true)
+    expect(events[0]!.detail.source).toBe('paste-non-text')
   })
 })

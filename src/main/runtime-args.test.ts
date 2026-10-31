@@ -71,4 +71,31 @@ describe('applyRuntimeArgPolicy', () => {
     const args = applyRuntimeArgPolicy(requested(), { production: true, allowedProfiles: [] })
     expect(args.profileId).toBe('default')
   })
+
+  it('clears a role that is outside the role allowlist', () => {
+    const args = applyRuntimeArgPolicy(requested(), {
+      production: true,
+      allowedRoles: ['host']
+    })
+    expect(args.role).toBe('unselected')
+  })
+
+  it('locks the deployment role (student kiosk cannot select host)', () => {
+    const args = applyRuntimeArgPolicy(requested(), {
+      production: true,
+      lockedRole: 'student'
+    })
+    expect(args.role).toBe('student')
+
+    const noFlag = applyRuntimeArgPolicy(parseRuntimeArgs(['electron']), {
+      production: true,
+      lockedRole: 'student'
+    })
+    expect(noFlag.role).toBe('student')
+  })
+
+  it('does not apply role policy outside release builds', () => {
+    const args = applyRuntimeArgPolicy(requested(), { production: false, lockedRole: 'host' })
+    expect(args.role).toBe('student')
+  })
 })

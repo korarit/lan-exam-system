@@ -92,11 +92,29 @@ export class ClipboardStateTracker {
 export interface InputClipboardGuardOptions {
   getPolicy: () => DetectionPolicyBody | null
   emit: (event: DetectionEvent) => void
-  /** อ่านข้อความคลิปบอร์ด (default: electron clipboard) */
-  readClipboardText?: () => string
+  /** อ่านข้อความคลิปบอร์ด (default: electron clipboard — async ใน Electron ใหม่) */
+  readClipboardText?: () => string | Promise<string>
+  /** รูปแบบเนื้อหาในคลิปบอร์ด (default: clipboard.read() ของ Electron) */
+  getClipboardFormats?: () => string[] | Promise<string[]>
   /** ล้างคลิปบอร์ดทันทีเมื่อเจอการฉีดจากภายนอก */
   clearClipboard?: () => void
   now?: () => number
+}
+
+/**
+ * รูปแบบที่ถือว่า "ไม่ใช่ข้อความธรรมดา" — paste รูป/ไฟล์/URI ต้องถูกบล็อก
+ * (Electron คืน MIME-ish เช่น image/png, text/uri-list, Files)
+ */
+export function hasNonTextClipboardContent(formats: readonly string[]): boolean {
+  return formats.some((format) => {
+    const lower = format.toLowerCase()
+    return (
+      lower.startsWith('image/') ||
+      lower.startsWith('application/') ||
+      lower === 'files' ||
+      lower === 'text/uri-list'
+    )
+  })
 }
 
 const CLIPBOARD_POLL_INTERVAL_MS = 1_500
@@ -105,23 +123,23 @@ export class InputClipboardGuard {
   readonly detectorId = 'input-clipboard-guard'
   private readonly tracker: ClipboardStateTracker
   private readonly now: () => number
-  private readonly readClipboardText: () => string
+  private readonly readClipboardText: () => Promise<string>
+  private readonly getClipboardFormats: () => Promise<string[]>
   private readonly clearClipboard: () => void
   private lastTickAtMs = 0
   private timer: NodeJS.Timeout | null = null
 
   constructor(private readonly opts: InputClipboardGuardOptions) {
     this.now = opts.now ?? Date.now
-    this.readClipboardText =
-      opts.readClipboardText ??
-      (() => {
-        try {
-          const text: unknown = clipboard.readText()
-          return typeof text === 'string' ? text : ''
-        } catch {
-          return ''
-        }
-      })
+    this.readClipboardText = async () => {
+      if (opts.readClipboardText) return await opts.readClipboardText()
+      try {
+        const text: unknown = await clipboard.readText()
+        return typeof text === 'string' ? text : ''
+      } catch {
+        return ''
+      }
+    }
     this.clearClipboard =
       opts.clearClipboard ??
       (() => {
@@ -131,6 +149,15 @@ export class InputClipboardGuard {
           // ไม่มี clipboard (สภาพแวดล้อมทดสอบ) — ปล่อยผ่าน
         }
       })
+    this.getClipboardFormats = async () => {
+      if (opts.getClipboardFormats) return await opts.getClipboardFormats()
+      try {
+        const items = await clipboard.read()
+        return [...new Set(items.flatMap((item) => item.types ?? []))]
+      } catch {
+        return []
+      }
+    }
     this.tracker = new ClipboardStateTracker()
   }
 
@@ -161,8 +188,11 @@ export class InputClipboardGuard {
     this.tracker.markInternalCopy(text)
   }
 
-  /** renderer ส่งสถิติการพิมพ์มาวิเคราะห์ (IKI ms ต่อช่วงการพิมพ์หนึ่ง) */
-  ingestTypingSamples(intervalsMs: number[]): DetectionEvent | null {
+  /** renderer/main ส่งสถิติการพิมพ์มาวิเคราะห์ (IKI ms ต่อช่วงการพิมพ์หนึ่ง) */
+  ingestTypingSamples(
+    intervalsMs: number[],
+    source: 'main' | 'renderer' = 'renderer'
+  ): DetectionEvent | null {
     const report = analyzeTypingPattern(intervalsMs)
     if (!isAbnormalTypingPattern(report)) return null
     const event = makeDetectionEvent(
@@ -171,7 +201,8 @@ export class InputClipboardGuard {
       {
         chars: String(report.sampleCount),
         cps: String(report.cps),
-        stdDevMs: String(report.stdDevMs)
+        stdDevMs: String(report.stdDevMs),
+        source
       },
       report.cps > TYPING_ABNORMAL_MAX_CPS * 3 ? undefined : 15,
       this.now
@@ -181,8 +212,26 @@ export class InputClipboardGuard {
   }
 
   /** ตรวจก่อนวางเนื้อหาจากคลิปบอร์ด — false = ไม่ควรอนุญาตให้วาง */
-  interceptPaste(): boolean {
-    const text = this.readClipboardText()
+  async interceptPaste(): Promise<boolean> {
+    // บล็อกรูป/ไฟล์/URI ก่อน — ตรวจเฉพาะ text ไม่พอ
+    const formats = await this.getClipboardFormats()
+    if (hasNonTextClipboardContent(formats)) {
+      this.clearClipboard()
+      this.opts.emit(
+        makeDetectionEvent(
+          'EXTERNAL_CLIPBOARD_INJECTION',
+          this.detectorId,
+          {
+            format: formats.join(',').slice(0, 200),
+            source: 'paste-non-text'
+          },
+          undefined,
+          this.now
+        )
+      )
+      return false
+    }
+    const text = await this.readClipboardText()
     if (!text) return true
     if (this.tracker.isInternalText(text)) return true
     this.clearClipboard()
@@ -204,7 +253,7 @@ export class InputClipboardGuard {
 
   private async pollOnce(): Promise<void> {
     this.lastTickAtMs = this.now()
-    const text = this.readClipboardText()
+    const text = await this.readClipboardText()
     const result = this.tracker.checkExternalInjection(text)
     if (result.injected && result.event) {
       this.clearClipboard()

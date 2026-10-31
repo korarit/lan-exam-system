@@ -12,6 +12,10 @@ export interface RuntimeArgPolicy {
   allowWindowedKiosk?: boolean
   /** optional allowlist for profile ids in production */
   allowedProfiles?: readonly string[]
+  /** optional allowlist for roles in production (unselected is always allowed) */
+  allowedRoles?: readonly ('host' | 'student')[]
+  /** force a single role for this deployment (student kiosk / teacher station) */
+  lockedRole?: 'host' | 'student'
 }
 
 const ROLE_VALUES = new Set(['host', 'student'])
@@ -52,6 +56,7 @@ export function parseRuntimeArgs(argv: readonly string[]): RuntimeArgs {
  * ปรับค่าที่อ่านได้ตามนโยบายของ build
  * - release build: ปิด windowed kiosk เว้นแต่ deployment เปิด opt-in
  * - release build + allowlist: profile นอกรายการถูกตีกลับเป็นค่าเริ่มต้น
+ * - release build + role policy: role นอกรายการถูกล้าง, lockedRole บังคับ role ของเครื่อง
  */
 export function applyRuntimeArgPolicy(args: RuntimeArgs, policy: RuntimeArgPolicy): RuntimeArgs {
   if (!policy.production) return args
@@ -60,5 +65,13 @@ export function applyRuntimeArgPolicy(args: RuntimeArgs, policy: RuntimeArgPolic
   if (policy.allowedProfiles !== undefined) {
     if (!policy.allowedProfiles.includes(next.profileId)) next.profileId = 'default'
   }
+  if (
+    policy.allowedRoles !== undefined &&
+    next.role !== 'unselected' &&
+    !policy.allowedRoles.includes(next.role)
+  ) {
+    next.role = 'unselected'
+  }
+  if (policy.lockedRole !== undefined) next.role = policy.lockedRole
   return next
 }

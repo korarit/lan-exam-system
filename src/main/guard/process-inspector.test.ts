@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isAllowlistedProcess,
   isUserWritablePath,
   matchProcessRules,
   makeDetectionEvent,
@@ -177,6 +178,100 @@ describe('ProcessInspector.scanOnce — ephemeral & sweep', () => {
     ).toBe(false)
     expect(produced.some((e) => e.code === 'SUSPICIOUS_COMPUTE_SPIKE')).toBe(true)
     expect(events.length).toBeGreaterThan(0)
+  })
+})
+
+describe('isAllowlistedProcess — ครูอนุมัติโปรเซสต่อห้อง', () => {
+  it('ตรงชื่อไฟล์ (ไม่สนตัวพิมพ์)', () => {
+    expect(
+      isAllowlistedProcess({ exeName: 'code.exe', exePath: '' }, null, [
+        { exeNames: ['Code.exe'] }
+      ])
+    ).toBe(true)
+  })
+
+  it('ตรง path prefix ทั้ง Windows และ POSIX', () => {
+    expect(
+      isAllowlistedProcess(
+        { exeName: 'python.exe', exePath: 'C:\\Lab\\Tools\\python.exe' },
+        null,
+        [{ pathPrefixes: ['c:\\lab\\tools'] }]
+      )
+    ).toBe(true)
+    expect(
+      isAllowlistedProcess(
+        { exeName: 'python', exePath: '/opt/lab/tools/python' },
+        null,
+        [{ pathPrefixes: ['/opt/lab/tools'] }]
+      )
+    ).toBe(true)
+  })
+
+  it('ตรง hash ที่อนุมัติ', () => {
+    const hash = 'a'.repeat(64)
+    expect(
+      isAllowlistedProcess({ exeName: 'x', exePath: '' }, { filePath: 'x', sha256: hash }, [
+        { sha256Hashes: [hash] }
+      ])
+    ).toBe(true)
+  })
+
+  it('ไม่ตรงรายการ → false', () => {
+    expect(
+      isAllowlistedProcess({ exeName: 'evil.exe', exePath: '/tmp/evil.exe' }, null, [
+        { exeNames: ['notepad.exe'] }
+      ])
+    ).toBe(false)
+  })
+})
+
+describe('ProcessInspector — allowlist และ baseline', () => {
+  it('โปรเซสที่อยู่ใน allowlist ไม่ถูกฟ้องแม้ชื่อตรง blacklist', async () => {
+    const events: DetectionEvent[] = []
+    const allowPolicy = DetectionPolicyBodySchema.parse({
+      ...buildDefaultPolicy('closed'),
+      processAllowlist: [{ exeNames: ['ollama.exe'] }]
+    })
+    const inspector = new ProcessInspector({
+      getPolicy: () => allowPolicy,
+      emit: (e) => events.push(e),
+      listProcesses: async () => [
+        { pid: 10, exeName: 'ollama.exe', exePath: '', commandLine: 'ollama serve', memBytes: 0, cpuPercent: 0 }
+      ],
+      listListeningPorts: async () => [],
+      startProcessTrace: () => () => {},
+      now: () => 1_000_000
+    })
+    const produced = await inspector.scanOnce()
+    expect(produced).toHaveLength(0)
+    expect(events).toHaveLength(0)
+  })
+
+  it('resetBaseline ทำให้โปรเซสที่รันอยู่ก่อนถูกนับเป็น baseline ใหม่', async () => {
+    const events: DetectionEvent[] = []
+    let current: ProcessSnapshot[] = [
+      { pid: 10, exeName: 'explorer.exe', exePath: 'C:\\Windows\\explorer.exe', commandLine: '', memBytes: 0, cpuPercent: 0 }
+    ]
+    let nowMs = 1_000_000
+    const inspector = new ProcessInspector({
+      getPolicy: () => policy,
+      emit: (e) => events.push(e),
+      listProcesses: async () => current,
+      listListeningPorts: async () => [],
+      startProcessTrace: () => () => {},
+      now: () => nowMs
+    })
+    await inspector.scanOnce()
+    nowMs += 1_000
+    current = [
+      ...current,
+      { pid: 20, exeName: 'helper.exe', exePath: 'C:\\Users\\a\\AppData\\Local\\Temp\\helper.exe', commandLine: '', memBytes: 0, cpuPercent: 0 }
+    ]
+    expect((await inspector.scanOnce()).some((e) => e.code === 'UNLISTED_PROCESS_DETECTED')).toBe(true)
+    // เริ่มสอบรอบใหม่: baseline = สถานะปัจจุบัน → helper อยู่ใน baseline ไม่ถูกฟ้องซ้ำ
+    inspector.resetBaseline()
+    nowMs += 1_000
+    expect((await inspector.scanOnce()).some((e) => e.code === 'UNLISTED_PROCESS_DETECTED')).toBe(false)
   })
 })
 

@@ -51,6 +51,21 @@ export const PolicySchedulerConfigSchema = z
   .strict()
 export type PolicySchedulerConfig = z.infer<typeof PolicySchedulerConfigSchema>
 
+/**
+ * โปรเซสที่ครูอนุมัติให้รันได้ (ต่อห้อง) — ตรวจก่อนเทียบ blacklist
+ * - exeNames: ชื่อไฟล์ตรง (ตัวพิมพ์เล็ก/ใหญ่ไม่สำคัญ)
+ * - pathPrefixes: path ขึ้นต้นด้วยค่าที่ระบุ (ใช้ '/' หรือ '\' ก็ได้ — normalize ก่อนเทียบ)
+ * - sha256Hashes: hash ของไฟล์ที่ยอมรับ (ใช้เมื่อ path เปลี่ยนไม่ได้)
+ */
+export const ProcessAllowlistEntrySchema = z
+  .object({
+    exeNames: z.array(z.string().min(1).max(120)).max(64).optional(),
+    pathPrefixes: z.array(z.string().min(1).max(400)).max(64).optional(),
+    sha256Hashes: z.array(z.string().length(64)).max(64).optional()
+  })
+  .strict()
+export type ProcessAllowlistEntry = z.infer<typeof ProcessAllowlistEntrySchema>
+
 /** โดเมนต้องห้ามเริ่มต้น (ฝั่งเครื่องแม่ — UI แสดง badge เตือนเมื่อรายการที่ record ชนกัน) */
 export const DEFAULT_FORBIDDEN_DOMAINS = [
   'api.openai.com',
@@ -88,6 +103,8 @@ export const DetectionPolicyBodySchema = z
     forbiddenDomains: z.array(z.string().min(3).max(200)).max(512),
     /** โดเมนยอมรับได้ (ไม่ฟ้อง) เช่น แพ็กเกจเอกสารของห้องสอบ */
     allowedDomains: z.array(z.string().min(3).max(200)).max(512),
+    /** รายการโปรเซสที่ครูอนุมัติ (ยกเว้นจาก blacklist/heuristic) */
+    processAllowlist: z.array(ProcessAllowlistEntrySchema).max(256).default([]),
     /** พฤติกรรมเมื่อเว็บของนักเรียนพยายามเข้าโดเมนที่ไม่อนุมัติ (default: warn) */
     domainEnforcement: DomainEnforcementSchema.default('warn')
   })
@@ -138,7 +155,7 @@ export const DetectionEventCatalog = {
   NETWORK_TUNNEL_OR_PROXY_TAMPER: { category: 'network-tunnel', severity: 'critical', score: 40 },
   SUSPICIOUS_COMPUTE_SPIKE: { category: 'ai-assistant', severity: 'warning', score: 10 },
   PID_BURST_ANOMALY: { category: 'automation-macro', severity: 'warning', score: 10 },
-  VM_ENVIRONMENT_DETECTED: { category: 'memory-debugger', severity: 'warning', score: 0 },
+  VM_ENVIRONMENT_DETECTED: { category: 'memory-debugger', severity: 'warning', score: 15 },
   REMOTE_SESSION_SUSPECTED: { category: 'remote-control', severity: 'warning', score: 15 },
   /* ---------- Phase 4: Attestation & Native Guard ---------- */
   ATTESTATION_VERIFICATION_FAILED: { category: 'app-tamper', severity: 'critical', score: 80 },
@@ -306,6 +323,7 @@ export function buildDefaultPolicy(examMode: 'closed' | 'in-app-docs' | 'externa
     scheduler: { minPollIntervalMs: 1_800, maxPollIntervalMs: 4_700 },
     rules,
     forbiddenDomains,
-    allowedDomains: []
+    allowedDomains: [],
+    processAllowlist: []
   })
 }

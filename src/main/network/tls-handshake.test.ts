@@ -27,13 +27,17 @@ interface TestServer {
   pin: string
 }
 
-async function startServer(pin: string): Promise<TestServer> {
+async function startServer(
+  pin: string,
+  extra: { roster?: readonly string[]; maxReconnectsPerStudent?: number } = {}
+): Promise<TestServer> {
   const cert = await generateEphemeralCert()
   const server = new ExamTlsServer({
     cert,
     pinKey: derivePinKey(pin, ROOM_ID),
     roomId: ROOM_ID,
-    onStudentsChanged: () => undefined
+    onStudentsChanged: () => undefined,
+    ...extra
   })
   const port = await server.listen(0)
   CLEANUPS.push(() => server.stop())
@@ -157,6 +161,72 @@ describe('TLS 1.3 + PIN handshake (integration)', () => {
     })
     expect(again.reconnectToken).toBe(joined.reconnectToken)
   }, 15000)
+
+  it('rejects a studentId that is not on the room roster', async () => {
+    const pin = generateRoomPin()
+    const { port } = await startServer(pin, { roster: ['std-allowed'] })
+    const client = new ExamTlsClient({ onConnectionState: () => undefined })
+    CLEANUPS.push(() => client.stop())
+    await expect(
+      client.connect({
+        host: '127.0.0.1',
+        port,
+        roomId: ROOM_ID,
+        roomPin: pin,
+        studentId: 'std-blocked',
+        studentName: 'ไม่อยู่ในรายชื่อ'
+      })
+    ).rejects.toSatisfy(
+      (err: unknown) => err instanceof JoinRejectedError && err.reason === 'not-on-roster'
+    )
+  })
+
+  it('caps the number of reconnects per student', async () => {
+    const pin = generateRoomPin()
+    const { port } = await startServer(pin, { maxReconnectsPerStudent: 1 })
+    const first = new ExamTlsClient({ onConnectionState: () => undefined })
+    CLEANUPS.push(() => first.stop())
+    const joined = await first.connect({
+      host: '127.0.0.1',
+      port,
+      roomId: ROOM_ID,
+      roomPin: pin,
+      studentId: 'std-cap',
+      studentName: 'ผู้เรียน'
+    })
+    first.stop()
+    await wait(100)
+
+    const second = new ExamTlsClient({ onConnectionState: () => undefined })
+    CLEANUPS.push(() => second.stop())
+    await second.connect({
+      host: '127.0.0.1',
+      port,
+      roomId: ROOM_ID,
+      roomPin: pin,
+      studentId: 'std-cap',
+      studentName: 'ผู้เรียน',
+      reconnectToken: joined.reconnectToken
+    })
+    second.stop()
+    await wait(100)
+
+    const third = new ExamTlsClient({ onConnectionState: () => undefined })
+    CLEANUPS.push(() => third.stop())
+    await expect(
+      third.connect({
+        host: '127.0.0.1',
+        port,
+        roomId: ROOM_ID,
+        roomPin: pin,
+        studentId: 'std-cap',
+        studentName: 'ผู้เรียน',
+        reconnectToken: joined.reconnectToken
+      })
+    ).rejects.toSatisfy(
+      (err: unknown) => err instanceof JoinRejectedError && err.reason === 'too-many-reconnects'
+    )
+  }, 20000)
 
   it('replies HEARTBEAT_PONG with host-authoritative time', async () => {
     const pin = generateRoomPin()
