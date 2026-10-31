@@ -1,6 +1,6 @@
 import os from 'node:os'
 import type { DetectionEvent, DetectionPolicyBody } from '@shared/policy-schema'
-import { runPowerShell } from './system-probes'
+import { runPowerShellStrict } from './system-probes'
 import { makeDetectionEvent } from './process-inspector'
 import { isDomainAllowed } from '../host/domain-recorder'
 
@@ -124,10 +124,12 @@ export function diffNetworkInterfaces(
 
 /** Windows: อ่าน OS DNS Resolver Cache ด้วย Get-DnsClientCache */
 export async function readDnsCacheWindows(): Promise<string[]> {
-  const output = await runPowerShell(
+  const result = await runPowerShellStrict(
     'Get-DnsClientCache -ErrorAction SilentlyContinue | Select-Object -Unique -ExpandProperty Entry'
   )
-  return output
+  // แยก "คำสั่งล้ม" (ถูกจำกัด/ไม่มี PowerShell) ออกจาก "cache ว่างจริง"
+  if (!result.ok) throw new Error('DNS_CACHE_PROBE_FAILED')
+  return result.stdout
     .split(/\r?\n/)
     .map((s) => s.trim().toLowerCase())
     .filter((s) => s.length > 3)
@@ -156,8 +158,10 @@ async function listConnectionsWithSi(): Promise<SocketInfo[]> {
 
 export interface NetworkInspectorOptions {
   getPolicy: () => DetectionPolicyBody | null
-  /** IP ของเครื่องแม่ (อนุญาตเสมอ) */
+  /** IP ของเครื่องแม่ (อนุญาตเฉพาะพอร์ตสอบ — ดู getHostPort) */
   getHostIp: () => string | null
+  /** พอร์ต TLS ของห้องสอบ (null = ยังไม่รู้ → ยกเว้น host IP ตามเดิม) */
+  getHostPort?: () => number | null
   /** พอร์ต local proxy (Mode 3) — 0 = ไม่มี */
   getLocalProxyPort: () => number
   /** Phase 9.5: pid ลูกที่ code-ide sandbox สั่งรันเอง — loopback อนุญาต, ออกนอกฟ้องรหัสเฉพาะ */
@@ -180,6 +184,8 @@ export class NetworkInspector {
   private nicBaseline: Set<string> | null = null
   private gatewayBaseline: string | null = null
   private readonly reportedDomains = new Map<string, number>()
+  /** นับ probe ที่ล้มติดกัน — กัน "ตรวจไม่ได้" ถูกตีความว่า "ไม่พบ" */
+  private readonly probeFailures = new Map<string, number>()
 
   constructor(private readonly opts: NetworkInspectorOptions) {
     this.now = opts.now ?? Date.now
@@ -202,6 +208,30 @@ export class NetworkInspector {
 
   getLastTickAtMs(): number {
     return this.now()
+  }
+
+  private reportProbeFailure(probe: string, reason: string): void {
+    const count = (this.probeFailures.get(probe) ?? 0) + 1
+    this.probeFailures.set(probe, count)
+    if (count === 2 || (count > 2 && count % 10 === 0)) {
+      this.opts.emit(
+        makeDetectionEvent(
+          'GUARD_PROBE_FAILED',
+          this.detectorId,
+          {
+            probe,
+            consecutiveFailures: String(count),
+            reason: reason.slice(0, 300)
+          },
+          undefined,
+          this.now
+        )
+      )
+    }
+  }
+
+  private clearProbeFailure(probe: string): void {
+    this.probeFailures.delete(probe)
   }
 
   start(): void {
@@ -235,6 +265,7 @@ export class NetworkInspector {
     /* ---------- 1) DNS cache diffing ---------- */
     try {
       const current = await this.listDnsCache()
+      this.clearProbeFailure('dns-cache')
       if (this.dnsBaseline) {
         for (const event of diffDnsCache(this.dnsBaseline, current, policy)) {
           const last = this.reportedDomains.get(event.detail.domain ?? '') ?? 0
@@ -246,8 +277,9 @@ export class NetworkInspector {
       } else {
         this.dnsBaseline = new Set(current.map((e) => e.toLowerCase()))
       }
-    } catch {
-      // อ่าน DNS cache ไม่ได้ — ข้ามรอบนี้
+    } catch (error) {
+      // อ่าน DNS cache ไม่ได้ — รายงานว่า probe ล้ม ไม่ใช่ "ไม่พบโดเมน"
+      this.reportProbeFailure('dns-cache', error instanceof Error ? error.message : 'unknown')
     }
 
     /* ---------- 2) Virtual NIC / tunnel ใหม่ ---------- */
@@ -265,6 +297,7 @@ export class NetworkInspector {
     /* ---------- 2b) เส้นทางออกหลักเปลี่ยน ---------- */
     try {
       const gateway = await this.getDefaultGateway()
+      this.clearProbeFailure('default-gateway')
       if (gateway && this.gatewayBaseline && gateway !== this.gatewayBaseline) {
         events.push(
           makeDetectionEvent('NETWORK_TUNNEL_OR_PROXY_TAMPER', this.detectorId, {
@@ -277,20 +310,24 @@ export class NetworkInspector {
       } else if (!this.gatewayBaseline && gateway) {
         this.gatewayBaseline = gateway
       }
-    } catch {
-      // อ่าน gateway ไม่ได้ — ข้ามรอบนี้
+    } catch (error) {
+      // อ่าน gateway ไม่ได้ — รายงาน probe ล้ม
+      this.reportProbeFailure('default-gateway', error instanceof Error ? error.message : 'unknown')
     }
     /* ---------- 3) Active sockets รายโปรเซส ---------- */
     try {
       const sockets = await this.listSockets()
+      this.clearProbeFailure('socket-list')
       const hostIp = this.opts.getHostIp()
+      const hostPort = this.opts.getHostPort?.() ?? null
       const proxyPort = this.opts.getLocalProxyPort()
       for (const socket of sockets) {
         if (socket.pid === process.pid) continue
         const established = socket.state.startsWith('ESTABLISH')
         if (!established) continue
         if (isLoopback(socket.peerAddress)) continue
-        if (hostIp && socket.peerAddress === hostIp) continue
+        // เครื่องแม่อนุญาตเฉพาะพอร์ตสอบ (ไม่ยกเว้นทั้ง IP จนเข้าบริการอื่นได้)
+        if (hostIp && socket.peerAddress === hostIp && (hostPort === null || socket.peerPort === hostPort)) continue
         if (socket.localPort === proxyPort || socket.peerPort === proxyPort) continue
         // Phase 9.5: โปรเซสลูกของ code-ide sandbox (เซิร์ฟเวอร์ backend / CLI run)
         // หลุดออกนอก loopback = ฟ้องรหัสเฉพาะ STUDENT_CODE_UNAUTHORIZED_NETWORK_CALL ทันที
@@ -328,8 +365,9 @@ export class NetworkInspector {
           )
         }
       }
-    } catch {
-      // สแกน sockets ไม่ได้ — ข้าม
+    } catch (error) {
+      // สแกน sockets ไม่ได้ — รายงาน probe ล้ม
+      this.reportProbeFailure('socket-list', error instanceof Error ? error.message : 'unknown')
     }
 
     const seen = new Set<string>()

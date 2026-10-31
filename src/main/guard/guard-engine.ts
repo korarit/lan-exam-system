@@ -31,6 +31,8 @@ export interface GuardEngineOptions {
   getExamBounds: () => Rect | null
   /** IP เครื่องแม่ + พอร์ต proxy (Mode 3) */
   getHostIp: () => string | null
+  /** พอร์ต TLS ของห้องสอบ (ใช้ยกเว้นเฉพาะท่อสอบ ไม่ใช่ทั้ง IP) */
+  getHostPort?: () => number | null
   getLocalProxyPort: () => number
   now?: () => number
 }
@@ -68,6 +70,7 @@ export class GuardEngine {
     this.networkInspector = new NetworkInspector({
       getPolicy: () => this.policyBody,
       getHostIp: opts.getHostIp,
+      ...(opts.getHostPort !== undefined ? { getHostPort: opts.getHostPort } : {}),
       getLocalProxyPort: opts.getLocalProxyPort,
       // Phase 9.5: loopback-only สำหรับโปรเซสลูกของ code-ide sandbox — ออกนอกฟ้องรหัสเฉพาะ
       isAuthorizedPid: (pid) => authorizedChildProcesses.isAuthorized(pid),

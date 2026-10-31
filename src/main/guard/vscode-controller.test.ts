@@ -8,6 +8,7 @@ import {
   VsCodeIntegrityWatchdog,
   buildLockedSettings,
   findVsCodeBinary,
+  isControlledVsCodeCommand,
   type ControlledProfile,
   type RogueProcessSnapshot
 } from './vscode-controller'
@@ -18,6 +19,17 @@ import type { DetectionEvent } from '@shared/policy-schema'
  * จำลองการแก้ settings.json / เพิ่มไฟล์ใน extensions ระหว่างสอบ
  * → ต้องจับได้ในรอบ scan ถัดไปทันทีไม่เกินหนึ่งรอบ
  * ============================================================ */
+
+describe('isControlledVsCodeCommand', () => {
+  const profile = { userDataDir: '/tmp/zt-profile/user-data', extensionsDir: '/tmp/zt-profile/extensions' }
+
+  it('ต้องตรงทั้ง user-data-dir และ extensions-dir (ถ้ามี)', () => {
+    expect(isControlledVsCodeCommand('code --user-data-dir=/tmp/zt-profile/user-data --extensions-dir=/tmp/zt-profile/extensions', profile)).toBe(true)
+    expect(isControlledVsCodeCommand('code --user-data-dir=/tmp/zt-profile/user-data', profile)).toBe(true)
+    expect(isControlledVsCodeCommand('code --user-data-dir=/tmp/zt-profile/user-data --extensions-dir=/tmp/evil', profile)).toBe(false)
+    expect(isControlledVsCodeCommand('code --user-data-dir=/tmp/zt-profile/user-data-rogue', profile)).toBe(false)
+  })
+})
 
 describe('buildLockedSettings', () => {
   it('ล็อก proxy + ปิด AI ตามแผน Phase 5', () => {
@@ -123,6 +135,26 @@ describe('VsCodeIntegrityWatchdog', () => {
     }]
     await watchdog.scanOnce()
     expect(events.filter((event) => event.code === 'UNAUTHORIZED_IDE_DETECTED')).toHaveLength(0)
+  })
+
+  it('โปรไฟล์ควบคุมจริงแต่ --extensions-dir ชี้ที่อื่น → UNAUTHORIZED_IDE_DETECTED', async () => {
+    await watchdog.scanOnce()
+    fakeProcesses = [{
+      exeName: process.platform === 'win32' ? 'code.exe' : 'code',
+      commandLine: `--user-data-dir=${profile!.userDataDir} --extensions-dir=${profile!.root}-rogue`
+    }]
+    await watchdog.scanOnce()
+    expect(events.filter((event) => event.code === 'UNAUTHORIZED_IDE_DETECTED')).toHaveLength(1)
+  })
+
+  it('path ที่มีคำว่า ztexam/lan-exam-system ไม่ได้รับการยกเว้นแล้ว', async () => {
+    await watchdog.scanOnce()
+    fakeProcesses = [{
+      exeName: process.platform === 'win32' ? 'code.exe' : 'code',
+      commandLine: 'C:\\work\\lan-exam-system\\ztexam\\code.exe'
+    }]
+    await watchdog.scanOnce()
+    expect(events.filter((event) => event.code === 'UNAUTHORIZED_IDE_DETECTED')).toHaveLength(1)
   })
 
   it('Cursor / Windsurf = UNAUTHORIZED_IDE_DETECTED (ai-editor)', async () => {

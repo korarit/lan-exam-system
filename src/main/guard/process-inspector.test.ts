@@ -70,6 +70,26 @@ describe('matchProcessRules — Renamed Binary Detection', () => {
   })
 })
 
+describe('ProcessInspector — probe failure visibility', () => {
+  it('listProcesses ล้มติดกัน → GUARD_PROBE_FAILED', async () => {
+    const events: DetectionEvent[] = []
+    const inspector = new ProcessInspector({
+      getPolicy: () => policy,
+      emit: (e) => events.push(e),
+      listProcesses: async () => {
+        throw new Error('probe blocked')
+      },
+      listListeningPorts: async () => [],
+      startProcessTrace: () => () => {},
+      now: () => 1_000_000
+    })
+    await inspector.scanOnce()
+    expect(events).toHaveLength(0)
+    await inspector.scanOnce()
+    expect(events.some((e) => e.code === 'GUARD_PROBE_FAILED' && e.detail.probe === 'process-list')).toBe(true)
+  })
+})
+
 describe('makeDetectionEvent — คะแนนตามแคตตาล็อก', () => {
   it('DISGUISED_PROCESS_DETECTED ต้องแรงกว่า BLACKLISTED (คูณสองของ rule)', () => {
     const base = makeDetectionEvent('BLACKLISTED_PROCESS_DETECTED', 't', {}, 45)

@@ -146,6 +146,12 @@ describe('7.4.1 Shuffled-to-Canonical CSV', () => {
     expect(csvCell('ค้ค้"quote"')).toBe('"ค้ค้""quote"""')
     expect(csvCell('มีเว้นบรรทัด\nข้อ 2')).toBe('"มีเว้นบรรทัด\nข้อ 2"')
   })
+
+  it('formula injection: คำตอบที่ขึ้นต้นด้วยสูตรถูก neutralize', () => {
+    expect(csvCell('=1+1')).toBe("'=1+1")
+    expect(csvCell('@cmd')).toBe("'@cmd")
+    expect(csvCell('-5')).toBe('-5')
+  })
 })
 
 describe('canonicalQuestionItems', () => {

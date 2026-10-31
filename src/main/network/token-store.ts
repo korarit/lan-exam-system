@@ -19,6 +19,11 @@ export interface ReconnectTokenStoreOptions {
   /** ไฟล์รุ่นเก่า (plaintext map) — ย้ายเข้า store ใหม่อัตโนมัติเมื่ออ่าน */
   legacyFilePath?: string
   vault: TokenVault
+  /**
+   * อนุญาต fallback เป็น plaintext base64 เมื่อ OS keyring ใช้ไม่ได้
+   * ค่าตั้งต้น false = fail-closed (ไม่เก็บ token ที่อ่านได้ด้วยคนอื่น)
+   */
+  allowPlaintextFallback?: boolean
 }
 
 const ENC_PREFIX = 'enc:'
@@ -35,19 +40,27 @@ export class ReconnectTokenStore {
     const map = this.read()
     const value = map[keyOf(roomId, studentId)]
     if (typeof value === 'string') return this.decode(value)
-    // fallback: ไฟล์ plaintext รุ่นเก่า → อ่านได้และย้ายเข้ารูปแบบใหม่
+    // fallback: ไฟล์ plaintext รุ่นเก่า → ย้ายได้เฉพาะเมื่อมี vault ที่เข้ารหัสได้จริง
     const legacy = this.readLegacy()
     const old = legacy[keyOf(roomId, studentId)]
     if (typeof old !== 'string') return null
-    this.save(roomId, studentId, old)
+    if (!this.save(roomId, studentId, old)) {
+      // keyring ใช้ไม่ได้และไม่อนุญาต plaintext → ลบ legacy ทิ้ง (fail-closed)
+      this.purgeLegacy()
+      return null
+    }
     return old
   }
 
-  save(roomId: string, studentId: string, token: string): void {
-    if (!token) return
+  /** คืน false เมื่อไม่สามารถเก็บ token ได้อย่างปลอดภัย (ไม่ได้เขียนอะไรลงดิสก์) */
+  save(roomId: string, studentId: string, token: string): boolean {
+    if (!token) return false
+    const encoded = this.encode(token)
+    if (encoded === null) return false
     const map = this.read()
-    map[keyOf(roomId, studentId)] = this.encode(token)
+    map[keyOf(roomId, studentId)] = encoded
     this.write(map)
+    return true
   }
 
   clear(roomId: string, studentId: string): void {
@@ -61,14 +74,17 @@ export class ReconnectTokenStore {
     return Object.keys(this.read()).length
   }
 
-  private encode(token: string): string {
+  private encode(token: string): string | null {
     try {
       const encrypted = this.opts.vault.encrypt(token)
       if (encrypted) return `${ENC_PREFIX}${encrypted}`
     } catch {
-      // keyring ล็อก/ยังไม่พร้อม — ตกไป plaintext
+      // keyring ล็อก/ยังไม่พร้อม
     }
-    return `${PLAIN_PREFIX}${Buffer.from(token, 'utf8').toString('base64')}`
+    if (this.opts.allowPlaintextFallback === true) {
+      return `${PLAIN_PREFIX}${Buffer.from(token, 'utf8').toString('base64')}`
+    }
+    return null
   }
 
   private decode(value: string): string | null {
@@ -80,14 +96,27 @@ export class ReconnectTokenStore {
       }
     }
     if (value.startsWith(PLAIN_PREFIX)) {
+      // plaintext รุ่นเก่า: ใช้ต่อเฉพาะเมื่อครู/ผู้ดูแลเปิด fallback ไว้
+      if (this.opts.allowPlaintextFallback !== true) return null
       try {
         return Buffer.from(value.slice(PLAIN_PREFIX.length), 'base64').toString('utf8') || null
       } catch {
         return null
       }
     }
-    // ค่าเก่าที่เป็น token ตรง ๆ (ก่อนมี prefix)
-    return value.length > 0 ? value : null
+    // ค่าเก่าที่เป็น token ตรง ๆ (ก่อนมี prefix) — ต้อง migrate ผ่าน vault เท่านั้น
+    if (this.opts.allowPlaintextFallback === true) return value.length > 0 ? value : null
+    return null
+  }
+
+  private purgeLegacy(): void {
+    const file = this.opts.legacyFilePath
+    if (!file) return
+    try {
+      fs.rmSync(file, { force: true })
+    } catch {
+      // ลบไม่ได้ — อย่างน้อยก็ไม่คืน token ให้ผู้เรียก
+    }
   }
 
   private read(): Record<string, string> {

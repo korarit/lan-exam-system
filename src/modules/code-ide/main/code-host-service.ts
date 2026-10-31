@@ -22,8 +22,22 @@ import type { HostDatabase } from '@main/storage/db'
  * ============================================================ */
 
 /** โฟลเดอร์/ไฟล์ไลบรารีที่ไม่ต้องส่งซ้ำ (ครูมีใน DependencyBundle แล้ว) */
-const STRIPPED_DIRS = new Set(['node_modules', '.venv', 'venv', '__pycache__', '.git', 'dist', 'build', 'target'])
-const STRIPPED_FILES = new Set(['.DS_Store'])
+const STRIPPED_DIRS = new Set([
+  'node_modules',
+  '.venv',
+  'venv',
+  '__pycache__',
+  '.git',
+  'dist',
+  'build',
+  'target',
+  // workspace config ที่อาจสั่งรันโค้ดเมื่อครูเปิดโฟลเดอร์ (ไม่ใช่ของงานนักเรียน)
+  '.vscode',
+  '.devcontainer',
+  '.idea',
+  '.husky'
+])
+const STRIPPED_FILES = new Set(['.ds_store'])
 
 export interface CodeRoomContext {
   roomId: string
@@ -48,8 +62,8 @@ export interface IngestProjectResult {
 
 function isStrippedPath(path: string): boolean {
   const segs = path.split('/')
-  if (segs.some((s) => STRIPPED_DIRS.has(s))) return true
-  const base = segs[segs.length - 1] ?? ''
+  if (segs.some((s) => STRIPPED_DIRS.has(s.toLowerCase()))) return true
+  const base = (segs[segs.length - 1] ?? '').toLowerCase()
   return STRIPPED_FILES.has(base)
 }
 

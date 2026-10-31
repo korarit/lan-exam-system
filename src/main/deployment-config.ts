@@ -23,7 +23,9 @@ export const DeploymentConfigSchema = z
     /** จำนวน reconnect สูงสุดต่อคน (0 = ไม่จำกัด) */
     maxReconnectsPerStudent: z.number().int().min(0).max(100).optional(),
     /** หลุดต่อเนื่องเกินกี่ ms แล้ว auto-freeze (null = ไม่ freeze) */
-    disconnectFreezeMs: z.number().int().min(5_000).max(600_000).nullable().optional()
+    disconnectFreezeMs: z.number().int().min(5_000).max(600_000).nullable().optional(),
+    /** build ต่ำสุดที่ยอมรับ (กัน downgrade ไป build เก่าที่เซ็นแล้ว) */
+    minAppVersion: z.string().regex(/^\d+(\.\d+){0,3}([-+][0-9A-Za-z.-]+)?$/).max(40).optional()
   })
   .strict()
 export type DeploymentConfig = z.infer<typeof DeploymentConfigSchema>

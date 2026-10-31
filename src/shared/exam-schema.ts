@@ -197,7 +197,7 @@ export const ExamTimeUpPayloadSchema = z.object({}).strict()
 
 /** Host → Student: ปรนัย/ข้อถูกปฏิเสธ (cursor ผิด / หมดเวลา / คำตอบไม่ถูกต้อง) */
 export const SubmitRejectedPayloadSchema = z
-  .object({ reason: z.enum(['cursor-mismatch', 'time-expired', 'bad-question', 'not-started']) })
+  .object({ reason: z.enum(['cursor-mismatch', 'time-expired', 'bad-question', 'not-started', 'frozen']) })
   .strict()
 export type SubmitRejectedPayload = z.infer<typeof SubmitRejectedPayloadSchema>
 

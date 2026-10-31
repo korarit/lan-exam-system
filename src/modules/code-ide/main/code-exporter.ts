@@ -4,6 +4,7 @@ import type { CodeExamPackage } from '../shared/code-schema'
 import { sanitizeFolderName, sanitizeQuestionSlug } from './code-workspace-dirs'
 import { assertPathInside } from './anti-delete-guard'
 import type { CodeIdeHostService } from './code-host-service'
+import { escapeCsvCell } from '@shared/csv-safe'
 
 /* ============================================================
  * Phase 10 (10.4) — Project Tree & Score Exporter (เครื่องแม่)
@@ -28,8 +29,8 @@ export interface CodeScoreRow {
 
 function csvCell(value: string | number | null): string {
   if (value === null || value === undefined) return ''
-  const s = String(value)
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  if (typeof value === 'number') return String(value)
+  return escapeCsvCell(String(value))
 }
 
 /** ตารางคะแนนรวมของห้อง (คอลัมน์คงที่ + รองรับ Excel ไทยด้วย BOM) */

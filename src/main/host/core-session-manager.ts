@@ -192,6 +192,10 @@ export class CoreSessionManager {
         `UPDATE exam_sessions SET status = 'running', started_at_ms = ?, ended_at_ms = NULL, crypto_salt = ? WHERE id = ?`
       )
       .run(startedAtMs, this.roomSecretSeed, roomId)
+    // ล้าง freeze ค้างจากรอบก่อน — เริ่มสอบรอบใหม่ทุกคนต้องส่งคำตอบได้
+    this.opts.db.db
+      .prepare(`UPDATE students SET status = 'joined' WHERE session_id = ? AND status = 'frozen'`)
+      .run(roomId)
 
     const storageKey = pbkdf2Sync(this.roomSecretSeed, roomId, 10_000, 32, 'sha256')
     this.resultStore = new ResultStore(this.opts.db, storageKey)
@@ -521,11 +525,34 @@ export class CoreSessionManager {
   private handleDisconnectExpired(studentId: string, offlineForMs: number): void {
     if (this.state !== 'running' && this.state !== 'collecting') return
     const room = this.opts.getRoom()
+    const roomId = room?.room?.roomId
+    // freeze ต้องบังคับใช้ฝั่ง host ด้วย ไม่ใช่แค่ส่งข้อความให้ client แสดง
+    if (roomId) {
+      this.opts.db.db
+        .prepare(
+          `UPDATE students SET status = 'frozen' WHERE session_id = ? AND student_id = ? AND status IN ('joined', 'taking')`
+        )
+        .run(roomId, studentId)
+    }
     room?.tlsServerInstance?.sendToStudent(studentId, NetMsgType.freezeExam, {
       frozen: true,
       reason: `ขาดการเชื่อมต่อระหว่างสอบ ${Math.round(offlineForMs / 1000)} วินาที`
     })
     this.opts.onAnomaly?.(studentId, `AUTO_FREEZE_DISCONNECTED_${offlineForMs}ms`)
+  }
+
+  /** สถานะ freeze ฝั่ง host (แหล่งความจริงคือตาราง students ไม่ใช่ client) */
+  private isStudentFrozen(studentId: string): boolean {
+    const roomId = this.opts.getRoom()?.room?.roomId
+    if (!roomId) return false
+    try {
+      const row = this.opts.db.db
+        .prepare(`SELECT status FROM students WHERE session_id = ? AND student_id = ?`)
+        .get(roomId, studentId) as { status?: string } | undefined
+      return row?.status === 'frozen'
+    } catch {
+      return false
+    }
   }
 
   /** Phase 3c: ส่ง SCREEN_SESSION (คีย์ ring buffer + พอร์ต UDP ถ้ามี) + จับคู่กุญแจฝั่งเครื่องแม่ */
@@ -646,6 +673,12 @@ export class CoreSessionManager {
     const room = this.opts.getRoom()
     const tlsServer = room?.tlsServerInstance
     if (!this.dispatcher || !tlsServer) return
+    // Freeze ต้องบังคับที่ host: client ที่เพิกเฉย FREEZE_EXAM ยังส่งคำตอบไม่ได้
+    if (this.isStudentFrozen(studentId)) {
+      tlsServer.sendToStudent(studentId, NetMsgType.submitRejected, { reason: 'frozen' })
+      this.opts.onAnomaly?.(studentId, 'SUBMIT_WHILE_FROZEN')
+      return
+    }
     const result = this.dispatcher.handleSubmitAnswer(studentId, submit)
     if (!result.accepted) {
       tlsServer.sendToStudent(studentId, NetMsgType.submitRejected, { reason: result.reason })
@@ -667,6 +700,8 @@ export class CoreSessionManager {
 
   private handleAutosaveDraft(studentId: string, payload: AutoSaveDraftPayload): void {
     if (!this.recovery) return
+    // ฉบับร่างของคนที่ถูก freeze ต้องไม่ถูก auto-collect เป็นคำตอบตอนหมดเวลา
+    if (this.isStudentFrozen(studentId)) return
     this.recovery.saveDraft(studentId, payload, Date.now())
     this.opts.sendHostEvent('host:exam-draft-saved', {
       studentId,
@@ -678,6 +713,7 @@ export class CoreSessionManager {
   /** FINAL_DRAFT_FLUSH ระหว่าง grace period: นับเป็นคำตอบสมบูรณ์ทันทีที่เครื่องแม่ได้รับ */
   private handleFinalDraftFlush(studentId: string, payload: FinalDraftFlushPayload): void {
     if (!this.dispatcher || this.state !== 'collecting') return
+    if (this.isStudentFrozen(studentId)) return
     // ยอมรับเฉพาะถ้า questionId ตรงกับ cursor ปัจจุบัน (จริง/เครื่องแม่เชื่อ Dispatcher)
     if (payload.cursorIndex === this.dispatcher.getCursor(studentId)) {
       this.applySubmission(studentId, payload.questionId, payload.answer, Date.now())
@@ -696,6 +732,7 @@ export class CoreSessionManager {
     const room = this.opts.getRoom()
     const tlsServer = room?.tlsServerInstance
     if (!this.dispatcher || !tlsServer) return
+    if (this.isStudentFrozen(studentId)) return
     const result = this.dispatcher.navigateBack(studentId, request)
     if (!result.ok || result.payload === null) {
       this.opts.onAnomaly?.(studentId, `NAVIGATE_REJECTED_${request.cursorIndex}`)

@@ -36,12 +36,31 @@ describe('ReconnectTokenStore', () => {
     expect(fs.readFileSync(filePath, 'utf8')).toContain('enc:')
   })
 
-  it('falls back to a base64 plaintext record when the OS vault is unavailable', () => {
+  it('falls back to a base64 plaintext record only when explicitly allowed', () => {
+    const filePath = tempFile('reconnect.enc.json')
+    const unavailable: TokenVault = { encrypt: () => null, decrypt: () => null }
+    const store = new ReconnectTokenStore({ filePath, vault: unavailable, allowPlaintextFallback: true })
+    expect(store.save('room-1', 'std-1', 'fallback-token')).toBe(true)
+    expect(store.load('room-1', 'std-1')).toBe('fallback-token')
+    expect(fs.readFileSync(filePath, 'utf8')).toContain('plain:')
+  })
+
+  it('fail-closed: ไม่เก็บ plaintext เมื่อ keyring ใช้ไม่ได้ (ค่าตั้งต้น)', () => {
     const filePath = tempFile('reconnect.enc.json')
     const unavailable: TokenVault = { encrypt: () => null, decrypt: () => null }
     const store = new ReconnectTokenStore({ filePath, vault: unavailable })
-    store.save('room-1', 'std-1', 'fallback-token')
-    expect(store.load('room-1', 'std-1')).toBe('fallback-token')
-    expect(fs.readFileSync(filePath, 'utf8')).toContain('plain:')
+    expect(store.save('room-1', 'std-1', 'fallback-token')).toBe(false)
+    expect(store.load('room-1', 'std-1')).toBeNull()
+    expect(fs.existsSync(filePath)).toBe(false)
+  })
+
+  it('fail-closed: legacy plaintext ถูกอ่านไม่ได้และถูกลบเมื่อไม่มี keyring', () => {
+    const filePath = tempFile('reconnect.enc.json')
+    const legacyFilePath = tempFile('reconnect.json')
+    fs.writeFileSync(legacyFilePath, JSON.stringify({ 'room-1:std-1': 'legacy-token' }), 'utf8')
+    const unavailable: TokenVault = { encrypt: () => null, decrypt: () => null }
+    const store = new ReconnectTokenStore({ filePath, legacyFilePath, vault: unavailable })
+    expect(store.load('room-1', 'std-1')).toBeNull()
+    expect(fs.existsSync(legacyFilePath)).toBe(false)
   })
 })

@@ -4,6 +4,7 @@ import type { DetectionPolicyBody, DetectionEvent, DetectionEventCode, ProcessSi
 import { DetectionEventCatalog } from '@shared/policy-schema'
 import { createPlatformMetadataReader, BinaryMetadataCache, readPeVersionInfoBatch, hashFileSha256, statFile, type BinaryMetadata } from './binary-metadata'
 import { parseJsonLines } from './system-probes'
+import { startPortableProcessTrace } from './ephemeral-process-watch'
 
 /* ============================================================
  * ProcessInspector — ตรวจโปรเซสเชิงลึก (Phase 3a.2)
@@ -35,6 +36,8 @@ export interface EphemeralProcess {
   /** ชื่อโปรเซส lowercase เช่น 'curl.exe' */
   name: string
   ppid: number
+  /** true = portable watcher ยืนยันว่าโปรเซสอยู่สั้น (Windows trace เป็น start event จึงไม่ตั้งค่านี้) */
+  shortLived?: boolean
 }
 
 export interface RuleMatch {
@@ -293,11 +296,20 @@ function startWindowsProcessTrace(
   }
 }
 
+/**
+ * Default: Windows = WMI start trace (event-based), Linux/macOS = portable
+ * snapshot watcher ที่รายงานโปรเซสอายุสั้นโดยไม่ต้องใช้สิทธิ์ kernel
+ */
+function defaultStartProcessTrace(
+  onProcess: (p: EphemeralProcess) => void
+): (() => void) | null {
+  if (process.platform === 'win32') return startWindowsProcessTrace(onProcess)
+  return startPortableProcessTrace((p) => onProcess(p))
+}
+
 /* ============================================================
  * Inspector
- * ============================================================ */
-
-export interface ProcessInspectorOptions {
+ * ============================================================ */export interface ProcessInspectorOptions {
   detectorId?: string
   getPolicy: () => DetectionPolicyBody | null
   emit: (event: DetectionEvent) => void
@@ -324,6 +336,10 @@ export class ProcessInspector {
   private stopTrace: (() => void) | null = null
   /** hash ที่แจ้งไปแล้ว กันยิง event เดิมซ้ำรัว ๆ */
   private readonly reportedSignatures = new Map<string, number>()
+  /** นับ probe ที่ล้มติดกัน — แยก "ตรวจไม่ได้" จาก "ไม่พบ" */
+  private readonly probeFailures = new Map<string, number>()
+  /** เวลาของโปรเซสอายุสั้นที่เพิ่งพบ (ใช้จับ burst แม้ชื่อไม่ตรง blacklist) */
+  private ephemeralSeenAtMs: number[] = []
   private baselineProcesses: Set<string> | null = null
   private traceEnabled = false
   private lastScanAtMs = 0
@@ -333,7 +349,7 @@ export class ProcessInspector {
     this.metadataCache = new BinaryMetadataCache(createPlatformMetadataReader())
     this.listProcesses = opts.listProcesses ?? listProcessesWithSi
     this.listListeningPorts = opts.listListeningPorts ?? listListeningPortsWithSi
-    this.startProcessTrace = opts.startProcessTrace ?? startWindowsProcessTrace
+    this.startProcessTrace = opts.startProcessTrace ?? defaultStartProcessTrace
     this.spikeMemBytes = opts.spikeMemBytes ?? 1.5 * 1024 * 1024 * 1024
     this.spikeCpuPercent = opts.spikeCpuPercent ?? 70
     this.now = opts.now ?? Date.now
@@ -393,7 +409,9 @@ export class ProcessInspector {
     let processes: ProcessSnapshot[]
     try {
       processes = await this.listProcesses()
-    } catch {
+      this.probeFailures.delete('process-list')
+    } catch (error) {
+      this.reportProbeFailure('process-list', error instanceof Error ? error.message : 'unknown')
       return []
     }
 
@@ -529,6 +547,7 @@ export class ProcessInspector {
     if (isAllowlistedProcess({ exeName: p.name, exePath: '' }, null, policy.processAllowlist)) {
       return
     }
+    this.noteEphemeralBurst(p)
     const matches = matchProcessRules({ exeName: p.name, commandLine: p.name }, null, policy.rules)
     for (const { rule } of matches) {
       this.opts.emit(
@@ -550,11 +569,55 @@ export class ProcessInspector {
     }
   }
 
+  /** โปรเซสอายุสั้นหลายตัวในหน้าต่างสั้น ๆ = น่าดูแม้ชื่อไม่ตรง blacklist */
+  private noteEphemeralBurst(p: EphemeralProcess): void {
+    if (p.shortLived !== true) return
+    const now = this.now()
+    this.ephemeralSeenAtMs = this.ephemeralSeenAtMs.filter((t) => now - t <= 10_000)
+    this.ephemeralSeenAtMs.push(now)
+    if (this.ephemeralSeenAtMs.length >= 8 && this.shouldReport('ephemeral-burst', 30_000)) {
+      this.opts.emit(
+        makeDetectionEvent(
+          'PID_BURST_ANOMALY',
+          this.detectorId,
+          {
+            count: String(this.ephemeralSeenAtMs.length),
+            windowMs: '10000',
+            sample: p.name.slice(0, 100)
+          },
+          undefined,
+          this.now
+        )
+      )
+    }
+  }
+
   private shouldReport(signature: string, cooldownMs: number): boolean {
     const last = this.reportedSignatures.get(signature) ?? 0
     if (this.now() - last < cooldownMs) return false
     this.reportedSignatures.set(signature, this.now())
     return true
+  }
+
+  /** รายงาน probe ที่ล้มติดกัน (ไม่ใช่แค่ "ไม่พบโปรเซส") */
+  private reportProbeFailure(probe: string, reason: string): void {
+    const count = (this.probeFailures.get(probe) ?? 0) + 1
+    this.probeFailures.set(probe, count)
+    if (count === 2 || (count > 2 && count % 10 === 0)) {
+      this.opts.emit(
+        makeDetectionEvent(
+          'GUARD_PROBE_FAILED',
+          this.detectorId,
+          {
+            probe,
+            consecutiveFailures: String(count),
+            reason: reason.slice(0, 300)
+          },
+          undefined,
+          this.now
+        )
+      )
+    }
   }
 
   /** ตรวจ hash ของไฟล์หนึ่ง (ใช้ใน test กับ policy ที่มี sha256Hashes) */

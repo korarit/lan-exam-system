@@ -17,8 +17,8 @@ export interface NetworkServices {
   getRoomManager(): HostRoomManager
   getDiscovery(): RoomDiscoveryListener
   getStudentClient(): ExamTlsClient
-  /** จดจำ IP เครื่องแม่ที่ join ล่าสุด (NetworkInspector ยกเว้นเสมอ) */
-  onStudentJoinedRoom?: (hostIp: string, roomId: string) => void
+  /** จดจำ IP/พอร์ตเครื่องแม่ที่ join ล่าสุด (NetworkInspector ยกเว้นเฉพาะท่อสอบ) */
+  onStudentJoinedRoom?: (hostIp: string, roomId: string, hostPort: number) => void
 }
 
 export function registerNetworkHandlers(
@@ -74,7 +74,7 @@ export function registerNetworkHandlers(
         studentId: req.studentId,
         studentName: req.studentName
       })
-      services.onStudentJoinedRoom?.(req.hostIp, req.roomId)
+      services.onStudentJoinedRoom?.(req.hostIp, req.roomId, req.hostPort)
       return { ok: true, sessionToken: result.sessionToken }
     } catch (err) {
       const reason =

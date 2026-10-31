@@ -40,6 +40,27 @@ export const ATTESTATION_MAX_INTERVAL_MS = 120_000
 export const ATTESTATION_FIRST_DELAY_MS = 1_500
 export const ATTESTATION_DEADLINE_MS = 2_500
 
+/** เปรียบเทียบ semver แบบตัวเลข (1.2.10 > 1.2.9); คืนค่าลบเมื่อ a < b */
+export function compareAppVersion(a: string, b: string): number {
+  const parse = (value: string): number[] =>
+    value
+      .trim()
+      .split(/[.+-]/)
+      .map((part) => {
+        const match = /^\d+/.exec(part)
+        return match ? Number.parseInt(match[0], 10) : 0
+      })
+  const left = parse(a)
+  const right = parse(b)
+  const length = Math.max(left.length, right.length)
+  for (let i = 0; i < length; i += 1) {
+    const l = left[i] ?? 0
+    const r = right[i] ?? 0
+    if (l !== r) return l < r ? -1 : 1
+  }
+  return 0
+}
+
 export interface AttestationFailure {
   studentId: string
   reason: string
@@ -58,6 +79,8 @@ export interface AttestationHostOptions {
   isDev: () => boolean
   /** สวิตช์บังคับตรวจลายเซ็นจริงแม้ใน dev (จากหน้าตั้งค่าห้องสอบ) */
   isSignatureEnforced: () => boolean
+  /** build ต่ำสุดที่ยอมรับ (จาก signed deployment config) — กัน downgrade ไป build เก่า */
+  minAppVersion?: () => string | null
   onVerified: (ok: AttestationSuccess, isNew: boolean) => void
   onFailed: (failure: AttestationFailure) => void
   now?: () => number
@@ -297,6 +320,11 @@ export class AttestationHostService {
       // permissive (ดีฟโหมด): ยอมรับ manifest ที่ไม่มีลายเซ็นโดยเฉพาะ
       if (!verdict.ok && !isDevUnsigned) return { ok: false, reason: verdict.reason }
       if (verdict.ok) entry.signatureOkAtLeastOnce = true
+    }
+    // กัน downgrade: build เก่าที่เซ็นถูกต้องแต่มี guard อ่อนกว่าต้องไม่ผ่าน
+    const minVersion = this.opts.minAppVersion?.() ?? null
+    if (minVersion !== null && minVersion !== '' && compareAppVersion(manifest.appVersion, minVersion) < 0) {
+      return { ok: false, reason: 'app-version-too-old' }
     }
     const body: AppManifestBody = {
       manifestId: manifest.manifestId,

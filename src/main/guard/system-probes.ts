@@ -38,6 +38,35 @@ export function runPowerShell(script: string, timeoutMs = PROBE_TIMEOUT_MS): Pro
   )
 }
 
+/** เหมือน runCommand แต่แยก "คำสั่งล้ม" ออกจาก "ผลลัพธ์ว่าง" ได้ */
+export function runCommandStrict(
+  file: string,
+  args: string[],
+  timeoutMs = PROBE_TIMEOUT_MS
+): Promise<{ ok: boolean; stdout: string }> {
+  return new Promise((resolve) => {
+    execFile(
+      file,
+      args,
+      { timeout: timeoutMs, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
+      (err, stdout) => {
+        resolve({ ok: err === null, stdout: stdout ?? '' })
+      }
+    )
+  })
+}
+
+export function runPowerShellStrict(
+  script: string,
+  timeoutMs = PROBE_TIMEOUT_MS
+): Promise<{ ok: boolean; stdout: string }> {
+  return runCommandStrict(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    timeoutMs
+  )
+}
+
 /** parse บรรทัดละ JSON (ผลลัพธ์จาก ForEach-Object | ConvertTo-Json -Compress) */
 export function parseJsonLines<T>(output: string): T[] {
   const results: T[] = []

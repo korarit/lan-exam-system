@@ -122,11 +122,12 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
     vi.useRealTimers()
   })
 
-  function buildHost(isDev: boolean, enforced: boolean): AttestationHostService {
+  function buildHost(isDev: boolean, enforced: boolean, minVersion?: string): AttestationHostService {
     return new AttestationHostService({
       getRoom: () => rooms.room as never,
       isDev: () => isDev,
       isSignatureEnforced: () => enforced,
+      ...(minVersion !== undefined ? { minAppVersion: () => minVersion } : {}),
       onVerified: (ok) => successes.push(ok.studentId),
       onFailed: (failure) => failures.push({ studentId: failure.studentId, reason: failure.reason }),
       randomInterval: () => 45_000
@@ -146,6 +147,15 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
       getSnapshot: () => snapshot
     })
   }
+
+  it('minAppVersion: build เก่าที่เซ็นแล้วถูกปฏิเสธ (กัน downgrade)', () => {
+    const host = buildHost(true, true, '2.0.0')
+    host.startExam(['s1'])
+    vi.advanceTimersByTime(1_500)
+    wireResponder(host).handleChallengeMessage(rooms.server.sent[0]!.payload)
+    expect(successes).toHaveLength(0)
+    expect(failures.map((f) => f.reason)).toContain('app-version-too-old')
+  })
 
   it('ตอบตามไฟล์จริง → ผ่าน (แนบ manifest ครั้งแรก) และสุ่มถามรอบถัดไป', () => {
     const host = buildHost(true, false)

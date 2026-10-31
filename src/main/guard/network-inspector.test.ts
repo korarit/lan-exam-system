@@ -85,6 +85,28 @@ describe('diffNetworkInterfaces — VPN/Tunnel ใหม่', () => {
   })
 })
 
+describe('NetworkInspector — probe failure visibility', () => {
+  it('probe ล้มติดกัน → GUARD_PROBE_FAILED (ไม่ถูกตีความว่า "ไม่พบ")', async () => {
+    const events: DetectionEvent[] = []
+    const inspector = new NetworkInspector({
+      getPolicy: () => ({ ...policy, examMode: 'closed' }),
+      getHostIp: () => null,
+      getLocalProxyPort: () => 0,
+      emit: (e) => events.push(e),
+      listDnsCache: async () => {
+        throw new Error('probe blocked')
+      },
+      listSockets: async () => [],
+      getDefaultGateway: async () => null,
+      now: () => 1_000_000
+    })
+    await inspector.scanOnce()
+    expect(events.some((e) => e.code === 'GUARD_PROBE_FAILED')).toBe(false)
+    await inspector.scanOnce()
+    expect(events.some((e) => e.code === 'GUARD_PROBE_FAILED' && e.detail.probe === 'dns-cache')).toBe(true)
+  })
+})
+
 describe('isLoopback', () => {
   it('ที่อยู่วนกลับ/ยังไม่ระบุ ไม่ถือเป็นการออกนอก', () => {
     expect(isLoopback('127.0.0.1')).toBe(true)
@@ -98,12 +120,14 @@ describe('NetworkInspector.scanOnce — mode-aware socket check', () => {
   function makeInspector(
     mode: 'closed' | 'in-app-docs' | 'external-tools',
     sockets: Array<{ pid: number; processName: string; peerAddress: string; peerPort: number; state: string }>,
-    getHostIp: () => string | null
+    getHostIp: () => string | null,
+    getHostPort?: () => number | null
   ): { inspector: NetworkInspector; events: DetectionEvent[] } {
     const events: DetectionEvent[] = []
     const inspector = new NetworkInspector({
       getPolicy: () => ({ ...policy, examMode: mode }),
       getHostIp,
+      ...(getHostPort !== undefined ? { getHostPort } : {}),
       getLocalProxyPort: () => 0,
       emit: (e) => events.push(e),
       listDnsCache: async () => [],
@@ -140,6 +164,28 @@ describe('NetworkInspector.scanOnce — mode-aware socket check', () => {
       'closed',
       [{ pid: 11, processName: 'electron.exe', peerAddress: '192.168.1.1', peerPort: 33445, state: 'ESTABLISHED' }],
       () => '192.168.1.1'
+    )
+    const produced = await inspector.scanOnce()
+    expect(produced).toHaveLength(0)
+  })
+
+  it('Mode closed: host IP แต่คนละพอร์ต (เช่น SMB 445) → ฟ้อง (ไม่ยกเว้นทั้ง IP)', async () => {
+    const { inspector } = makeInspector(
+      'closed',
+      [{ pid: 12, processName: 'explorer.exe', peerAddress: '192.168.1.1', peerPort: 445, state: 'ESTABLISHED' }],
+      () => '192.168.1.1',
+      () => 33445
+    )
+    const produced = await inspector.scanOnce()
+    expect(produced.some((e) => e.code === 'DIRECT_SOCKET_PROXY_BYPASS')).toBe(true)
+  })
+
+  it('Mode closed: host IP + พอร์ตสอบที่รู้ → ไม่ฟ้อง', async () => {
+    const { inspector } = makeInspector(
+      'closed',
+      [{ pid: 11, processName: 'electron.exe', peerAddress: '192.168.1.1', peerPort: 33445, state: 'ESTABLISHED' }],
+      () => '192.168.1.1',
+      () => 33445
     )
     const produced = await inspector.scanOnce()
     expect(produced).toHaveLength(0)

@@ -152,6 +152,8 @@ export const DetectionEventCatalog = {
   DISPLAY_CONFIG_CHANGED: { category: 'stealth-overlay', severity: 'warning', score: 15 },
   WINDOW_BLUR_BRIEF: { category: 'stealth-overlay', severity: 'warning', score: 5 },
   GUARD_THREAD_STALLED: { category: 'memory-debugger', severity: 'critical', score: 30 },
+  /** detector ทำงานไม่ได้ต่อเนื่อง (คำสั่ง OS ล้ม/ถูกจำกัด) — แยกจาก "ตรวจแล้วไม่พบ" */
+  GUARD_PROBE_FAILED: { category: 'memory-debugger', severity: 'warning', score: 20 },
   NETWORK_TUNNEL_OR_PROXY_TAMPER: { category: 'network-tunnel', severity: 'critical', score: 40 },
   SUSPICIOUS_COMPUTE_SPIKE: { category: 'ai-assistant', severity: 'warning', score: 10 },
   PID_BURST_ANOMALY: { category: 'automation-macro', severity: 'warning', score: 10 },

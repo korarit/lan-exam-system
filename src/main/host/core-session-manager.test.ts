@@ -225,6 +225,26 @@ describe('CoreSessionManager', () => {
     expect(manager.getSummaries().find((s) => s.studentId === 's-001')).toBeDefined()
   })
 
+  it('freeze ฝั่ง host: status=frozen → reject submit และไม่บันทึกคำตอบ', async () => {
+    await manager.startExam()
+    db.db
+      .prepare(`UPDATE students SET status = 'frozen' WHERE session_id = ? AND student_id = ?`)
+      .run(roomId, 's-001')
+    const first = currentQuestion(server, 's-001')
+    server.incoming('s-001', NetMsgType.submitAnswer, {
+      questionId: first.questionId,
+      cursorIndex: 0,
+      answer: { type: 'mcq', choiceIndex: 0 },
+      timeSpentMs: 10
+    })
+    const rejections = server.messagesTo('s-001', NetMsgType.submitRejected)
+    expect(rejections).toHaveLength(1)
+    expect((rejections[0] as { reason: string }).reason).toBe('frozen')
+    expect(currentQuestion(server, 's-001').cursorIndex).toBe(0)
+    expect(manager.getSummary('s-001').answeredCount).toBe(0)
+    expect(anomalies.some((a) => a.includes('SUBMIT_WHILE_FROZEN'))).toBe(true)
+  })
+
   it('rejects a submit with the wrong cursor', async () => {
     await manager.startExam()
     const first = currentQuestion(server, 's-001')

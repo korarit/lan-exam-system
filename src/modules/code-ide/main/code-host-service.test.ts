@@ -81,6 +81,8 @@ describe('Phase 10.1 — CodeIdeHostService ingest', () => {
       entry('src/main.py', 'print(1)'),
       entry('node_modules/express/index.js', 'x'),
       entry('.venv/lib/a.py', 'x'),
+      entry('.vscode/tasks.json', '{"version":"2.0.0","tasks":[]}'),
+      entry('.VSCode/settings.json', '{}'),
       entry('answer.sql', 'SELECT 1;')
     ]
     const filtered = filterLibraryNoise(entries)

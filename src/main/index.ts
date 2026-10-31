@@ -151,8 +151,10 @@ let typingMonitor: TypingMonitor | null = null
 let nativeKeyboardGuard: NativeKeyboardGuard | null = null
 let attestationResponder: AttestationResponder | null = null
 let attestationHost: AttestationHostService | null = null
-/** IP เครื่องแม่จากการ join ล่าสุด (NetworkInspector ยกเว้นให้เสมอ) */
+/** IP เครื่องแม่จากการ join ล่าสุด (NetworkInspector ยกเว้นเฉพาะพอร์ตสอบ) */
 let lastJoinedHostIp: string | null = null
+/** พอร์ต TLS ของห้องสอบที่ join ล่าสุด (null = ยังไม่รู้) */
+let lastJoinedHostPort: number | null = null
 /** Room ID ที่เข้าล่าสุด (ring buffer ใช้ตั้งชื่อโฟลเดอร์ชั่วคราว — Phase 3c) */
 let lastJoinedRoomId: string | null = null
 /** สถานะออนไลน์รอบก่อนของแต่ละคน (ใช้ตรวจการเปลี่ยนสถานะ) */
@@ -733,6 +735,7 @@ function ensureGuardEngine(): GuardEngine {
       return { left: bounds.x, top: bounds.y, right: bounds.x + bounds.width, bottom: bounds.y + bounds.height }
     },
     getHostIp: () => lastJoinedHostIp,
+    getHostPort: () => lastJoinedHostPort,
     // Phase 5: proxy ของโหมดข้อสอบที่พิเศษ (0 = ปิด → NetworkInspector ตัดตัวเองออกชั่วคราว)
     getLocalProxyPort: () => connectProxy?.getBoundPort() ?? 0
   })
@@ -870,6 +873,7 @@ function ensureAttestationHostService(): AttestationHostService {
     getRoom: () => ensureRoomManager(),
     isDev: () => IS_DEV_BUILD,
     isSignatureEnforced: () => attestationStrictToggle.enforced,
+    minAppVersion: () => deploymentConfig?.minAppVersion ?? null,
     onVerified: (ok, isNew) => {
       if (isNew && ok.signedOnDevice) {
         console.warn(`[attestation] ยืนยันไฟล์แอปผ่าน (ลายเซ็นตรง): ${ok.studentId}`)
@@ -1069,8 +1073,9 @@ void app.whenReady().then(() => {
     getRoomManager: ensureRoomManager,
     getDiscovery: () => discovery,
     getStudentClient: ensureStudentClient,
-    onStudentJoinedRoom: (hostIp, roomId) => {
+    onStudentJoinedRoom: (hostIp, roomId, hostPort) => {
       lastJoinedHostIp = hostIp
+      lastJoinedHostPort = hostPort
       lastJoinedRoomId = roomId
       // Phase 5: ผก session เอกสารของห้องใหม่ (ครั้งแรกจะสร้าง DocsViewController)
       if (state.role === 'student') ensureDocsView().setSessionId(roomId)

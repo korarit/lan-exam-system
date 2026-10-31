@@ -9,6 +9,7 @@ import {
   type EphemeralCert
 } from './crypto-cert'
 import { NetMsgType, type FocusState, type HostStudentStatus } from '@shared/protocol-schema'
+import { sanitizeDisplayName } from '@shared/display-name'
 
 interface StudentRecord {
   studentId: string
@@ -358,9 +359,11 @@ export class ExamTlsServer {
     const sessionKey = randomBytes(32)
     const exporter = connection.exportKeyingMaterial(32, TLS_EXPORTER_LABEL)
     const reconnectToken = req.reconnectToken ?? generateSessionToken()
+    // ชื่อมาจาก client — ล้าง bidi/zero-width/control ก่อนใช้ในหลักฐานทุกช่อง
+    const studentName = sanitizeDisplayName(req.studentName, req.studentId)
     const record: StudentRecord = {
       studentId: req.studentId,
-      studentName: req.studentName,
+      studentName,
       sessionToken,
       sessionKey,
       online: true,
@@ -386,7 +389,7 @@ export class ExamTlsServer {
     connection.setSessionKey(sessionKey)
     this.pending.delete(connection)
     this.attachEstablished(connection, record)
-    this.opts.onStudentJoined?.(req.studentId, req.studentName)
+    this.opts.onStudentJoined?.(req.studentId, studentName)
     this.notifyStudentsChanged()
   }
 

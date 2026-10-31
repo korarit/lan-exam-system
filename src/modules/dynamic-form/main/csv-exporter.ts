@@ -1,5 +1,6 @@
 import type { DynamicFormDefinition, FormItem } from '../shared/form-schema'
 import { isFormItemQuestion } from '../shared/form-schema'
+import { escapeCsvCell } from '@shared/csv-safe'
 import type { StoredFormResponseRow } from './form-response-store'
 
 /* ============================================================
@@ -196,10 +197,7 @@ function fmtWallTime(ms: number | null): string {
 /* ---------- CSV escaping ---------- */
 
 export function csvCell(value: string): string {
-  if (/["",\n\r]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`
-  }
-  return value
+  return escapeCsvCell(value)
 }
 
 function encodeUint8(text: string): Uint8Array {

@@ -57,6 +57,36 @@ export interface ControlledProfile {
   workspaceDir: string
 }
 
+function extractFlagValue(commandLine: string, flag: string): string | null {
+  const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`(?:^|\\s)${escaped}(?:\\s*=\\s*|\\s+)("[^"]*"|'[^']*'|\\S+)`, 'i')
+  const match = re.exec(commandLine)
+  if (!match) return null
+  return (match[1] ?? '').replace(/^["']|["']$/g, '')
+}
+
+function normalizeDir(value: string): string {
+  const normalized = value.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+/**
+ * VS Code instance นี้ใช้โปรไฟล์ควบคุมจริงหรือไม่ (ไม่ใช่แค่มี substring ใน command line)
+ * - --user-data-dir ต้องตรงกับโปรไฟล์
+ * - ถ้ามี --extensions-dir ต้องตรงด้วย (กันแอบชี้ extensions dir อื่นที่มี AI extension)
+ */
+export function isControlledVsCodeCommand(
+  commandLine: string,
+  profile: Pick<ControlledProfile, 'userDataDir' | 'extensionsDir'>
+): boolean {
+  const userDir = extractFlagValue(commandLine, '--user-data-dir')
+  if (userDir === null) return false
+  if (normalizeDir(userDir) !== normalizeDir(profile.userDataDir)) return false
+  const extDir = extractFlagValue(commandLine, '--extensions-dir')
+  if (extDir !== null && normalizeDir(extDir) !== normalizeDir(profile.extensionsDir)) return false
+  return true
+}
+
 export function findVsCodeBinary(): string | null {
   const override = process.env.ZTEXAM_VSCODE_PATH
   if (override && fs.existsSync(override)) return override
@@ -311,10 +341,8 @@ export class VsCodeIntegrityWatchdog {
       }
       const codeName = process.platform === 'win32' ? 'code.exe' : 'code'
       if (name !== codeName) continue
-      // VS Code ที่เราเปิดจะมี --user-data-dir ของโปรไฟล์ควบคุมใน command line
-      if (cmd.includes(profile.userDataDir.toLowerCase())) continue
-      // แอป ZT-Exam เอง (สร้างจาก Electron shell ระหว่าง dev) — ไม่ใช่ VS Code จริง
-      if (cmd.includes('ztexam') || cmd.includes('lan-exam-system')) continue
+      // VS Code ที่เราเปิดต้องมี --user-data-dir + --extensions-dir ตรงกับโปรไฟล์ควบคุม
+      if (isControlledVsCodeCommand(processEntry.commandLine, profile)) continue
       this.opts.emit(
         makeDetectionEvent('UNAUTHORIZED_IDE_DETECTED', 'vscode-watchdog', {
           processName: name,
