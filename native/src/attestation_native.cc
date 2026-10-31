@@ -7,12 +7,14 @@
 // - root ของ resources มาจากตำแหน่ง .node ที่โหลดอยู่จริง ไม่ได้มาจาก JS
 #include "napi.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "vendor/sha256.h"
@@ -263,13 +265,59 @@ bool GetStringField(const JsonValue& root, const char* key, std::string& out) {
   return true;
 }
 
-bool GetStringArrayField(const JsonValue& root, const char* key, std::vector<std::string>& out) {
+struct SampleRange {
+  std::string relative_path;
+  uint64_t offset = 0;
+  uint64_t length = 0;
+};
+
+struct TargetFile {
+  std::string relative_path;
+  std::string sha256;
+};
+
+bool GetNumberField(const JsonValue& root, const char* key, double& out) {
   const auto it = root.object.find(key);
+  if (it == root.object.end() || it->second.type != JsonValue::Number) return false;
+  out = it->second.number;
+  return true;
+}
+
+bool GetSampleRanges(const JsonValue& root, std::vector<SampleRange>& out) {
+  const auto it = root.object.find("sampleRanges");
   if (it == root.object.end() || it->second.type != JsonValue::Array) return false;
   out.clear();
+  if (it->second.array.size() > 64) return false;
   for (const auto& item : it->second.array) {
-    if (item.type != JsonValue::String) return false;
-    out.push_back(item.string);
+    if (item.type != JsonValue::Object) return false;
+    SampleRange range;
+    double offset = 0;
+    double length = 0;
+    if (!GetStringField(item, "relativePath", range.relative_path)) return false;
+    if (!GetNumberField(item, "offset", offset) || offset < 0) return false;
+    if (!GetNumberField(item, "length", length) || length <= 0 ||
+        length > static_cast<double>(64 * 1024)) {
+      return false;
+    }
+    range.offset = static_cast<uint64_t>(offset);
+    range.length = static_cast<uint64_t>(length);
+    out.push_back(std::move(range));
+  }
+  return true;
+}
+
+bool GetTargets(const JsonValue& root, std::vector<TargetFile>& out) {
+  const auto it = root.object.find("targets");
+  if (it == root.object.end() || it->second.type != JsonValue::Array) return false;
+  out.clear();
+  if (it->second.array.size() > 64) return false;
+  for (const auto& item : it->second.array) {
+    if (item.type != JsonValue::Object) return false;
+    TargetFile target;
+    if (!GetStringField(item, "relativePath", target.relative_path)) return false;
+    if (!GetStringField(item, "sha256", target.sha256)) return false;
+    if (target.sha256.size() != 64) return false;
+    out.push_back(std::move(target));
   }
   return true;
 }
@@ -286,10 +334,16 @@ const KeyMaterial& GetKeyMaterial() {
 #if defined(ZTEXAM_HAS_NATIVE_ATTESTATION_KEY)
   static const KeyMaterial material = [] {
     KeyMaterial result;
-    if (crypto_sign_seed_keypair(result.public_key, result.secret_key,
-                                 zt_exam_native_attestation::kSigningSeed) == 0) {
+    // seed ไม่ถูกเก็บเป็น plaintext: ประกอบจากสอง share ตอนรันไทม์แล้วลบทิ้ง
+    unsigned char seed[32] = {};
+    for (size_t i = 0; i < sizeof(seed); ++i) {
+      seed[i] = static_cast<unsigned char>(zt_exam_native_attestation::kSeedShareA[i] ^
+                                           zt_exam_native_attestation::kSeedShareB[i]);
+    }
+    if (crypto_sign_seed_keypair(result.public_key, result.secret_key, seed) == 0) {
       result.ok = true;
     }
+    for (size_t i = 0; i < sizeof(seed); ++i) seed[i] = 0;
     return result;
   }();
   return material;
@@ -360,6 +414,31 @@ bool HashFile(const fs::path& file, std::string& hex) {
     }
   }
   if (stream.bad()) return false;
+  unsigned char digest[32];
+  zt_sha256_final(&ctx, digest);
+  hex = ToHex(digest, sizeof(digest));
+  return true;
+}
+
+bool HashRange(const fs::path& file, uint64_t offset, uint64_t length, std::string& hex) {
+  std::ifstream stream(file, std::ios::binary);
+  if (!stream.is_open()) return false;
+  stream.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+  if (!stream) return false;
+  zt_sha256_ctx ctx;
+  zt_sha256_init(&ctx);
+  char buffer[64 * 1024];
+  uint64_t remaining = length;
+  while (remaining > 0) {
+    const std::streamsize want = static_cast<std::streamsize>(
+        remaining < sizeof(buffer) ? remaining : sizeof(buffer));
+    stream.read(buffer, want);
+    const std::streamsize count = stream.gcount();
+    if (count <= 0) return false;
+    zt_sha256_update(&ctx, reinterpret_cast<const uint8_t*>(buffer),
+                     static_cast<size_t>(count));
+    remaining -= static_cast<uint64_t>(count);
+  }
   unsigned char digest[32];
   zt_sha256_final(&ctx, digest);
   hex = ToHex(digest, sizeof(digest));
@@ -449,10 +528,32 @@ bool ResolveTargetPath(const fs::path& root, const std::string& relative, fs::pa
   return true;
 }
 
+/**
+ * canonical targets — ต้องตรงกับ TS (canonicalizeNativeTargets) ทุกไบต์:
+ * เรียงตาม relativePath, sha256 ตัวพิมพ์เล็ก, "path:sha256" คั่นด้วย ','
+ */
+std::string CanonicalTargets(const std::vector<TargetFile>& targets) {
+  std::vector<std::pair<std::string, std::string>> normalized;
+  normalized.reserve(targets.size());
+  for (const auto& target : targets) {
+    normalized.emplace_back(target.relative_path, ToLowerHex(target.sha256));
+  }
+  std::sort(normalized.begin(), normalized.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+  std::string out;
+  for (size_t i = 0; i < normalized.size(); ++i) {
+    if (i > 0) out += ',';
+    out += normalized[i].first;
+    out += ':';
+    out += normalized[i].second;
+  }
+  return out;
+}
+
 std::string BuildPayload(const std::string& challengeId, const std::string& serverNonce,
                          const std::string& manifestHash,
                          const std::vector<std::string>& sampleDigests,
-                         const std::string& expectedAsarSha256) {
+                         const std::string& canonicalTargets) {
   std::string payload = challengeId;
   payload += '|';
   payload += serverNonce;
@@ -464,7 +565,7 @@ std::string BuildPayload(const std::string& challengeId, const std::string& serv
     payload += sampleDigests[i];
   }
   payload += '|';
-  payload += expectedAsarSha256;
+  payload += canonicalTargets;
   return payload;
 }
 
@@ -480,35 +581,43 @@ Napi::Value AttestationSign(const Napi::CallbackInfo& info) {
   std::string challengeId;
   std::string serverNonce;
   std::string manifestHash;
-  std::string expectedAsarSha256;
-  std::vector<std::string> sampleDigests;
+  std::vector<SampleRange> sampleRanges;
+  std::vector<TargetFile> targets;
   if (!GetStringField(request, "challengeId", challengeId)) return env.Null();
   if (!GetStringField(request, "serverNonce", serverNonce)) return env.Null();
   if (!GetStringField(request, "manifestHash", manifestHash)) return env.Null();
-  if (!GetStringArrayField(request, "sampleDigests", sampleDigests)) return env.Null();
-  if (!GetStringField(request, "expectedAsarSha256", expectedAsarSha256)) return env.Null();
-
-  std::string targetRelativePath = "app.asar";
-  const auto targetIt = request.object.find("targetRelativePath");
-  if (targetIt != request.object.end()) {
-    if (targetIt->second.type != JsonValue::String) return env.Null();
-    if (!targetIt->second.string.empty()) targetRelativePath = targetIt->second.string;
-  }
+  if (!GetSampleRanges(request, sampleRanges)) return env.Null();
+  if (!GetTargets(request, targets)) return env.Null();
+  if (targets.empty()) return env.Null();
 
   fs::path root;
   if (!ResolveResourcesRoot(root)) return env.Null();
-  fs::path target;
-  if (!ResolveTargetPath(root, targetRelativePath, target)) return env.Null();
 
-  std::string actualHash;
-  if (!HashFile(target, actualHash)) return env.Null();
-  if (actualHash != ToLowerHex(expectedAsarSha256)) return env.Null();
+  // 1) ตรวจทุก target ทั้งไฟล์ (asar + addons) — JS กำหนดรายการที่ตรวจไม่ได้
+  for (const auto& target : targets) {
+    fs::path path;
+    if (!ResolveTargetPath(root, target.relative_path, path)) return env.Null();
+    std::string actualHash;
+    if (!HashFile(path, actualHash)) return env.Null();
+    if (actualHash != ToLowerHex(target.sha256)) return env.Null();
+  }
+
+  // 2) native อ่าน+hash ช่วงที่ host สุ่มถามเอง — ไม่ใช้ sampleDigests ที่ JS ส่งมา
+  std::vector<std::string> sampleDigests;
+  sampleDigests.reserve(sampleRanges.size());
+  for (const auto& range : sampleRanges) {
+    fs::path path;
+    if (!ResolveTargetPath(root, range.relative_path, path)) return env.Null();
+    std::string digest;
+    if (!HashRange(path, range.offset, range.length, digest)) return env.Null();
+    sampleDigests.push_back(std::move(digest));
+  }
 
   const KeyMaterial& key = GetKeyMaterial();
   if (!key.ok) return env.Null();
 
-  const std::string payload =
-      BuildPayload(challengeId, serverNonce, manifestHash, sampleDigests, expectedAsarSha256);
+  const std::string payload = BuildPayload(challengeId, serverNonce, manifestHash, sampleDigests,
+                                           CanonicalTargets(targets));
   std::vector<unsigned char> signedMessage(payload.size() + 64);
   unsigned long long signedLength = 0;
   if (crypto_sign(signedMessage.data(), &signedLength,

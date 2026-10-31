@@ -2,6 +2,7 @@ import {
   AttestationChallengeSchema,
   type AttestationChallenge,
   type AttestationResponse,
+  type NativeAttestationTarget,
   type RuntimeBinding
 } from '@shared/attestation-schema'
 import { NetMsgType } from '@shared/protocol-schema'
@@ -77,9 +78,10 @@ export class AttestationResponder {
       return false
     }
     const manifestHash = snapshot.manifestHash
-    // challenge แรก (ยังไม่แนบ manifest) ไม่มี expected hash → native เซ็นไม่ได้ ต้อง bootstrap ก่อน
-    const nativeRequired =
-      !(this.opts.isDev?.() ?? false) && challenge.expectedAsarSha256 !== undefined
+    // target ที่ native ต้อง hash เอง — รับจาก challenge (host) และ map legacy ได้
+    const targets = challengeTargets(challenge)
+    // challenge แรก (ยังไม่แนบ manifest) ไม่มี target → native เซ็นไม่ได้ ต้อง bootstrap ก่อน
+    const nativeRequired = !(this.opts.isDev?.() ?? false) && targets.length > 0
 
     const digests: string[] = []
     for (const range of challenge.sampleRanges) {
@@ -92,7 +94,7 @@ export class AttestationResponder {
       digests.push(digest)
     }
 
-    const nativeSignature = this.signWithNative(challenge, manifestHash, digests)
+    const nativeSignature = this.signWithNative(challenge, manifestHash, digests, targets)
     if (!nativeSignature && nativeRequired) {
       // production: native signer ต้องพร้อมและตรวจไฟล์จริงผ่านเท่านั้น — ไม่ส่ง response เลย
       return false
@@ -134,14 +136,18 @@ export class AttestationResponder {
     return true
   }
 
-  /** ให้ native ตรวจ sha256 ของไฟล์จริงแล้วเซ็น — dev ที่ไม่มี addon คืน null */
+  /**
+   * ให้ native hash target ทุกไฟล์ + คำนวณ sample digests เองแล้วเซ็น
+   * (JS ส่งแค่ช่วงไบต์; ค่า digest ที่ native คำนวณคือค่าที่ถูกลายเซ็น)
+   * dev ที่ไม่มี addon คืน null
+   */
   private signWithNative(
     challenge: AttestationChallenge,
     manifestHash: string,
-    sampleDigests: string[]
+    sampleDigests: string[],
+    targets: NativeAttestationTarget[]
   ): string | null {
-    const expectedAsarSha256 = challenge.expectedAsarSha256
-    if (!expectedAsarSha256) return null
+    if (targets.length === 0) return null
     const signer = this.opts.nativeSigner?.signAttestation ?? signNativeAttestation
     try {
       const signature = signer({
@@ -149,12 +155,31 @@ export class AttestationResponder {
         serverNonce: challenge.serverNonce,
         manifestHash,
         sampleDigests,
-        expectedAsarSha256,
-        targetRelativePath: challenge.targetRelativePath ?? 'app.asar'
+        sampleRanges: challenge.sampleRanges,
+        targets
       })
       return signature && signature.length > 0 ? signature : null
     } catch {
       return null
     }
   }
+}
+
+/** target ของ challenge — รองรับทั้ง nativeTargets (ใหม่) และ expectedAsarSha256 (legacy) */
+export function challengeTargets(challenge: AttestationChallenge): NativeAttestationTarget[] {
+  if (challenge.nativeTargets && challenge.nativeTargets.length > 0) {
+    return challenge.nativeTargets.map((target) => ({
+      relativePath: target.relativePath,
+      sha256: target.sha256
+    }))
+  }
+  if (challenge.expectedAsarSha256) {
+    return [
+      {
+        relativePath: challenge.targetRelativePath ?? 'app.asar',
+        sha256: challenge.expectedAsarSha256
+      }
+    ]
+  }
+  return []
 }

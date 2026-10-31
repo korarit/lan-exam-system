@@ -161,7 +161,22 @@ export interface NativeAttestationPayloadInput {
   serverNonce: string
   manifestHash: string
   sampleDigests: string[]
-  expectedAsarSha256: string
+  /** ทุก target ที่ native hash ทั้งไฟล์เอง (path:sha256 เรียงตาม path) */
+  targets?: ReadonlyArray<{ relativePath: string; sha256: string }>
+}
+
+/**
+ * canonical ของ targets — ต้องตรงกับ C++ (attestation_native.cc) ทุกไบต์:
+ * เรียงตาม relativePath, sha256 ตัวพิมพ์เล็ก, คั่นด้วย ',' และ "path:sha256"
+ */
+export function canonicalizeNativeTargets(
+  targets: ReadonlyArray<{ relativePath: string; sha256: string }> = []
+): string {
+  return [...targets]
+    .map((target) => ({ relativePath: target.relativePath, sha256: target.sha256.toLowerCase() }))
+    .sort((a, b) => (a.relativePath < b.relativePath ? -1 : a.relativePath > b.relativePath ? 1 : 0))
+    .map((target) => `${target.relativePath}:${target.sha256}`)
+    .join(',')
 }
 
 /** canonical payload ที่ native addon เซ็น (ต้องตรงกับ attestation_native.cc ทุกไบต์) */
@@ -171,8 +186,17 @@ export function buildNativeAttestationPayload(input: NativeAttestationPayloadInp
     input.serverNonce,
     input.manifestHash,
     input.sampleDigests.join(','),
-    input.expectedAsarSha256
+    canonicalizeNativeTargets(input.targets)
   ].join('|')
+}
+
+/** แปลง manifest files → รายการ target ที่ native ต้อง hash เอง (ทั้งหมด ไม่ใช่แค่ asar) */
+export function nativeTargetsFromFiles(
+  files: Record<string, ManifestFileEntry>
+): Array<{ relativePath: string; sha256: string }> {
+  return Object.entries(files)
+    .map(([relativePath, entry]) => ({ relativePath, sha256: entry.sha256 }))
+    .slice(0, 64)
 }
 
 /** ยืนยันลายเซ็น manifest กับชุด public key ที่เชื่อถือ (รวม revoke list) */

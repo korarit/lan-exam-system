@@ -12,6 +12,7 @@ import { NetMsgType } from '@shared/protocol-schema'
 import {
   buildNativeAttestationPayload,
   expectedDigestForRange,
+  nativeTargetsFromFiles,
   sampleChallengeRanges,
   verifyAttestationHmac,
   verifySignedManifest
@@ -217,12 +218,15 @@ export class AttestationHostService {
     if (!tlsServer || !entry) return null
     const ranges = entry.manifestBody ? sampleChallengeRanges(entry.manifestBody.files, this.maxRanges) : []
     const target = entry.manifestBody ? chooseNativeTarget(entry.manifestBody.files) : null
+    // 1) native ต้อง hash ทุก target เอง ไม่ใช่แค่ app.asar
+    const nativeTargets = entry.manifestBody ? nativeTargetsFromFiles(entry.manifestBody.files) : []
     const challenge: AttestationChallenge = {
       challengeId: randomUUID(),
       serverNonce: freshNonceBase64(),
       sampleRanges: ranges,
       deadlineMs: this.deadlineMs,
       requireManifest: entry.manifestHash === null,
+      ...(nativeTargets.length > 0 ? { nativeTargets } : {}),
       ...(target
         ? { expectedAsarSha256: target.sha256, targetRelativePath: target.relativePath }
         : {})
@@ -304,21 +308,27 @@ export class AttestationHostService {
 
     // 4. VULN-05: production ต้องมีลายเซ็นจาก native ที่ hash ไฟล์จริงเอง (dev ผ่อนปรน)
     //    challenge แรกที่ยังไม่รู้ manifest ไม่มี expected hash → bootstrap ด้วย HMAC/manifest ก่อน
-    const nativeRequired = !this.opts.isDev() && pending.expectedAsarSha256 !== undefined
+    // targets ต้องมาจาก host (manifest ที่เซ็นแล้ว) เท่านั้น — ไม่เชื่อ client
+    const nativeTargets =
+      pending.nativeTargets ??
+      (entry.manifestBody ? nativeTargetsFromFiles(entry.manifestBody.files) : [])
+    const nativeRequired =
+      !this.opts.isDev() &&
+      (pending.nativeTargets !== undefined || pending.expectedAsarSha256 !== undefined)
     const nativeKeyHex = this.opts.nativePublicKeyHex?.() ?? nativeTrustedPublicKeyHex()
     if (!response.nativeSignature) {
       if (nativeRequired) return this.reject(studentId, 'native-signature-missing')
     } else if (!nativeKeyHex) {
       if (nativeRequired) return this.reject(studentId, 'native-key-unavailable')
-    } else if (!pending.expectedAsarSha256) {
-      if (nativeRequired) return this.reject(studentId, 'missing-expected-asar-hash')
+    } else if (nativeTargets.length === 0) {
+      if (nativeRequired) return this.reject(studentId, 'missing-expected-targets')
     } else {
       const nativePayload = buildNativeAttestationPayload({
         challengeId: pending.challengeId,
         serverNonce: pending.serverNonce,
         manifestHash,
         sampleDigests: expectedDigests,
-        expectedAsarSha256: pending.expectedAsarSha256
+        targets: nativeTargets
       })
       const nativeSignature = Buffer.from(response.nativeSignature, 'base64')
       if (!ed25519VerifyRawPublicKeyHex(nativePayload, nativeSignature, nativeKeyHex)) {

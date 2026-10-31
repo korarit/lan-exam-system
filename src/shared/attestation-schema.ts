@@ -69,6 +69,15 @@ export const AttestationSampleRangeSchema = z
   .strict()
 export type AttestationSampleRange = z.infer<typeof AttestationSampleRangeSchema>
 
+/** ไฟล์ที่ native ต้อง hash ทั้งไฟล์เองก่อนเซ็น (ทุก target ใน manifest ไม่ใช่แค่ asar) */
+export const NativeAttestationTargetSchema = z
+  .object({
+    relativePath: z.string().min(1).max(300),
+    sha256: z.string().regex(/^[0-9a-fA-F]{64}$/)
+  })
+  .strict()
+export type NativeAttestationTarget = z.infer<typeof NativeAttestationTargetSchema>
+
 export const AttestationChallengeSchema = z
   .object({
     challengeId: z.string().min(1).max(64),
@@ -79,9 +88,14 @@ export const AttestationChallengeSchema = z
     deadlineMs: z.number().int().positive(),
     /** บังคับให้แนบ SignedAppManifest มาด้วย (ครั้งแรกที่เข้าห้อง) */
     requireManifest: z.boolean(),
-    /** sha256 ของไฟล์ที่ต้องให้ native ตรวจทั้งไฟล์ก่อนเซ็น (public, ยืนยันโดย manifest ที่เซ็นแล้ว) */
+    /**
+     * รายการไฟล์ที่ native ต้อง hash ทั้งไฟล์เองแล้วเทียบ (ทุก target ใน manifest)
+     * — public เพราะยืนยันโดย manifest ที่เซ็นแล้ว; native ปฏิเสธถ้าไฟล์จริงไม่ตรง
+     */
+    nativeTargets: z.array(NativeAttestationTargetSchema).max(64).optional(),
+    /** @deprecated ใช้ nativeTargets — คงไว้เพื่อ backward compat กับ challenge เก่า */
     expectedAsarSha256: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
-    /** path สัมพัทธ์จาก resources root (เช่น app.asar) — default app.asar */
+    /** @deprecated ใช้ nativeTargets */
     targetRelativePath: z.string().min(1).max(300).optional()
   })
   .strict()

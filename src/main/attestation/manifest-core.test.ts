@@ -7,8 +7,11 @@ import {
 } from '@shared/attestation-schema'
 import {
   buildManifestBodyFromBuffers,
+  buildNativeAttestationPayload,
+  canonicalizeNativeTargets,
   computeAttestationHmac,
   hashFileWithBlocks,
+  nativeTargetsFromFiles,
   sampleChallengeRanges,
   signManifest,
   verifyAttestationHmac,
@@ -156,6 +159,46 @@ describe('Relay Attack Prevention (Definition of Done #2)', () => {
     expect(
       verifyAttestationHmac(exporterSessionB, { ...challenge, sampleDigests: digests }, forgedHmac)
     ).toBe(true)
+  })
+})
+
+describe('native attestation payload (targets + digests)', () => {
+  const base = {
+    challengeId: 'c-1',
+    serverNonce: 'nonce',
+    manifestHash: 'm'.repeat(64),
+    sampleDigests: ['a'.repeat(64), 'b'.repeat(64)]
+  }
+
+  it('canonicalize targets: เรียงตาม path + sha256 ตัวพิมพ์เล็ก', () => {
+    expect(
+      canonicalizeNativeTargets([
+        { relativePath: 'z.bin', sha256: 'A'.repeat(64) },
+        { relativePath: 'a.bin', sha256: 'B'.repeat(64) }
+      ])
+    ).toBe(`a.bin:${'b'.repeat(64)},z.bin:${'a'.repeat(64)}`)
+  })
+
+  it('payload ผูก targets — เปลี่ยน target แล้วลายเซ็นเพี้ยน', () => {
+    const withOne = buildNativeAttestationPayload({
+      ...base,
+      targets: [{ relativePath: 'app.asar', sha256: 'c'.repeat(64) }]
+    })
+    const withFake = buildNativeAttestationPayload({
+      ...base,
+      targets: [{ relativePath: 'app.asar', sha256: 'd'.repeat(64) }]
+    })
+    expect(withOne).not.toBe(withFake)
+    expect(withOne).toContain('app.asar:' + 'c'.repeat(64))
+  })
+
+  it('nativeTargetsFromFiles ครอบทุกไฟล์ใน manifest (ไม่ใช่แค่ asar)', () => {
+    const body = buildManifestBodyFromBuffers('1.0.0', 'win32', 'x64', 1, new Map([
+      ['app.asar', Buffer.alloc(16, 1)],
+      ['native/os_guard.node', Buffer.alloc(16, 2)]
+    ]))
+    const targets = nativeTargetsFromFiles(body.files)
+    expect(targets.map((t) => t.relativePath).sort()).toEqual(['app.asar', 'native/os_guard.node'])
   })
 })
 

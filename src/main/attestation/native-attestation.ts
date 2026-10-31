@@ -13,9 +13,12 @@ export interface NativeAttestationRequest {
   challengeId: string
   serverNonce: string
   manifestHash: string
+  /** JS-computed digests (ใช้ในโหมด dev/test เท่านั้น — native จะคำนวณใหม่เอง) */
   sampleDigests: string[]
-  expectedAsarSha256: string
-  targetRelativePath: string
+  /** ช่วงไบต์ที่ต้องให้ native อ่าน+hash เอง */
+  sampleRanges: Array<{ relativePath: string; offset: number; length: number }>
+  /** ไฟล์ที่ native ต้อง hash ทั้งไฟล์เองแล้วเทียบ sha256 */
+  targets: Array<{ relativePath: string; sha256: string }>
 }
 
 interface NativeAttestationAddon {

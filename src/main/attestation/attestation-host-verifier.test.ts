@@ -18,7 +18,7 @@ import {
 } from './manifest-core'
 import { shaOf } from './manifest-core.test-helpers'
 import { AttestationHostService } from './host-verifier'
-import { AttestationResponder } from './client-responder'
+import { AttestationResponder, challengeTargets } from './client-responder'
 import { ed25519Sign, generateEd25519KeyPair } from '../crypto/primitives'
 import type { AttestationSnapshot } from './manifest'
 import type { NativeAttestationSigner } from './native-attestation'
@@ -379,6 +379,10 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
     const challenge = rooms.server.sent[1]!.payload as AttestationChallenge
     expect(challenge.expectedAsarSha256).toBe(snapshotCtx.snapshot.body!.files['app.bin']!.sha256)
     expect(challenge.targetRelativePath).toBe('app.bin')
+    // 1) ต้องมี target ครบทุกไฟล์ใน manifest ให้ native hash เอง
+    expect(challenge.nativeTargets).toEqual([
+      { relativePath: 'app.bin', sha256: snapshotCtx.snapshot.body!.files['app.bin']!.sha256 }
+    ])
     responder.handleChallengeMessage(challenge)
     expect(failures).toHaveLength(0)
     expect(successes).toEqual(['s1', 's1'])
@@ -400,6 +404,39 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
     responder.handleChallengeMessage(rooms.server.sent[1]!.payload)
     expect(successes).toEqual(['s1'])
     expect(failures.map((f) => f.reason)).toEqual(['native-signature-invalid'])
+  })
+
+  it('production: native เซ็นด้วย targets ปลอม (ไม่ตรง manifest) → native-signature-invalid', () => {
+    const host = buildHost(false, true)
+    const responder = wireResponder(host, snapshotCtx.snapshot, {
+      isDev: false,
+      // จำลอง client ที่พยายามส่ง target list เอง (เช่นข้ามการ hash addon บางไฟล์)
+      nativeSigner: makeNativeSigner(nativeKeys.privateKey, (input) => ({
+        ...input,
+        targets: [{ relativePath: 'app.bin', sha256: 'c'.repeat(64) }]
+      }))
+    })
+    host.startExam(['s1'])
+    vi.advanceTimersByTime(1_500)
+    responder.handleChallengeMessage(rooms.server.sent[0]!.payload)
+    vi.advanceTimersByTime(45_000)
+    responder.handleChallengeMessage(rooms.server.sent[1]!.payload)
+    expect(successes).toEqual(['s1'])
+    expect(failures.map((f) => f.reason)).toEqual(['native-signature-invalid'])
+  })
+
+  it('challengeTargets: map legacy expectedAsarSha256 ได้', () => {
+    expect(
+      challengeTargets({
+        challengeId: 'x',
+        serverNonce: 'n'.repeat(43),
+        sampleRanges: [],
+        deadlineMs: 2_500,
+        requireManifest: false,
+        expectedAsarSha256: 'd'.repeat(64),
+        targetRelativePath: 'app.bin'
+      })
+    ).toEqual([{ relativePath: 'app.bin', sha256: 'd'.repeat(64) }])
   })
 
   it('production: ไม่มี nativeSignature ใน challenge ที่มี expected hash → ปฏิเสธ native-signature-missing', () => {
