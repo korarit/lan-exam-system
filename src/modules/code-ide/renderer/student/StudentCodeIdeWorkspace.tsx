@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Play, RotateCcw, Rocket, Timer, PanelLeftClose, PanelLeftOpen, FileText } from 'lucide-react'
+import { Play, RotateCcw, Rocket, Timer } from 'lucide-react'
+import ResizableSplit from './ResizableSplit'
 import {
   PROJECT_CATEGORY_LABELS,
   SUPPORTED_LANGUAGE_LABELS,
@@ -29,9 +30,9 @@ import { ScrollArea } from '@renderer/components/ui/scroll-area'
 
 /* ============================================================
  * Phase 8 (8.2) — Student In-App Project IDE Workspace
- * Kiosk IDE สไตล์ VS Code: โจทย์ | Explorer sidebar | Monaco editor | แผงผลลัพธ์
- * - Ctrl+Enter ( / Cmd+Enter) = รัน/ทดสอบ Sample ทันที
- * - Sidebar ยุบ/ขยายได้เพื่อเพิ่มพื้นที่ editor
+ * Layout 40/60: ซ้าย = Tabs [โจทย์ | Files] / ขวา = Editor (70) + แผงทดสอบ (30)
+ * - ลาก divider ปรับขนาดได้ / ดับเบิลคลิก reset / ซ่อนแผงได้ (จำค่าต่อ examId)
+ * - Ctrl+Enter (/ Cmd+Enter) = รัน/ทดสอบ Sample ทันที
  * ครูใช้คอมโพเนนต์ชุดเดียวกันนี้พรีวิว/ตรวจงาน (import ตรงได้)
  * ============================================================ */
 
@@ -75,8 +76,7 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
   const [lastAutosaveAtMs, setLastAutosaveAtMs] = useState<number | null>(null)
   const [panelTab, setPanelTab] = useState<'result' | 'tests'>('result')
   const [runSignal, setRunSignal] = useState(0)
-  const [showProblem, setShowProblem] = useState(true)
-  const [showExplorer, setShowExplorer] = useState(true)
+  const [leftTab, setLeftTab] = useState<'problem' | 'files'>('problem')
   // mirror ของ entries กัน stale closure ตอนพิมพ์เร็ว + throttle autosave ทุก 5 วิ
   // (ท่อ LAN จริง: ExamView ส่งต่อผ่าน student:module-send — workspace เองไม่ยิง IPC ตรง)
   const entriesRef = useRef(entries)
@@ -129,7 +129,7 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
   }, [entries])
 
   function runSamples(): void {
-    setPanelTab('tests')
+    setPanelTab('result')
     setRunSignal((n) => n + 1)
   }
 
@@ -180,24 +180,6 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
     <Card className="flex h-full flex-col overflow-hidden">
       {/* Kiosk HUD */}
       <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs text-muted-foreground">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={() => setShowProblem((v) => !v)}
-          title={showProblem ? 'ซ่อนโจทย์' : 'แสดงโจทย์'}
-        >
-          <FileText size={14} />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={() => setShowExplorer((v) => !v)}
-          title={showExplorer ? 'ซ่อน Explorer' : 'แสดง Explorer'}
-        >
-          {showExplorer ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
-        </Button>
         <span className="font-semibold text-foreground">{pkg.title}</span>
         <Badge variant="secondary" className="tabular-nums">ข้อ {props.questionNo ?? 1}/{props.questionTotal ?? 1}</Badge>
         <Badge variant="outline">{PROJECT_CATEGORY_LABELS[pkg.category]}</Badge>
@@ -213,141 +195,166 @@ export default function StudentCodeIdeWorkspace(props: Props): React.JSX.Element
       {/* Phase 9.1: เช็ค runtime ของภาษาที่ข้อสอบใช้จริงก่อนเริ่ม (ขาดให้ติดตั้งเอง + Re-scan/Browse) */}
       <MissingRuntimePrompt languages={[pkg.language]} compact />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
-        {/* โจทย์ + libraries (ยุบได้) */}
-        {showProblem && (
-          <ScrollArea className="h-56 shrink-0 border-b p-3 lg:h-auto lg:w-60 lg:border-b-0 lg:border-r">
-            <h3 className="mb-1 text-sm font-semibold">โจทย์</h3>
-            <p className="whitespace-pre-wrap text-[13px] leading-6 text-muted-foreground">{pkg.instructions || '(อาจารย์ยังไม่ได้เขียนคำอธิบาย)'}</p>
-            <div className="mt-3">
-              <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Libraries ที่ใช้ได้</h4>
-              {libraries.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground">ไม่มีไลบรารีเสริม</p>
-              ) : (
-                <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground">
-                  {libraries.map((l, i) => (
-                    <li key={i}>- {l.packages.map((p) => `${p.name}@${p.version}`).join(', ') || l.ecosystem}</li>
-                  ))}
-                </ul>
-              )}
-              {pkg.installPolicy.enabled && (
-                <p className="mt-1 text-[11px] text-primary">
-                  ครูอนุญาตให้ติดตั้งเองได้ (pip/npm) — กด “ติดตั้งไลบรารี” ในแผงทดสอบ
-                </p>
-              )}
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => mutate(initialEntries.map((e) => ({ ...e })), 'รีเซ็ตโค้ดกลับเป็น Starter Project แล้ว')}
-              className="mt-3"
-            >
-              <RotateCcw size={12} /> Reset โค้ด
-            </Button>
-          </ScrollArea>
-        )}
-
-        {/* Explorer sidebar (ยุบได้) */}
-        {showExplorer && (
-          <div className="h-64 shrink-0 border-b lg:h-auto lg:w-60 lg:border-b-0 lg:border-r">
-            <ProjectFileExplorerTree
-              entries={entries}
-              selectedPath={activePath}
-              canCreate={pkg.policy.allowCreateFiles || pkg.policy.allowCreateFolders}
-              canDeleteRename={pkg.policy.allowDeleteRename}
-              allowUpload={pkg.policy.allowStudentFileUpload}
-              libraries={libraries}
-              onSelectFile={setActivePath}
-              onCreateFile={(p) => {
-                try {
-                  mutate(createFileInTree(entries, pkg.policy, p, ''), `สร้างไฟล์ ${p} (+เขียนลง ${folder})`)
-                  setActivePath(p)
-                } catch (err) { fail(err) }
-              }}
-              onCreateFolder={(p) => {
-                try {
-                  mutate(createFolderInTree(entries, pkg.policy, p), `สร้างโฟลเดอร์ ${p}`)
-                } catch (err) { fail(err) }
-              }}
-              onRename={(o, n) => {
-                try {
-                  mutate(renameEntryInTree(entries, pkg.policy, o, n))
-                  if (activePath === o) setActivePath(n)
-                } catch (err) { fail(err) }
-              }}
-              onDelete={(p) => {
-                try {
-                  mutate(deleteEntryInTree(entries, pkg.policy, p), `ลบ ${p}`)
-                  if (activePath === p) setActivePath(pkg.policy.entryPointPath)
-                } catch (err) { fail(err) }
-              }}
-              onUploadFiles={handleUpload}
+      {/* Layout 40/60 — ซ้าย: โจทย์/Files | ขวา: Editor (70) + แผงทดสอบ (30) */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <ResizableSplit
+          direction="horizontal"
+          defaultRatio={0.4}
+          storageKey={`h:${examId}`}
+          firstLabel="แสดงโจทย์ / Files"
+          secondLabel="แสดง Editor"
+          first={
+            <Tabs value={leftTab} onValueChange={(v) => setLeftTab(v as 'problem' | 'files')} className="flex h-full min-h-0 flex-col">
+              <TabsList className="w-full shrink-0 rounded-none border-b">
+                <TabsTrigger value="problem" className="flex-1">โจทย์</TabsTrigger>
+                <TabsTrigger value="files" className="flex-1 tabular-nums">Files ({entries.filter((e) => e.kind === 'file').length})</TabsTrigger>
+              </TabsList>
+              <TabsContent value="problem" className="mt-0 min-h-0 flex-1 overflow-hidden">
+                <ScrollArea className="h-full p-3">
+                  <h3 className="mb-1 text-sm font-semibold">โจทย์</h3>
+                  <p className="whitespace-pre-wrap text-[13px] leading-6 text-muted-foreground">{pkg.instructions || '(อาจารย์ยังไม่ได้เขียนคำอธิบาย)'}</p>
+                  <div className="mt-3">
+                    <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Libraries ที่ใช้ได้</h4>
+                    {libraries.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground">ไม่มีไลบรารีเสริม</p>
+                    ) : (
+                      <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground">
+                        {libraries.map((l, i) => (
+                          <li key={i}>- {l.packages.map((p) => `${p.name}@${p.version}`).join(', ') || l.ecosystem}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {pkg.installPolicy.enabled && (
+                      <p className="mt-1 text-[11px] text-primary">
+                        ครูอนุญาตให้ติดตั้งเองได้ (pip/npm) — กด “ติดตั้งไลบรารี” ในแผงทดสอบ
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => mutate(initialEntries.map((e) => ({ ...e })), 'รีเซ็ตโค้ดกลับเป็น Starter Project แล้ว')}
+                    className="mt-3"
+                  >
+                    <RotateCcw size={12} /> Reset โค้ด
+                  </Button>
+                </ScrollArea>
+              </TabsContent>
+              <TabsContent value="files" className="mt-0 min-h-0 flex-1 overflow-hidden">
+                <ProjectFileExplorerTree
+                  entries={entries}
+                  selectedPath={activePath}
+                  canCreate={pkg.policy.allowCreateFiles || pkg.policy.allowCreateFolders}
+                  canDeleteRename={pkg.policy.allowDeleteRename}
+                  allowUpload={pkg.policy.allowStudentFileUpload}
+                  libraries={libraries}
+                  onSelectFile={(p) => { setActivePath(p) }}
+                  onCreateFile={(p) => {
+                    try {
+                      mutate(createFileInTree(entries, pkg.policy, p, ''), `สร้างไฟล์ ${p} (+เขียนลง ${folder})`)
+                      setActivePath(p)
+                    } catch (err) { fail(err) }
+                  }}
+                  onCreateFolder={(p) => {
+                    try {
+                      mutate(createFolderInTree(entries, pkg.policy, p), `สร้างโฟลเดอร์ ${p}`)
+                    } catch (err) { fail(err) }
+                  }}
+                  onRename={(o, n) => {
+                    try {
+                      mutate(renameEntryInTree(entries, pkg.policy, o, n))
+                      if (activePath === o) setActivePath(n)
+                    } catch (err) { fail(err) }
+                  }}
+                  onDelete={(p) => {
+                    try {
+                      mutate(deleteEntryInTree(entries, pkg.policy, p), `ลบ ${p}`)
+                      if (activePath === p) setActivePath(pkg.policy.entryPointPath)
+                    } catch (err) { fail(err) }
+                  }}
+                  onUploadFiles={handleUpload}
+                />
+              </TabsContent>
+            </Tabs>
+          }
+          second={
+            <ResizableSplit
+              direction="vertical"
+              defaultRatio={0.7}
+              storageKey={`v:${examId}`}
+              firstLabel="แสดง Editor"
+              secondLabel="แสดงแผงทดสอบ"
+              first={
+                <MonacoCodeWorkspace
+                  entries={entries}
+                  activePath={activePath}
+                  readOnlyPaths={readOnlyPaths}
+                  onSelectFile={setActivePath}
+                  onChangeContent={(p, c) => {
+                    try {
+                      // ใช้ ref mirror กัน stale closure ตอนพิมพ์เร็ว — state กับ ref อัปเดตพร้อมกัน
+                      const next = updateFileContentInTree(entriesRef.current, p, c)
+                      entriesRef.current = next
+                      setEntries(next)
+                      // Real-time write-through ลงโฟลเดอร์จริง + autosave ผ่าน callback (throttle 5 วิ)
+                      queueAutosave(next)
+                    } catch (err) { fail(err) }
+                  }}
+                />
+              }
+              second={
+                <Tabs value={panelTab} onValueChange={(v) => setPanelTab(v as 'result' | 'tests')} className="flex h-full min-h-0 flex-col border-t">
+                  <TabsList className="w-full shrink-0 rounded-none border-b">
+                    <TabsTrigger value="result" className="flex-1">แผงทดสอบ / ผลลัพธ์</TabsTrigger>
+                    <TabsTrigger value="tests" className="flex-1 tabular-nums">Tests ({sampleTests.length})</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="result" className="mt-0 min-h-0 flex-1 overflow-y-auto">
+                    <AdaptiveExecutionPanel
+                      category={pkg.category}
+                      language={pkg.language}
+                      entries={entries}
+                      entryPointPath={pkg.policy.entryPointPath}
+                      sampleTests={sampleTests}
+                      database={pkg.database}
+                      seedSql={seedSqlOf(pkg, entries)}
+                      runSignal={runSignal}
+                      viewerRole={props.viewerRole ?? 'student'}
+                      packageId={pkg.packageId}
+                      installPolicy={pkg.installPolicy}
+                      installPackages={installPackages}
+                    />
+                  </TabsContent>
+                  <TabsContent value="tests" className="mt-0 min-h-0 flex-1 overflow-y-auto">
+                    <ScrollArea className="h-full p-3">
+                      {sampleTests.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">ข้อนี้ไม่มี sample tests — กด “รัน / ทดสอบ Sample” เพื่อรัน entry point ตรงๆ</p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {sampleTests.map((t) => (
+                            <li key={t.testId} className="rounded-md border p-2 text-xs">
+                              <div className="flex items-center gap-2">
+                                <code className="font-mono font-semibold">{t.testId}</code>
+                                <Badge variant="secondary" className="font-mono text-[10px]">{t.kind}</Badge>
+                                <span className="ml-auto font-mono tabular-nums text-muted-foreground">{t.points} คะแนน</span>
+                              </div>
+                              {'stdin' in t && typeof t.stdin === 'string' && t.stdin.length > 0 && (
+                                <pre className="mt-1 overflow-x-auto rounded bg-muted/60 p-1.5 font-mono text-[11px]">input: {t.stdin.slice(0, 500)}</pre>
+                              )}
+                              {'expectedStdout' in t && typeof t.expectedStdout === 'string' && t.expectedStdout.length > 0 && (
+                                <pre className="mt-1 overflow-x-auto rounded bg-muted/60 p-1.5 font-mono text-[11px]">expect: {t.expectedStdout.slice(0, 500)}</pre>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </ScrollArea>
+                  </TabsContent>
+                </Tabs>
+              }
             />
-          </div>
-        )}
-
-        {/* Editor (พื้นที่หลัก — ขยายเต็มเมื่อยุบ sidebars) */}
-        <div className="h-96 min-h-0 min-w-0 flex-1 lg:h-auto">
-          <MonacoCodeWorkspace
-            entries={entries}
-            activePath={activePath}
-            readOnlyPaths={readOnlyPaths}
-            onSelectFile={setActivePath}
-            onChangeContent={(p, c) => {
-              try {
-                // ใช้ ref mirror กัน stale closure ตอนพิมพ์เร็ว — state กับ ref อัปเดตพร้อมกัน
-                const next = updateFileContentInTree(entriesRef.current, p, c)
-                entriesRef.current = next
-                setEntries(next)
-                // Real-time write-through ลงโฟลเดอร์จริง + autosave ผ่าน callback (throttle 5 วิ)
-                queueAutosave(next)
-              } catch (err) { fail(err) }
-            }}
-          />
-        </div>
-
-        {/* ขวา: แผงทดสอบ/ผลลัพธ์ */}
-        <div className="flex h-96 min-h-0 flex-col border-t lg:h-auto lg:w-[340px] lg:shrink-0 lg:border-l lg:border-t-0">
-          <Tabs value={panelTab} onValueChange={(v) => setPanelTab(v as 'result' | 'tests')} className="flex min-h-0 flex-1 flex-col">
-            <TabsList className="w-full rounded-none border-b">
-              <TabsTrigger value="result" className="flex-1">แผงทดสอบ/ผลลัพธ์</TabsTrigger>
-              <TabsTrigger value="tests" className="flex-1 tabular-nums">Tests ({sampleTests.length})</TabsTrigger>
-            </TabsList>
-            <TabsContent value="result" className="mt-0 min-h-0 flex-1 overflow-y-auto">
-              <AdaptiveExecutionPanel
-                category={pkg.category}
-                language={pkg.language}
-                entries={entries}
-                entryPointPath={pkg.policy.entryPointPath}
-                sampleTests={sampleTests}
-                database={pkg.database}
-                seedSql={seedSqlOf(pkg, entries)}
-                runSignal={runSignal}
-                viewerRole={props.viewerRole ?? 'student'}
-                packageId={pkg.packageId}
-                installPolicy={pkg.installPolicy}
-                installPackages={installPackages}
-              />
-            </TabsContent>
-            <TabsContent value="tests" className="mt-0 min-h-0 flex-1 overflow-y-auto">
-              <AdaptiveExecutionPanel
-                category={pkg.category}
-                language={pkg.language}
-                entries={entries}
-                entryPointPath={pkg.policy.entryPointPath}
-                sampleTests={sampleTests}
-                database={pkg.database}
-                seedSql={seedSqlOf(pkg, entries)}
-                runSignal={runSignal}
-                viewerRole={props.viewerRole ?? 'student'}
-                packageId={pkg.packageId}
-                installPolicy={pkg.installPolicy}
-                installPackages={installPackages}
-              />
-            </TabsContent>
-          </Tabs>
-        </div>
+          }
+        />
       </div>
 
       <div

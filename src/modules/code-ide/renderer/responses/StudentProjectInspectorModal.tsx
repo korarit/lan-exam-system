@@ -46,12 +46,15 @@ function toVirtualEntries(entries: IpcEntries | undefined): VirtualEntry[] {
 }
 import ProjectFileExplorerTree from '../student/ProjectFileExplorerTree'
 import MonacoCodeWorkspace from '../student/MonacoCodeWorkspace'
+import ResizableSplit from '../student/ResizableSplit'
 
 /* ============================================================
  * Phase 10 (10.3) — Teacher Project Mirror IDE Inspector
- * อาจารย์เห็น Folder & File Tree เหมือนฝั่งนักเรียนเป๊ะ (คอมโพเนนต์ชุดเดียวกัน)
- * + เทียบ Diff รายไฟล์กับเฉลย + Playback starter→draft→submitted
- * + ผลตรวจราย test + manual rubric + เปิดโฟลเดอร์ <studentId>
+ * Layout เดียวกับฝั่งนักเรียน (40/60):
+ * ซ้าย = Tabs [Files | Diff เฉลย] / ขวา = Code (70) + แผงตรวจ (30)
+ * แผงตรวจ = Tabs [ผลตรวจ auto | ให้คะแนนเอง | คอมเมนต์]
+ * + Playback starter→draft→submitted + ทดลองรัน (Preview/API/SQL)
+ * + เปิดโฟลเดอร์ <studentId>
  * ============================================================ */
 
 interface Props {
@@ -75,7 +78,12 @@ interface DetailView {
   blockedReason?: string | null
 }
 
-type ViewMode = 'code' | 'diff' | 'tests' | 'playback' | 'preview' | 'api' | 'sql' | 'comments'
+/** แท็บหลัก: ตรวจงาน (split 40/60) / Playback / ทดลองรัน */
+type MainTab = 'review' | 'playback' | 'run'
+/** แท็บซ้าย: ไฟล์งาน / เทียบเฉลย */
+type LeftTab = 'files' | 'diff'
+/** แท็บแผงตรวจล่าง: auto / manual / คอมเมนต์ */
+type BottomTab = 'tests' | 'manual' | 'comments'
 
 interface DiffLine {
   type: 'same' | 'del' | 'add'
@@ -136,7 +144,9 @@ export default function StudentProjectInspectorModal(props: Props): React.JSX.El
   const [detail, setDetail] = useState<DetailView | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [mode, setMode] = useState<ViewMode>('code')
+  const [mainTab, setMainTab] = useState<MainTab>('review')
+  const [leftTab, setLeftTab] = useState<LeftTab>('files')
+  const [bottomTab, setBottomTab] = useState<BottomTab>('tests')
   const [activePath, setActivePath] = useState<string | null>(null)
   const [playbackIndex, setPlaybackIndex] = useState(2)
   const [manual, setManual] = useState('')
@@ -184,10 +194,18 @@ export default function StudentProjectInspectorModal(props: Props): React.JSX.El
   }, [detail])
 
   const shownEntries = useMemo(() => {
-    if (mode !== 'playback' || playbackStages.length === 0) return detail?.entries ?? []
-    const idx = Math.min(playbackIndex, playbackStages.length - 1)
+    if (mainTab !== 'playback' || playbackStages.length === 0) return detail?.entries ?? []
+    const idx = Math.min(playbackIndex, Math.max(0, playbackStages.length - 1))
     return playbackStages[idx]?.entries ?? []
-  }, [mode, playbackStages, playbackIndex, detail])
+  }, [mainTab, playbackStages, playbackIndex, detail])
+
+  /** รวมคะแนนที่แสดง: manual (ถ้ากรอก) ชนะ auto */
+  const autoEarned = useMemo(
+    () => (detail?.gradeResults ?? []).reduce((s, t) => s + (t.earned ?? 0), 0),
+    [detail]
+  )
+  const manualNum = manual.trim() === '' ? null : Number(manual)
+  const displayTotal = manualNum !== null && Number.isFinite(manualNum) ? manualNum : autoEarned
 
   const readOnlyAll = useMemo(() => {
     const set = new Set<string>()
@@ -235,22 +253,9 @@ export default function StudentProjectInspectorModal(props: Props): React.JSX.El
     if (!res.ok) setMsg(`เปิดโฟลเดอร์ไม่สำเร็จ: ${res.reason ?? 'unknown'}`)
   }
 
-  const visibleModes: Array<{ id: ViewMode; label: string; icon: React.ReactNode }> = [
-    { id: 'code', label: 'Mirror IDE', icon: <Code2 size={13} /> },
-    { id: 'diff', label: 'Diff เฉลย', icon: <GitCompare size={13} /> },
-    { id: 'tests', label: `ผลตรวจ (${detail?.gradeResults?.length ?? 0})`, icon: <ListChecks size={13} /> },
-    { id: 'playback', label: 'Playback', icon: <History size={13} /> },
-    ...(props.category === 'frontend' || props.category === 'fullstack'
-      ? [{ id: 'preview' as ViewMode, label: 'Preview', icon: <MonitorPlay size={13} /> }]
-      : []),
-    ...(props.category === 'backend' || props.category === 'fullstack'
-      ? [{ id: 'api' as ViewMode, label: 'API', icon: <Plug size={13} /> }]
-      : []),
-    ...(props.category === 'database' || props.category === 'fullstack'
-      ? [{ id: 'sql' as ViewMode, label: 'SQL', icon: <Database size={13} /> }]
-      : []),
-    { id: 'comments', label: 'คอมเมนต์', icon: <MessageSquare size={13} /> }
-  ]
+  const showPreview = props.category === 'frontend' || props.category === 'fullstack'
+  const showApi = props.category === 'backend' || props.category === 'fullstack'
+  const showSql = props.category === 'database' || props.category === 'fullstack'
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) props.onClose() }}>
@@ -277,66 +282,206 @@ export default function StudentProjectInspectorModal(props: Props): React.JSX.El
         {error !== null && <p className="p-8 text-center text-sm text-destructive">{error}</p>}
 
         {detail && !loading && (
-          <Tabs value={mode} onValueChange={(v) => setMode(v as ViewMode)} className="flex min-h-0 flex-1 flex-col">
-            {/* mode tabs */}
+          <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as MainTab)} className="flex min-h-0 flex-1 flex-col">
+            {/* แท็บหลัก 3 อัน: ตรวจงาน / Playback / ทดลองรัน */}
             <div className="flex flex-wrap items-center gap-1 border-b">
               <TabsList>
-                {visibleModes.map((t) => (
-                  <TabsTrigger key={t.id} value={t.id}>
-                    {t.icon} {t.label}
-                  </TabsTrigger>
-                ))}
+                <TabsTrigger value="review"><Code2 size={13} /> ตรวจงาน</TabsTrigger>
+                <TabsTrigger value="playback"><History size={13} /> Playback</TabsTrigger>
+                <TabsTrigger value="run"><MonitorPlay size={13} /> ทดลองรัน</TabsTrigger>
               </TabsList>
               <span className="flex-1" />
-              <div className="flex items-center gap-1 pb-1 text-xs">
-                <span className="text-muted-foreground">Manual:</span>
-                <Input
-                  value={manual}
-                  onChange={(e) => setManual(e.target.value)}
-                  placeholder={`0–${props.maxPoints} / ว่าง=auto`}
-                  className="w-36 font-mono tabular-nums"
-                  aria-label="คะแนน manual"
-                />
-                <Button type="button" variant="outline" size="sm" onClick={() => void saveManual()} disabled={saving}>
-                  {saving ? '…' : 'บันทึก'}
-                </Button>
-              </div>
+              <Badge variant={manualNum !== null && Number.isFinite(manualNum) ? 'default' : 'secondary'} className="font-mono tabular-nums">
+                รวม {displayTotal}/{props.maxPoints}{manualNum !== null && Number.isFinite(manualNum) ? ' (manual)' : ` (auto ${autoEarned})`}
+              </Badge>
             </div>
             {msg !== null && <p className="border-b bg-muted/40 px-4 py-1.5 text-xs">{msg}</p>}
 
-            <div className="min-h-0 flex-1">
-              <TabsContent value="code" className="mt-0 h-full">
-                <div className="flex h-full flex-col lg:flex-row">
-                  <div className="h-56 shrink-0 border-b lg:h-auto lg:w-64 lg:border-b-0 lg:border-r">
-                    <ProjectFileExplorerTree
-                      entries={shownEntries}
-                      selectedPath={activePath}
-                      canCreate={false}
-                      canDeleteRename={false}
-                      allowUpload={false}
-                      libraries={[]}
-                      onSelectFile={setActivePath}
-                      onCreateFile={() => undefined}
-                      onCreateFolder={() => undefined}
-                      onRename={() => undefined}
-                      onDelete={() => undefined}
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {/* ตรวจงาน: ซ้าย Files/Diff (40) | ขวา Code (70) + แผงตรวจ (30) */}
+              <TabsContent value="review" className="mt-0 min-h-0 flex-1 overflow-hidden">
+                <ResizableSplit
+                  direction="horizontal"
+                  defaultRatio={0.4}
+                  storageKey={`teacher-h:${props.studentId}`}
+                  firstLabel="แสดง Files / Diff"
+                  secondLabel="แสดง Code"
+                  first={
+                    <Tabs value={leftTab} onValueChange={(v) => setLeftTab(v as LeftTab)} className="flex h-full min-h-0 flex-col">
+                      <TabsList className="w-full shrink-0 rounded-none border-b">
+                        <TabsTrigger value="files" className="flex-1">Files</TabsTrigger>
+                        <TabsTrigger value="diff" className="flex-1"><GitCompare size={13} /> Diff เฉลย</TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="files" className="mt-0 min-h-0 flex-1 overflow-hidden">
+                        <ProjectFileExplorerTree
+                          entries={detail.entries}
+                          selectedPath={activePath}
+                          canCreate={false}
+                          canDeleteRename={false}
+                          allowUpload={false}
+                          libraries={[]}
+                          onSelectFile={setActivePath}
+                          onCreateFile={() => undefined}
+                          onCreateFolder={() => undefined}
+                          onRename={() => undefined}
+                          onDelete={() => undefined}
+                        />
+                      </TabsContent>
+                      <TabsContent value="diff" className="mt-0 min-h-0 flex-1 overflow-hidden">
+                        <div className="flex h-full min-h-0 flex-col">
+                          <div className="h-36 shrink-0 overflow-y-auto border-b p-2">
+                            <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              ไฟล์ ({studentFiles.length}) — [M]=แก้ [A]=สร้างใหม่
+                            </p>
+                            {studentFiles.map((p) => {
+                              const student = fileContent(detail.entries, p)
+                              const reference = fileContent(detail.referenceEntries, p)
+                              const flag = reference === null ? '[A]' : student !== reference ? '[M]' : ''
+                              return (
+                                <Button
+                                  key={p}
+                                  type="button"
+                                  variant={activePath === p ? 'secondary' : 'ghost'}
+                                  size="sm"
+                                  onClick={() => setActivePath(p)}
+                                  className="mb-0.5 w-full justify-start truncate font-mono text-[11px]"
+                                >
+                                  {flag && <Badge variant="outline" className="mr-1">{flag}</Badge>}{p}
+                                </Button>
+                              )
+                            })}
+                          </div>
+                          <ScrollArea className="min-h-0 flex-1 bg-muted/20 p-3 font-mono text-[12px] leading-5">
+                            {activePath === null && <p className="text-muted-foreground">เลือกไฟล์ด้านบนเพื่อเทียบกับเฉลย</p>}
+                            {activePath !== null && diffResult?.kind === 'no-student' && <p className="text-muted-foreground">ไฟล์นี้ไม่มีในงานนักเรียน</p>}
+                            {activePath !== null && diffResult?.kind === 'added-by-student' && (
+                              <div>
+                                <p className="mb-2">[A] ไฟล์นี้นักเรียนสร้างเพิ่ม — ไม่มีในเฉลย</p>
+                                <pre className="whitespace-pre-wrap text-primary">{diffResult.student}</pre>
+                              </div>
+                            )}
+                            {activePath !== null && diffResult?.kind === 'identical' && <p className="text-primary">ตรงกับเฉลยทุกบรรทัด</p>}
+                            {activePath !== null && diffResult?.kind === 'diff' && diffResult.lines === null && (
+                              <p className="text-muted-foreground">ไฟล์ใหญ่เกิน diff อัตโนมัติ — เปิดดูทีละฝั่งในโหมด Files + Code</p>
+                            )}
+                            {activePath !== null && diffResult?.kind === 'diff' && diffResult.lines !== null && (
+                              <div>
+                                <p className="mb-2 text-muted-foreground">
+                                  <span className="text-destructive">— ฝั่งเฉลย</span> / <span className="text-primary">+ ฝั่งนักเรียน</span>
+                                </p>
+                                {diffResult.lines.slice(0, 1500).map((l, i) => (
+                                  <div
+                                    key={i}
+                                    className={
+                                      l.type === 'del' ? 'bg-destructive/10 text-destructive' : l.type === 'add' ? 'bg-primary/10 text-primary' : 'text-muted-foreground'
+                                    }
+                                  >
+                                    <span className="mr-2 inline-block w-4 select-none opacity-60">{l.type === 'del' ? '—' : l.type === 'add' ? '+' : ' '}</span>
+                                    {l.text || ' '}
+                                  </div>
+                                ))}
+                                {diffResult.lines.length > 1500 && <p className="mt-2 text-muted-foreground">…แสดง 1500 บรรทัดแรกจากทั้งหมด {diffResult.lines.length} บรรทัด</p>}
+                              </div>
+                            )}
+                          </ScrollArea>
+                        </div>
+                      </TabsContent>
+                    </Tabs>
+                  }
+                  second={
+                    <ResizableSplit
+                      direction="vertical"
+                      defaultRatio={0.7}
+                      storageKey={`teacher-v:${props.studentId}`}
+                      firstLabel="แสดง Code"
+                      secondLabel="แสดงแผงตรวจ"
+                      first={
+                        <MonacoCodeWorkspace
+                          entries={detail.entries}
+                          activePath={activePath}
+                          readOnlyPaths={readOnlyAll}
+                          onSelectFile={setActivePath}
+                          onChangeContent={() => undefined}
+                        />
+                      }
+                      second={
+                        <Tabs value={bottomTab} onValueChange={(v) => setBottomTab(v as BottomTab)} className="flex h-full min-h-0 flex-col border-t">
+                          <TabsList className="w-full shrink-0 rounded-none border-b">
+                            <TabsTrigger value="tests" className="flex-1 tabular-nums"><ListChecks size={13} /> auto ({detail.gradeResults?.length ?? 0})</TabsTrigger>
+                            <TabsTrigger value="manual" className="flex-1">ให้คะแนนเอง</TabsTrigger>
+                            <TabsTrigger value="comments" className="flex-1"><MessageSquare size={13} /> คอมเมนต์</TabsTrigger>
+                          </TabsList>
+                          <TabsContent value="tests" className="mt-0 min-h-0 flex-1 overflow-y-auto">
+                            <ScrollArea className="h-full p-3">
+                              {(detail.gradeResults ?? []).length === 0 && (
+                                <p className="text-sm text-muted-foreground">ยังไม่มีผลตรวจ (งานอยู่ในคิว/กำลังตรวจ หรือตรวจล้มเหลว)</p>
+                              )}
+                              {(detail.gradeResults ?? []).length > 0 && (
+                                <Card>
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead>Test</TableHead>
+                                        <TableHead>ชนิด</TableHead>
+                                        <TableHead>การมองเห็น</TableHead>
+                                        <TableHead>ผล</TableHead>
+                                        <TableHead className="text-right">คะแนน</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {(detail.gradeResults ?? []).map((t) => (
+                                        <TableRow key={t.testId}>
+                                          <TableCell className="font-mono font-semibold">{t.testId}</TableCell>
+                                          <TableCell><Badge variant="secondary" className="font-mono text-[11px]">{t.kind}</Badge></TableCell>
+                                          <TableCell><Badge variant="outline" className="text-[11px]">{t.visibility}</Badge></TableCell>
+                                          <TableCell>
+                                            <Badge variant={t.passed === true ? 'default' : t.passed === false ? 'destructive' : 'outline'}>
+                                              {t.passed === true ? 'ผ่าน' : t.passed === false ? 'ไม่ผ่าน' : 'รอตรวจ'}
+                                            </Badge>
+                                            <p className="mt-1 text-xs text-muted-foreground">{t.note}</p>
+                                          </TableCell>
+                                          <TableCell className="text-right font-mono tabular-nums">{t.earned}/{t.points}</TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </Card>
+                              )}
+                            </ScrollArea>
+                          </TabsContent>
+                          <TabsContent value="manual" className="mt-0 min-h-0 flex-1 overflow-y-auto">
+                            <div className="flex flex-wrap items-center gap-2 p-3 text-xs">
+                              <span className="text-muted-foreground">
+                                Auto รวม {autoEarned} — กรอก manual แล้วกดบันทึกจะชนะ auto ทันที (ว่าง = กลับไปใช้ auto)
+                              </span>
+                              <Input
+                                value={manual}
+                                onChange={(e) => setManual(e.target.value)}
+                                placeholder={`0–${props.maxPoints}`}
+                                className="w-32 font-mono tabular-nums"
+                                aria-label="คะแนน manual"
+                              />
+                              <Button type="button" variant="outline" size="sm" onClick={() => void saveManual()} disabled={saving}>
+                                {saving ? '…' : 'บันทึกคะแนน'}
+                              </Button>
+                            </div>
+                          </TabsContent>
+                          <TabsContent value="comments" className="mt-0 min-h-0 flex-1 overflow-hidden">
+                            <CommentsTab
+                              studentId={props.studentId}
+                              files={(detail.entries ?? []).filter((e) => e.kind === 'file').map((e) => e.path).sort()}
+                            />
+                          </TabsContent>
+                        </Tabs>
+                      }
                     />
-                  </div>
-                  <div className="min-h-[320px] min-w-0 flex-1">
-                    <MonacoCodeWorkspace
-                      entries={shownEntries}
-                      activePath={activePath}
-                      readOnlyPaths={readOnlyAll}
-                      onSelectFile={setActivePath}
-                      onChangeContent={() => undefined}
-                    />
-                  </div>
-                </div>
+                  }
+                />
               </TabsContent>
 
-              <TabsContent value="playback" className="mt-0 h-full">
-                <div className="flex h-full flex-col">
-                  <div className="flex items-center gap-3 border-b px-4 py-2 text-xs">
+              <TabsContent value="playback" className="mt-0 min-h-0 flex-1 overflow-hidden">
+                <div className="flex h-full min-h-0 flex-col">
+                  <div className="flex shrink-0 items-center gap-3 border-b px-4 py-2 text-xs">
                     <input
                       type="range"
                       min={0}
@@ -350,8 +495,13 @@ export default function StudentProjectInspectorModal(props: Props): React.JSX.El
                       {playbackStages[Math.min(playbackIndex, Math.max(0, playbackStages.length - 1))]?.label ?? '—'}
                     </span>
                   </div>
-                  <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-                    <div className="h-56 shrink-0 border-b lg:h-auto lg:w-64 lg:border-b-0 lg:border-r">
+                  <ResizableSplit
+                    direction="horizontal"
+                    defaultRatio={0.4}
+                    storageKey={`teacher-playback:${props.studentId}`}
+                    firstLabel="แสดง Files"
+                    secondLabel="แสดง Code"
+                    first={
                       <ProjectFileExplorerTree
                         entries={shownEntries}
                         selectedPath={activePath}
@@ -365,8 +515,8 @@ export default function StudentProjectInspectorModal(props: Props): React.JSX.El
                         onRename={() => undefined}
                         onDelete={() => undefined}
                       />
-                    </div>
-                    <div className="min-h-[320px] min-w-0 flex-1">
+                    }
+                    second={
                       <MonacoCodeWorkspace
                         entries={shownEntries}
                         activePath={activePath}
@@ -374,116 +524,44 @@ export default function StudentProjectInspectorModal(props: Props): React.JSX.El
                         onSelectFile={setActivePath}
                         onChangeContent={() => undefined}
                       />
-                    </div>
-                  </div>
+                    }
+                  />
                 </div>
               </TabsContent>
 
-              <TabsContent value="diff" className="mt-0 h-full">
-                <div className="flex h-full flex-col lg:flex-row">
-                  <ScrollArea className="h-48 shrink-0 border-b p-2 lg:h-auto lg:w-64 lg:border-b-0 lg:border-r">
-                    <p className="mb-1 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      ไฟล์ ({studentFiles.length}) — [M]=แก้ [A]=สร้างใหม่
-                    </p>
-                    {studentFiles.map((p) => {
-                      const student = fileContent(detail.entries, p)
-                      const reference = fileContent(detail.referenceEntries, p)
-                      const flag = reference === null ? '[A]' : student !== reference ? '[M]' : ''
-                      return (
-                        <Button
-                          key={p}
-                          type="button"
-                          variant={activePath === p ? 'secondary' : 'ghost'}
-                          size="sm"
-                          onClick={() => setActivePath(p)}
-                          className="mb-0.5 w-full justify-start truncate font-mono text-[11px]"
-                        >
-                          {flag && <Badge variant="outline" className="mr-1">{flag}</Badge>}{p}
-                        </Button>
-                      )
-                    })}
-                  </ScrollArea>
-                  <ScrollArea className="min-h-[320px] flex-1 bg-muted/20 p-3 font-mono text-[12px] leading-5">
-                    {activePath === null && <p className="text-muted-foreground">เลือกไฟล์ทางซ้ายเพื่อเทียบกับเฉลย</p>}
-                    {activePath !== null && diffResult?.kind === 'no-student' && <p className="text-muted-foreground">ไฟล์นี้ไม่มีในงานนักเรียน</p>}
-                    {activePath !== null && diffResult?.kind === 'added-by-student' && (
-                      <div>
-                        <p className="mb-2">[A] ไฟล์นี้นักเรียนสร้างเพิ่ม — ไม่มีในเฉลย</p>
-                        <pre className="whitespace-pre-wrap text-primary">{diffResult.student}</pre>
-                      </div>
-                    )}
-                    {activePath !== null && diffResult?.kind === 'identical' && <p className="text-primary">ตรงกับเฉลยทุกบรรทัด</p>}
-                    {activePath !== null && diffResult?.kind === 'diff' && diffResult.lines === null && (
-                      <p className="text-muted-foreground">ไฟล์ใหญ่เกิน diff อัตโนมัติ — เปิดดูทีละฝั่งในโหมด Mirror IDE</p>
-                    )}
-                    {activePath !== null && diffResult?.kind === 'diff' && diffResult.lines !== null && (
-                      <div>
-                        <p className="mb-2 text-muted-foreground">
-                          <span className="text-destructive">— ฝั่งเฉลย</span> / <span className="text-primary">+ ฝั่งนักเรียน</span>
-                        </p>
-                        {diffResult.lines.slice(0, 1500).map((l, i) => (
-                          <div
-                            key={i}
-                            className={
-                              l.type === 'del' ? 'bg-destructive/10 text-destructive' : l.type === 'add' ? 'bg-primary/10 text-primary' : 'text-muted-foreground'
-                            }
-                          >
-                            <span className="mr-2 inline-block w-4 select-none opacity-60">{l.type === 'del' ? '—' : l.type === 'add' ? '+' : ' '}</span>
-                            {l.text || ' '}
-                          </div>
-                        ))}
-                        {diffResult.lines.length > 1500 && <p className="mt-2 text-muted-foreground">…แสดง 1500 บรรทัดแรกจากทั้งหมด {diffResult.lines.length} บรรทัด</p>}
-                      </div>
-                    )}
-                  </ScrollArea>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="tests" className="mt-0 h-full">
+              {/* ทดลองรันงานนักเรียนจริง (ตาม category ของข้อสอบ) */}
+              <TabsContent value="run" className="mt-0 min-h-0 flex-1 overflow-hidden">
                 <ScrollArea className="h-full p-3">
-                  {(detail.gradeResults ?? []).length === 0 && (
-                    <p className="text-sm text-muted-foreground">ยังไม่มีผลตรวจ (งานอยู่ในคิว/กำลังตรวจ หรือตรวจล้มเหลว)</p>
+                  {!showPreview && !showApi && !showSql && (
+                    <p className="text-sm text-muted-foreground">
+                      ข้อนี้เป็นโจทย์ CLI — ไม่มีแผงรันเฉพาะ ดูผล auto ได้ที่แท็บตรวจงาน หรือกด “เปิดโฟลเดอร์งาน” เพื่อรันเอง
+                    </p>
                   )}
-                  <Card>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Test</TableHead>
-                          <TableHead>ชนิด</TableHead>
-                          <TableHead>การมองเห็น</TableHead>
-                          <TableHead>ผล</TableHead>
-                          <TableHead className="text-right">คะแนน</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {(detail.gradeResults ?? []).map((t) => (
-                          <TableRow key={t.testId}>
-                            <TableCell className="font-mono font-semibold">{t.testId}</TableCell>
-                            <TableCell><Badge variant="secondary" className="font-mono text-[11px]">{t.kind}</Badge></TableCell>
-                            <TableCell><Badge variant="outline" className="text-[11px]">{t.visibility}</Badge></TableCell>
-                            <TableCell>
-                              <Badge variant={t.passed === true ? 'default' : t.passed === false ? 'destructive' : 'outline'}>
-                                {t.passed === true ? 'ผ่าน' : t.passed === false ? 'ไม่ผ่าน' : 'รอตรวจ'}
-                              </Badge>
-                              <p className="mt-1 text-xs text-muted-foreground">{t.note}</p>
-                            </TableCell>
-                            <TableCell className="text-right font-mono tabular-nums">{t.earned}/{t.points}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </Card>
+                  {showPreview && (
+                    <section className="mb-4">
+                      <h3 className="mb-1 flex items-center gap-1 text-sm font-semibold"><MonitorPlay size={14} /> Preview เว็บ (งานนักเรียน)</h3>
+                      <div className="h-[420px] overflow-hidden rounded-md border">
+                        <PreviewTab studentId={props.studentId} />
+                      </div>
+                    </section>
+                  )}
+                  {showApi && (
+                    <section className="mb-4">
+                      <h3 className="mb-1 flex items-center gap-1 text-sm font-semibold"><Plug size={14} /> ยิง API (งานนักเรียน)</h3>
+                      <div className="h-[380px] overflow-hidden rounded-md border">
+                        <ApiProbeTab studentId={props.studentId} />
+                      </div>
+                    </section>
+                  )}
+                  {showSql && (
+                    <section className="mb-4">
+                      <h3 className="mb-1 flex items-center gap-1 text-sm font-semibold"><Database size={14} /> Query ฐานข้อมูล (งานนักเรียน)</h3>
+                      <div className="h-[380px] overflow-hidden rounded-md border">
+                        <SqlWorkbenchTab studentId={props.studentId} />
+                      </div>
+                    </section>
+                  )}
                 </ScrollArea>
-              </TabsContent>
-
-              <TabsContent value="preview" className="mt-0 h-full"><PreviewTab studentId={props.studentId} /></TabsContent>
-              <TabsContent value="api" className="mt-0 h-full"><ApiProbeTab studentId={props.studentId} /></TabsContent>
-              <TabsContent value="sql" className="mt-0 h-full"><SqlWorkbenchTab studentId={props.studentId} /></TabsContent>
-              <TabsContent value="comments" className="mt-0 h-full">
-                <CommentsTab
-                  studentId={props.studentId}
-                  files={(detail.entries ?? []).filter((e) => e.kind === 'file').map((e) => e.path).sort()}
-                />
               </TabsContent>
             </div>
           </Tabs>
