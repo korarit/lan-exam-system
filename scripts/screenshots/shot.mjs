@@ -152,8 +152,38 @@ function mockInit(scenario) {
       getFormResponses: async () => ({ kind: 'database', roomId: '11111111-1111-4111-8111-111111111111', roomName: 'ห้องสอบ 401', formTitle: 'แบบฟอร์มตัวอย่าง', form: { items: [] }, startedAtMs: null, endedAtMs: null, students: [], itemStats: [], distribution: [], summary: { mean: 0, median: 0, min: 0, max: 0, studentCount: 0, needsManualCount: 0 }, regradeHistory: [] }),
       getFormState: async () => ({ formTitle: null }),
       checkRuntimes: async () => ({ runtimes: [] }),
-      getCodeSubmissions: async () => ({ ok: true, roomId: null, roomName: null, packageTitle: null, category: null, language: null, questionSlug: null, maxPoints: 0, queue: { active: 0, pending: 0 }, depsUnsupported: [], submissions: [] }),
-      getCodeWorkspaceState: async () => ({ rootPath: null }),
+      getCodeSubmissions: async () => scenario.submissions === 'filled'
+        ? {
+            ok: true, roomId: '11111111-1111-4111-8111-111111111111', roomName: 'ห้องสอบ 401', packageTitle: 'ข้อสอบเขียนโปรแกรม ข้อที่ 1', category: 'cli-algorithm', language: 'java', questionSlug: 'q-code-1', maxPoints: 100, queue: { active: 1, pending: 1 },
+            depsUnsupported: [],
+            submissions: [
+              { studentId: 'S001', fileCount: 4, passedCount: 2, totalCount: 3, autoPoints: 60, manualPoints: null, totalPoints: 60, maxPoints: 100, status: 'graded', blockedReason: null, submittedAtMs: now - 900000, gradedAtMs: now - 600000 },
+              { studentId: 'S002', fileCount: 3, passedCount: 0, totalCount: 3, autoPoints: 0, manualPoints: null, totalPoints: 0, maxPoints: 100, status: 'blocked', blockedReason: 'VM suspected — งานถูกกักไว้รอครูตรวจสอบ', submittedAtMs: now - 800000, gradedAtMs: null },
+              { studentId: 'S003', fileCount: 2, passedCount: 0, totalCount: 0, autoPoints: 0, manualPoints: null, totalPoints: 0, maxPoints: 100, status: 'grading', blockedReason: null, submittedAtMs: now - 300000, gradedAtMs: null }
+            ]
+          }
+        : { ok: true, roomId: null, roomName: null, packageTitle: null, category: null, language: null, questionSlug: null, maxPoints: 0, queue: { active: 0, pending: 0 }, depsUnsupported: [], submissions: [] },
+      getCodeWorkspaceState: async () => ({ rootPath: 'D:/ExamWorkspace/CS202_Final' }),
+      getCodeSubmissionDetail: async () => ({
+        ok: true, studentId: 'S001', status: 'graded', manualPoints: null, blockedReason: null,
+        entries: [
+          { path: 'src', kind: 'folder' },
+          { path: 'src/Main.java', kind: 'file', content: 'import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int a = sc.nextInt();\n        int b = sc.nextInt();\n        System.out.println(a + b);\n    }\n}\n' }
+        ],
+        starterEntries: [
+          { path: 'src', kind: 'folder' },
+          { path: 'src/Main.java', kind: 'file', content: 'import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        // TODO: อ่านเลข 2 ตัวแล้วพิมพ์ผลบวก\n    }\n}\n' }
+        ],
+        referenceEntries: [
+          { path: 'src', kind: 'folder' },
+          { path: 'src/Main.java', kind: 'file', content: 'import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        System.out.println(sc.nextInt() + sc.nextInt());\n    }\n}\n' }
+        ],
+        gradeResults: [
+          { testId: 't1', kind: 'stdio', visibility: 'sample', points: 30, earned: 30, passed: true, note: '', durationMs: 118 },
+          { testId: 't2', kind: 'stdio', visibility: 'sample', points: 30, earned: 30, passed: true, note: '', durationMs: 121 },
+          { testId: 't3', kind: 'stdio', visibility: 'hidden', points: 40, earned: 0, passed: false, note: 'Wrong answer (expected 42, got 41)', durationMs: 130 }
+        ]
+      }),
       onEvent: (channel, cb) => {
         try {
           reg(channel, cb);
@@ -188,6 +218,26 @@ function mockInit(scenario) {
 const MCQ = { moduleId: 'stepping-runner', questionId: 'q1', cursorIndex: 2, questionCount: 10, type: 'mcq', prompt: 'จงหาค่าของ 15 × 4 + 20 ÷ 5', points: 5, allowBackNavigation: true, choices: [{ text: '64' }, { text: '68' }, { text: '60' }, { text: '72' }] };
 const ESSAY = { moduleId: 'stepping-runner', questionId: 'q2', cursorIndex: 3, questionCount: 10, type: 'essay', prompt: 'จงอธิบายหลักการทำงานของ hash chain ในระบบตรวจจับการทุจริต พร้อมยกตัวอย่างว่าเหตุการณ์ใดบ้างที่ควรบันทึก', points: 10, allowBackNavigation: false };
 const STARTED_CLOSED = { examTitle: 'สอบกลางภาค คณิตศาสตร์ ม.4', questionCount: 10, remainingSeconds: 3540 };
+const CODE_PKG = {
+  moduleId: 'code-ide',
+  packageId: '22222222-2222-4222-8222-222222222222',
+  title: 'ข้อสอบเขียนโปรแกรม ข้อที่ 1',
+  instructions: 'จงเขียนโปรแกรมอ่านจำนวนเต็ม 2 ตัวจาก stdin แล้วพิมพ์ผลบวกออกทาง stdout',
+  category: 'cli-algorithm',
+  language: 'java',
+  entries: [
+    { path: 'src', kind: 'folder' },
+    { path: 'src/Main.java', kind: 'file', content: 'import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int a = sc.nextInt();\n        int b = sc.nextInt();\n        System.out.println(a + b);\n    }\n}\n' }
+  ],
+  policy: { entryPointPath: 'src/Main.java' },
+  dependencies: [],
+  installPolicy: { enabled: false, ecosystems: [] },
+  database: { enabled: false },
+  sampleTests: [
+    { testId: 't1', kind: 'stdio', title: 'ตัวอย่าง: 2 3 -> 5', stdin: '2 3\n', expectedStdout: '5\n', visibility: 'sample', points: 10 }
+  ],
+  totalSamplePoints: 10
+};
 const STARTED_DOCS = { examTitle: 'สอบกลางภาค สังคมศึกษา ม.5', questionCount: 8, remainingSeconds: 5320, examMode: 'in-app-docs' };
 const DOCS_OPEN = { open: true, url: 'https://docs.example.com/exam-material', allowedDomains: ['docs.example.com'], enforcement: 'warn', blockedUrl: null, warnUrl: null, viewError: null };
 
@@ -393,6 +443,37 @@ async function doJoin(page) {
   await emit(s.page, 'exam:question', MCQ);
   await emit(s.page, 'exam:time-up', {});
   await finish('22-student-timeup.png', s.ctx, s.page, s.errors);
+}
+
+// ---- STUDENT IDE + HOST GRADING ----
+{
+  // student doing exam inside the Code IDE workspace (module-state push)
+  let s = await newPage({ role: 'student', theme: 'dark' });
+  await doJoin(s.page);
+  await emit(s.page, 'exam:started', STARTED_CLOSED);
+  await emit(s.page, 'exam:module-state', { moduleId: 'code-ide', stateJson: JSON.stringify(CODE_PKG) });
+  await s.page.waitForTimeout(3500);
+  await finish('28-student-exam-ide.png', s.ctx, s.page, s.errors);
+}
+{
+  // host grading table with real submissions
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true, submissions: 'filled' });
+  try {
+    await s.page.getByText('ผลตรวจ Code', { exact: false }).first().click({ timeout: 3000 });
+    await s.page.waitForTimeout(1000);
+  } catch (e) { console.log('miss code-responses'); }
+  await finish('29-host-code-grading.png', s.ctx, s.page, s.errors);
+}
+{
+  // host mirror IDE inspector for S001
+  let s = await newPage({ role: 'host', theme: 'dark', withRoom: true, submissions: 'filled' });
+  try {
+    await s.page.getByText('ผลตรวจ Code', { exact: false }).first().click({ timeout: 3000 });
+    await s.page.waitForTimeout(1000);
+    await s.page.getByRole('button', { name: 'ดูโค้ด' }).first().click({ timeout: 5000 });
+    await s.page.waitForTimeout(2500);
+  } catch (e) { console.log('miss inspector:', String(e).split('\n').slice(1, 2).join(' ').slice(0, 160)); }
+  await finish('30-host-code-inspector.png', s.ctx, s.page, s.errors);
 }
 
 // ---- MODULE STILLS ----
