@@ -25,6 +25,13 @@ function fakeEvent(topFrame: boolean): IpcMainInvokeEvent {
   } as unknown as IpcMainInvokeEvent
 }
 
+function fakeEventWithSender(topFrame: boolean, senderId: number): IpcMainInvokeEvent {
+  return {
+    senderFrame: { parent: topFrame ? null : { url: 'https://evil.example' } },
+    sender: { id: senderId }
+  } as unknown as IpcMainInvokeEvent
+}
+
 describe('IpcRouter', () => {
   it('passes a valid payload to the handler and returns wrapped data', async () => {
     const { registrar, listeners } = createFakeRegistrar()
@@ -83,6 +90,29 @@ describe('IpcRouter', () => {
     expect(result.ok).toBe(false)
     expect(result.error?.code).toBe('VALIDATION')
     expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('VULN-21: rejects a top-level frame from a non-allowlisted webContents', async () => {
+    const { registrar, listeners } = createFakeRegistrar()
+    const router = new IpcRouter(registrar, {
+      isTrustedSender: (event) => event.sender?.id === 1
+    })
+    const handler = vi.fn(() => ({ ok: true, role: 'host' as const }))
+    router.register('app:select-role', handler)
+
+    const rejected = (await listeners.get('app:select-role')?.(
+      fakeEventWithSender(true, 999),
+      { role: 'host' }
+    )) as unknown as IpcResult<unknown>
+    expect(rejected.ok).toBe(false)
+    expect(handler).not.toHaveBeenCalled()
+
+    const accepted = (await listeners.get('app:select-role')?.(
+      fakeEventWithSender(true, 1),
+      { role: 'host' }
+    )) as unknown as IpcResult<unknown>
+    expect(accepted.ok).toBe(true)
+    expect(handler).toHaveBeenCalledOnce()
   })
 
   it('wraps handler failures without leaking the stack', async () => {

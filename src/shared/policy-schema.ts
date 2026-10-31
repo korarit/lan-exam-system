@@ -159,6 +159,8 @@ export const DetectionEventCatalog = {
   GUARD_THREAD_STALLED: { category: 'memory-debugger', severity: 'critical', score: 30 },
   /** detector ทำงานไม่ได้ต่อเนื่อง (คำสั่ง OS ล้ม/ถูกจำกัด) — แยกจาก "ตรวจแล้วไม่พบ" */
   GUARD_PROBE_FAILED: { category: 'memory-debugger', severity: 'warning', score: 20 },
+  /** probe ล้มต่อเนื่องจน guard "บอด" (fail-closed) — ปิด/proxy probe เพื่อหลบ detection */
+  GUARD_BLIND: { category: 'memory-debugger', severity: 'critical', score: 60 },
   NETWORK_TUNNEL_OR_PROXY_TAMPER: { category: 'network-tunnel', severity: 'critical', score: 40 },
   SUSPICIOUS_COMPUTE_SPIKE: { category: 'ai-assistant', severity: 'warning', score: 10 },
   PID_BURST_ANOMALY: { category: 'automation-macro', severity: 'warning', score: 10 },

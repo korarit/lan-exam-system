@@ -67,6 +67,8 @@ export interface RegradeSummary {
 }
 
 const MAX_CHUNK_BASE64 = 2 * 1024 * 1024
+/** กันการสั่ง chunkTotal มหาศาลจาก client (memory DoS ตอนสร้าง array) */
+const MAX_CHUNK_TOTAL = 4096
 const DEFAULT_MAX_FILE_BYTES = 64 * 1024 * 1024
 
 export class FormHostService {
@@ -137,10 +139,10 @@ export class FormHostService {
     return room.container.form.items.filter(isFormItemQuestion).length
   }
 
-  /** VULN-61: ข้อนี้ถูกเปิดให้นักเรียนเห็นแล้วหรือยัง (ถ้ายังไม่มี order = ไม่บังคับ) */
+  /** VULN-61: ข้อนี้ถูกเปิดให้นักเรียนเห็นแล้วหรือยัง (ไม่มี order = fail-closed ปฏิเสธ) */
   private isItemRevealed(roomId: string, studentId: string, itemId: string): boolean {
     const order = this.questionOrderByStudent.get(this.revealKey(roomId, studentId))
-    if (!order) return true
+    if (!order) return false
     const revealed = this.getRevealedQuestions(roomId, studentId)
     return order.slice(0, revealed).includes(itemId)
   }
@@ -186,6 +188,9 @@ export class FormHostService {
     if (!check.success) return { stored: false, reason: 'ARTIFACT_DESCRIPTOR_INVALID' }
     const descriptor = check.data
     const itemId = descriptor.itemId
+    if (input.chunkTotal > MAX_CHUNK_TOTAL) {
+      return { stored: false, reason: 'CHUNK_TOTAL_TOO_LARGE' }
+    }
     if (input.chunkIndex < 0 || input.chunkTotal < 1 || input.chunkIndex >= input.chunkTotal) {
       return { stored: false, reason: 'CHUNK_INDEX_INVALID' }
     }
@@ -288,7 +293,11 @@ export class FormHostService {
     if (item === undefined || !isFormItemQuestion(item)) {
       return { accepted: false, itemId: submission.itemId, reason: 'UNKNOWN_ITEM' }
     }
-    // VULN-61: ห้ามตอบข้อที่ยังไม่ถูกเปิด (client ดัดแปลงเดา itemId ไม่ได้)
+    // VULN-61: ต้องมี order ก่อน (default-deny) — สร้างจาก view ถ้ายังไม่มี
+    if (!this.questionOrderByStudent.has(this.revealKey(input.roomId, input.studentId))) {
+      this.studentViewFor(input.roomId, input.studentId)
+    }
+    // ห้ามตอบข้อที่ยังไม่ถูกเปิด (client ดัดแปลงเดา itemId ไม่ได้)
     if (!this.isItemRevealed(input.roomId, input.studentId, submission.itemId)) {
       return { accepted: false, itemId: submission.itemId, reason: 'ITEM_NOT_REVEALED' }
     }
@@ -485,14 +494,14 @@ export class FormHostService {
     // VULN-61: ส่งเฉพาะข้อที่เปิดแล้ว — ไม่ให้ข้อสอบทั้งชุดอยู่ในเครื่องนักเรียนตั้งแต่ต้น
     const total = this.totalQuestions(room)
     const revealed = total === 0 ? 0 : Math.max(1, Math.min(total, this.getRevealedQuestions(roomId, studentId)))
+    // order ต้องเป็นลำดับ "ทั้งชุด" เสมอ เพื่อให้การเปิดข้อถัดไปไม่ขึ้นกับ view ที่ถูกตัด
+    const isQuestionItem = (item: (typeof view.items)[number]): boolean =>
+      item.inputType !== 'section_header' && item.inputType !== 'media_stimulus'
+    const order = view.items.filter(isQuestionItem).map((item) => item.itemId)
     let seen = 0
     const visibleItems: typeof view.items = []
-    const order: string[] = []
     for (const item of view.items) {
-      // StudentFormViewItem ไม่มี answerKey — เช็คชนิดด้วย inputType
-      const isQuestion = item.inputType !== 'section_header' && item.inputType !== 'media_stimulus'
-      if (isQuestion) {
-        order.push(item.itemId)
+      if (isQuestionItem(item)) {
         if (seen >= revealed) break
         seen += 1
       }

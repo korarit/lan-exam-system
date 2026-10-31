@@ -101,6 +101,10 @@ describe('Phase 7 Embedded Backend — flow ครบชุดบน SQLite', ()
     // resolved ตัวแปรสุ่มรายคน (จะไม่ตรงสูตรทดสอบ — ให้ผ่านค่าที่กำหนดเองเพื่อความคุม)
     service.registerStudentSeed('room-i', 's1', 'seed-one')
     service.setRoomForm('room-i', 'ห้อง IT', container)
+    // เทสต์นี้ยิง ingestItemSubmission ตรง (ไม่ผ่าน transport) — ต้องเปิดทุกข้อก่อน
+    // เพราะ production เป็น progressive disclosure + default-deny
+    service.studentViewFor('room-i', 's1')
+    service.revealMore('room-i', 's1', 10)
 
     // (1) ไฟล์แนบของข้อ file_upload — chunk ชิ้นเดียวจบ
     const blob = Buffer.from('#!/usr/bin/env python3\nprint("ok")\n')

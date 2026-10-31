@@ -36,6 +36,14 @@ export interface IpcEventSender {
   isDestroyed(): boolean
 }
 
+export interface IpcRouterOptions {
+  /**
+   * ผูก sender กับ WebContents ที่อนุญาต (main window / floating HUD)
+   * default = ไม่ผูก (legacy) — production ต้องส่งเข้ามาเสมอเพื่อปิด VULN-21
+   */
+  isTrustedSender?: (event: IpcMainInvokeEvent) => boolean
+}
+
 /**
  * IPC Router ฝั่ง Main process:
  * - รับเฉพาะ invoke จาก top-level frame ของแอปเท่านั้น (ไม่รับจาก iframe / WebContentsView)
@@ -45,7 +53,10 @@ export interface IpcEventSender {
 export class IpcRouter {
   private readonly registeredChannels = new Set<string>()
 
-  constructor(private readonly registrar: IpcRegistrar) {}
+  constructor(
+    private readonly registrar: IpcRegistrar,
+    private readonly options: IpcRouterOptions = {}
+  ) {}
 
   register<K extends IpcInvokeChannel>(
     channel: K,
@@ -97,7 +108,10 @@ export class IpcRouter {
     const frame = event.senderFrame
     if (!frame) return false
     // รับเฉพาะ top frame ของหน้าต่างแอป (ไม่ใช่ iframe ที่ฝังเข้ามา)
-    return frame.parent === null
+    if (frame.parent !== null) return false
+    // VULN-21: top frame จาก WebContents อื่นก็ยังต้องถูกปฏิเสธ
+    if (this.options.isTrustedSender) return this.options.isTrustedSender(event)
+    return true
   }
 
   private failure(code: IpcErrorDetail['code'], message: string): IpcResult<never> {

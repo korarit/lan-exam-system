@@ -125,6 +125,47 @@ describe('RuntimeIntegrityGuard.scanOnce', () => {
     expect(events.some((e) => e.code === 'GUARD_PROBE_FAILED')).toBe(true)
   })
 
+  it('probe ล้มต่อเนื่องจนบอด → GUARD_BLIND ระดับ critical (fail-closed)', async () => {
+    const events: DetectionEvent[] = []
+    const guard = new RuntimeIntegrityGuard({
+      emit: (e) => events.push(e),
+      getExpectation: () => expectation,
+      readSnapshot: async () => null,
+      minScanIntervalMs: 0,
+      now: () => 1
+    })
+    expect(guard.isBlind()).toBe(false)
+    await guard.scanOnce()
+    await guard.scanOnce()
+    await guard.scanOnce()
+
+    const blind = events.find((e) => e.code === 'GUARD_BLIND')
+    expect(blind).toBeDefined()
+    expect(blind?.severity).toBe('critical')
+    expect(guard.isBlind()).toBe(true)
+  })
+
+  it('probe กลับมาอ่านได้ → ล้างสถานะบอด', async () => {
+    let reads = 0
+    const guard = new RuntimeIntegrityGuard({
+      emit: () => undefined,
+      getExpectation: () => expectation,
+      readSnapshot: async () => {
+        reads += 1
+        return reads <= 3 ? null : snapshot()
+      },
+      minScanIntervalMs: 0,
+      now: () => 1
+    })
+    await guard.scanOnce()
+    await guard.scanOnce()
+    await guard.scanOnce()
+    expect(guard.isBlind()).toBe(true)
+    await guard.scanOnce()
+    expect(guard.isBlind()).toBe(false)
+    expect(guard.getConsecutiveProbeFailures()).toBe(0)
+  })
+
   it('snapshot ที่มี injected thread → ส่ง event ออก', async () => {
     const events: DetectionEvent[] = []
     const guard = new RuntimeIntegrityGuard({

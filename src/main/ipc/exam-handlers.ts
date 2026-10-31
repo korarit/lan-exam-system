@@ -24,6 +24,8 @@ export interface ExamServices {
   /** เข้า/ออกโหมด kiosk ของหน้าต่างนักเรียน */
   enterKiosk(): void
   exitKiosk(): void
+  /** VULN-21: ห้ามออก kiosk ระหว่างสอบ (นักเรียนจะเรียก IPC เองไม่ได้) */
+  isExamRunning?: () => boolean
 }
 
 /**
@@ -140,6 +142,8 @@ export function registerExamHandlers(
 
   router.register('student:exit-kiosk', (): KioskEnterResponse => {
     if (state.role !== 'student') throw new Error('STUDENT_ROLE_REQUIRED')
+    // VULN-21: ระหว่างสอบต้องออก kiosk ไม่ได้ (ไม่ใช่แค่เช็ค role)
+    if (services.isExamRunning?.()) throw new Error('EXIT_KIOSK_BLOCKED_DURING_EXAM')
     services.exitKiosk()
     return { ok: true }
   })

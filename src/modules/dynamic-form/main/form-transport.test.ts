@@ -217,6 +217,55 @@ describe('F-1 — FormHostService.ingestViaTransport', () => {
   })
 })
 
+describe('F-1 — hardening (bypass simulation)', () => {
+  it('VULN-61: direct ingest ของข้อที่ยังไม่ถูกเปิด → ปฏิเสธ (default-deny)', () => {
+    const db = makeDb()
+    seedRunningRoom(db)
+    const service = makeService(db)
+    const ordered: ZtformContainer['form'] = {
+      ...TWO_ITEM_FORM,
+      settings: { ...TWO_ITEM_FORM.settings, shuffleQuestionsPerStudent: false }
+    }
+    loadForm(service, ordered)
+
+    const outcome = service.ingestItemSubmission({
+      roomId: ROOM,
+      studentId: 's1',
+      studentSeed: 'ignored',
+      submission: { itemId: 'mcq2', value: { kind: 'choice', choiceId: 'c6' }, timeSpentMs: 1, clientSubmittedAtMs: 1 },
+      serverTimestampMs: 1
+    })
+    expect(outcome.accepted).toBe(false)
+    expect(outcome.reason).toBe('ITEM_NOT_REVEALED')
+    expect(service.getStore().listResponses(ROOM)).toHaveLength(0)
+  })
+
+  it('ingestArtifactChunk ปฏิเสธ chunkTotal มหาศาล (memory DoS)', () => {
+    const db = makeDb()
+    seedRunningRoom(db)
+    const service = makeService(db)
+    loadForm(service)
+
+    const res = service.ingestArtifactChunk({
+      roomId: ROOM,
+      studentId: 's1',
+      descriptor: {
+        itemId: 'mcq1',
+        artifactId: 'ar1',
+        fileName: 'x.txt',
+        mimeType: 'text/plain',
+        sizeBytes: 1,
+        sha256: 'a'.repeat(64)
+      },
+      chunkIndex: 0,
+      chunkTotal: 1_000_000_000,
+      contentBase64: 'AA=='
+    })
+    expect(res.stored).toBe(false)
+    expect(res.reason).toBe('CHUNK_TOTAL_TOO_LARGE')
+  })
+})
+
 describe('F-1 — extractFormSubmissions', () => {
   it('แกะได้ทั้ง 3 ท่า: action/submission เดี่ยว, {items}, submission ตรง ๆ', () => {
     const single = { itemId: 'a', value: { kind: 'none' as const } }

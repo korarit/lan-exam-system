@@ -1245,7 +1245,24 @@ function createWindow(): void {
 }
 
 void app.whenReady().then(() => {
-  const router = new IpcRouter(createElectronIpcRegistrar())
+  const router = new IpcRouter(createElectronIpcRegistrar(), {
+    // VULN-21: รับ IPC เฉพาะ WebContents ของหน้าต่างแอป (main window + floating HUD)
+    isTrustedSender: (event) => {
+      const senderId = event.sender?.id
+      if (senderId === undefined) return false
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.id === senderId) {
+        return true
+      }
+      if (
+        floatingHudWindow &&
+        !floatingHudWindow.isDestroyed() &&
+        floatingHudWindow.webContents.id === senderId
+      ) {
+        return true
+      }
+      return false
+    }
+  })
   registerAppHandlers(router, state, {
     onRoleSelected: (role) => {
       if (role === 'host') {
@@ -1277,6 +1294,8 @@ void app.whenReady().then(() => {
     getStudentClient: ensureStudentClient,
     getGuardEngine: () => (state.role === 'student' ? ensureGuardEngine() : null),
     ...kioskHooks,
+    // VULN-21: ระหว่างสอบห้าม renderer สั่งออก kiosk เอง
+    isExamRunning: () => state.role === 'student' && studentExamRunning,
     // Phase 4: เริ่ม/หยุด native keyboard guard พร้อมเข้า-ออกโหมด Kiosk
     enterKiosk: () => {
       kioskHooks.enterKiosk()

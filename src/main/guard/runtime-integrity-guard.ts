@@ -556,6 +556,12 @@ export async function collectRuntimeSnapshot(
  * Guard
  * ============================================================ */
 
+/**
+ * จำนวน probe ที่ล้มต่อเนื่องก่อนถือว่า guard "บอด"
+ * (fail-closed: ถ้าปิด/proxy PowerShell-vmmap เพื่อหลบ detection ต้องได้ event ระดับ critical)
+ */
+export const BLIND_AFTER_CONSECUTIVE_FAILURES = 3
+
 export interface RuntimeIntegrityGuardOptions {
   emit: (event: DetectionEvent) => void
   getExpectation: () => RuntimeExpectation
@@ -573,7 +579,7 @@ export class RuntimeIntegrityGuard {
   private readonly now: () => number
   private readonly minScanIntervalMs: number
   private readonly reported = new Map<string, number>()
-  private readonly probeFailures = new Map<string, number>()
+  private consecutiveProbeFailures = 0
   private lastTickAtMs = 0
   private lastRealScanAtMs = 0
 
@@ -586,6 +592,15 @@ export class RuntimeIntegrityGuard {
 
   getLastTickAtMs(): number {
     return this.lastTickAtMs
+  }
+
+  /** true เมื่อ probe ล้มต่อเนื่องจน guard มองไม่เห็น runtime (ใช้ทำ fail-closed ได้) */
+  isBlind(): boolean {
+    return this.consecutiveProbeFailures >= BLIND_AFTER_CONSECUTIVE_FAILURES
+  }
+
+  getConsecutiveProbeFailures(): number {
+    return this.consecutiveProbeFailures
   }
 
   start(): void {
@@ -611,7 +626,7 @@ export class RuntimeIntegrityGuard {
       this.reportProbeFailure('snapshot-empty')
       return []
     }
-    this.probeFailures.delete('runtime-snapshot')
+    this.consecutiveProbeFailures = 0
     const expectation = this.opts.getExpectation()
     const findings = analyzeRuntimeSnapshot(snapshot, expectation)
     const events: DetectionEvent[] = []
@@ -632,12 +647,24 @@ export class RuntimeIntegrityGuard {
   }
 
   private reportProbeFailure(reason: string): void {
-    const count = (this.probeFailures.get('runtime-snapshot') ?? 0) + 1
-    this.probeFailures.set('runtime-snapshot', count)
+    this.consecutiveProbeFailures += 1
+    const count = this.consecutiveProbeFailures
     if (count === 2 || (count > 2 && count % 10 === 0)) {
       this.opts.emit(
         makeDetectionEvent(
           'GUARD_PROBE_FAILED',
+          this.detectorId,
+          { probe: 'runtime-snapshot', consecutiveFailures: String(count), reason: reason.slice(0, 300) },
+          undefined,
+          this.now
+        )
+      )
+    }
+    // fail-closed: บอดต่อเนื่อง = ปิด probe เพื่อหลบ detection → ยกระดับเป็น critical
+    if (count >= BLIND_AFTER_CONSECUTIVE_FAILURES && this.shouldReport('guard-blind', 60_000)) {
+      this.opts.emit(
+        makeDetectionEvent(
+          'GUARD_BLIND',
           this.detectorId,
           { probe: 'runtime-snapshot', consecutiveFailures: String(count), reason: reason.slice(0, 300) },
           undefined,
