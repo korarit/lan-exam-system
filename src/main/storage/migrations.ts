@@ -299,5 +299,29 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_code_comments_student
         ON code_comments(session_id, student_id, package_id);
     `
+  },
+  {
+    /**
+     * TOFU device enrollment (แทนการเก็บ public key ต่อเครื่องล่วงหน้า)
+     * - join ครั้งแรก: host เก็บ deviceId/publicKey ที่ client ส่งมา (auto-accept)
+     * - ผูก 1 device ↔ 1 studentId และให้ครู block/remove ได้จาก dashboard
+     * - signed roster (ถ้ามี) ยังใช้เป็น strict mode และมาก่อนตารางนี้เสมอ
+     */
+    version: 9,
+    sql: `
+      CREATE TABLE IF NOT EXISTS enrolled_devices (
+        device_id      TEXT PRIMARY KEY,
+        public_key     TEXT NOT NULL,
+        student_id     TEXT NOT NULL,
+        label          TEXT,
+        status         TEXT NOT NULL CHECK (status IN ('active', 'blocked')) DEFAULT 'active',
+        hardware_bound INTEGER NOT NULL DEFAULT 0,
+        first_seen_ms  INTEGER NOT NULL,
+        last_seen_ms   INTEGER NOT NULL,
+        seen_count     INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE INDEX IF NOT EXISTS idx_enrolled_devices_student
+        ON enrolled_devices(student_id);
+    `
   }
 ]

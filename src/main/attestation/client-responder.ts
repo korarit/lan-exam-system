@@ -38,6 +38,10 @@ export interface AttestationClientOptions {
   nativeSigner?: NativeAttestationSigner
   /** runtime binding ที่ host ใช้ตรวจ wrapper (VULN-05/62) */
   getRuntimeBinding?: () => RuntimeBinding | null
+  /** deviceId ของเครื่องนี้ (มาจาก per-device key) — host ใช้เลือก public key จาก signed roster */
+  getDeviceId?: () => string | null
+  /** raw public key ของเครื่อง (hex) — แนบครั้งแรกเพื่อให้ host enroll (TOFU) */
+  getDevicePublicKey?: () => string | null
   now?: () => number
 }
 
@@ -102,6 +106,8 @@ export class AttestationResponder {
 
     const includeManifest = challenge.requireManifest || !this.sentManifestIn.has('once')
     const runtimeBinding = this.opts.getRuntimeBinding?.() ?? null
+    const deviceId = this.opts.getDeviceId?.() ?? null
+    const devicePublicKeyHex = this.opts.getDevicePublicKey?.() ?? null
     const payload: AttestationResponse = {
       challengeId: challenge.challengeId,
       responseHmac: computeAttestationHmac(exporter, {
@@ -115,6 +121,11 @@ export class AttestationResponder {
       ...(runtimeBinding ? { runtimeBinding } : {})
     }
     if (nativeSignature) payload.nativeSignature = nativeSignature
+    if (deviceId) {
+      payload.deviceId = deviceId
+      if (nativeSignature) payload.nativeKeyId = deviceId
+    }
+    if (devicePublicKeyHex) payload.publicKeyHex = devicePublicKeyHex
     if (includeManifest && snapshot.manifest) {
       let manifest = snapshot.manifest
       // โหมด dev ที่มีกุญแจในเครื่อง (env): ลองเซ็นจริงเพื่อซ้อม E2E ด้วยลายเซ็นที่ตรวจได้

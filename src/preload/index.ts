@@ -92,6 +92,11 @@ const api: ZtExamApi = {
   getAttestationConfig: () => call('host:get-attestation-config', undefined),
   setAttestationEnforce: (req) => call('host:set-attestation-enforce', req),
 
+  /* ---------- TOFU device enrollment ---------- */
+  listEnrolledDevices: () => call('host:list-enrolled-devices', undefined),
+  setEnrolledDeviceStatus: (req) => call('host:set-enrolled-device-status', req),
+  removeEnrolledDevice: (req) => call('host:remove-enrolled-device', req),
+
   getScreenSources: () => call('student:screen-get-sources', undefined),
   sendScreenSegment: (req) => call('student:screen-segment', req),
   sendScreenThumbnail: (req) => call('student:screen-thumbnail', req),

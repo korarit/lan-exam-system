@@ -18,7 +18,6 @@ import {
   verifySignedManifest
 } from './manifest-core'
 import { trustedKeyPemSet, revokedManifestIdSet } from './trusted-keys'
-import { nativeTrustedPublicKeyHex } from './native-trusted-keys'
 import { ed25519VerifyRawPublicKeyHex } from '../crypto/primitives'
 import { findRuntimeBindingViolation } from './runtime-binding'
 
@@ -77,6 +76,7 @@ export interface AttestationSuccess {
   studentId: string
   manifestHash: string | null
   signedOnDevice: boolean
+  deviceId: string | null
 }
 
 export interface AttestationHostOptions {
@@ -91,8 +91,21 @@ export interface AttestationHostOptions {
   requireRuntimeBinding?: () => boolean
   onVerified: (ok: AttestationSuccess, isNew: boolean) => void
   onFailed: (failure: AttestationFailure) => void
-  /** inject trusted native public key (raw 32-byte hex) ใน unit test */
-  nativePublicKeyHex?: () => string | null
+  /** คืน public key (raw 32-byte hex) ของ deviceId จาก signed roster — null = ไม่รู้จัก */
+  devicePublicKeyHex?: (deviceId: string | null) => string | null
+  /** studentId ที่ roster ผูกกับ deviceId (null = ไม่ได้ผูก) — ใช้กันเครื่องของคนอื่น */
+  deviceStudentId?: (deviceId: string | null) => string | null
+  /**
+   * TOFU: เรียกเมื่อ deviceId ยังไม่รู้จักและ client แนบ publicKeyHex มา
+   * (host มี signed roster = ไม่ควรตั้งค่านี้ เพื่อให้เป็น strict mode)
+   */
+  enrollDevice?: (input: {
+    deviceId: string
+    publicKeyHex: string
+    studentId: string
+  }) => { ok: true; publicKeyHex: string } | { ok: false; reason: string }
+  /** บังคับ device binding แม้ใน dev (default: production หรือ strict toggle) */
+  requireDeviceBinding?: () => boolean
   now?: () => number
   /** ฟังก์ชันสุ่มช่วงเวลา (inject ได้เพื่อทดสอบ) */
   randomInterval?: (min: number, max: number) => number
@@ -105,6 +118,8 @@ interface StudentAttestationState {
   manifest: SignedAppManifest | null
   keyId: string | null
   signatureOkAtLeastOnce: boolean
+  /** deviceId ที่ผูกกับ studentId นี้แล้ว (1 คน = 1 เครื่อง) */
+  deviceId: string | null
   timer: NodeJS.Timeout | null
   pending: AttestationChallenge | null
   pendingIssuedAt: number
@@ -122,6 +137,7 @@ function freshState(): StudentAttestationState {
     manifest: null,
     keyId: null,
     signatureOkAtLeastOnce: false,
+    deviceId: null,
     timer: null,
     pending: null,
     pendingIssuedAt: 0
@@ -306,7 +322,52 @@ export class AttestationHostService {
     )
     if (!hmacOk) return this.reject(studentId, 'response-hmac-mismatch')
 
-    // 4. VULN-05: production ต้องมีลายเซ็นจาก native ที่ hash ไฟล์จริงเอง (dev ผ่อนปรน)
+    // 4. Device binding: studentId ต้องผูกกับ deviceId เดียวตลอดการสอบ
+    //    (deviceId ถูกยืนยันทางอ้อมด้วยลายเซ็นของ key ที่ host รู้จักใน roster)
+    const enforceDeviceBinding =
+      this.opts.requireDeviceBinding?.() ??
+      (!this.opts.isDev() || this.opts.isSignatureEnforced())
+    const responseDeviceId = response.deviceId ?? null
+    if (responseDeviceId !== null) {
+      if (entry.deviceId !== null && entry.deviceId !== responseDeviceId) {
+        return this.reject(studentId, 'device-id-changed')
+      }
+      entry.deviceId = responseDeviceId
+    }
+    if (enforceDeviceBinding && entry.deviceId === null) {
+      return this.reject(studentId, 'device-id-missing')
+    }
+
+    // public key: signed roster > enrolled_devices > auto-enroll (TOFU)
+    let deviceKeyHex =
+      entry.deviceId !== null ? (this.opts.devicePublicKeyHex?.(entry.deviceId) ?? null) : null
+    if (!deviceKeyHex && entry.deviceId !== null && response.publicKeyHex) {
+      const enrollment = this.opts.enrollDevice?.({
+        deviceId: entry.deviceId,
+        publicKeyHex: response.publicKeyHex,
+        studentId
+      })
+      if (enrollment) {
+        if (enrollment.ok) {
+          deviceKeyHex = enrollment.publicKeyHex
+        } else if (enforceDeviceBinding) {
+          return this.reject(studentId, enrollment.reason)
+        }
+      }
+    }
+    if (enforceDeviceBinding && entry.deviceId !== null && !deviceKeyHex) {
+      return this.reject(studentId, 'native-device-unknown')
+    }
+
+    // roster/enrollment อาจผูก deviceId ↔ studentId ไว้ — กันเอาเครื่อง/key ของคนอื่นมาใช้
+    if (entry.deviceId !== null) {
+      const boundStudentId = this.opts.deviceStudentId?.(entry.deviceId) ?? null
+      if (boundStudentId !== null && boundStudentId !== studentId) {
+        return this.reject(studentId, 'device-student-mismatch')
+      }
+    }
+
+    // 5. VULN-05: production ต้องมีลายเซ็นจาก native ที่ hash ไฟล์จริงเอง (dev ผ่อนปรน)
     //    challenge แรกที่ยังไม่รู้ manifest ไม่มี expected hash → bootstrap ด้วย HMAC/manifest ก่อน
     // targets ต้องมาจาก host (manifest ที่เซ็นแล้ว) เท่านั้น — ไม่เชื่อ client
     const nativeTargets =
@@ -315,11 +376,19 @@ export class AttestationHostService {
     const nativeRequired =
       !this.opts.isDev() &&
       (pending.nativeTargets !== undefined || pending.expectedAsarSha256 !== undefined)
-    const nativeKeyHex = this.opts.nativePublicKeyHex?.() ?? nativeTrustedPublicKeyHex()
+    // public key มาจาก signed roster หรือ enrolled_devices (TOFU) — ไม่มี global key
+    const nativeKeyHex = deviceKeyHex
     if (!response.nativeSignature) {
-      if (nativeRequired) return this.reject(studentId, 'native-signature-missing')
+      if (nativeRequired) {
+        return this.reject(
+          studentId,
+          entry.deviceId === null ? 'native-device-missing' : 'native-signature-missing'
+        )
+      }
+    } else if (entry.deviceId === null) {
+      if (nativeRequired) return this.reject(studentId, 'native-device-missing')
     } else if (!nativeKeyHex) {
-      if (nativeRequired) return this.reject(studentId, 'native-key-unavailable')
+      if (nativeRequired) return this.reject(studentId, 'native-device-unknown')
     } else if (nativeTargets.length === 0) {
       if (nativeRequired) return this.reject(studentId, 'missing-expected-targets')
     } else {
@@ -336,7 +405,7 @@ export class AttestationHostService {
       }
     }
 
-    // 5. VULN-05/62: ตรวจ runtime binding — กัน wrapper ที่รันโค้ดจากที่อื่น
+    // 6. VULN-05/62: ตรวจ runtime binding — กัน wrapper ที่รันโค้ดจากที่อื่น
     const requireRuntimeBinding = this.opts.requireRuntimeBinding?.() === true
     if (requireRuntimeBinding) {
       if (!response.runtimeBinding) return this.reject(studentId, 'runtime-binding-missing')
@@ -350,7 +419,8 @@ export class AttestationHostService {
       {
         studentId,
         manifestHash,
-        signedOnDevice: entry.signatureOkAtLeastOnce
+        signedOnDevice: entry.signatureOkAtLeastOnce,
+        deviceId: entry.deviceId
       },
       true
     )

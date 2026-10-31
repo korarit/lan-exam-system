@@ -29,6 +29,7 @@ import { useAppStore } from '../store/app-store'
 import { playCriticalBeep, shouldAlertToast, useTriageStore } from '../store/triage-store'
 import type { HostExamSummariesEvent } from '@shared/ipc-channels'
 import TriageDashboard from '../core-host/dashboard/TriageDashboard'
+import DeviceEnrollmentPanel from '../core-host/dashboard/DeviceEnrollmentPanel'
 import NetworkGatewayPanel from '../core-host/dashboard/NetworkGatewayPanel'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -983,6 +984,9 @@ export default function HostPanel(): React.JSX.Element {
 
       {/* ---------- Triage Dashboard (Phase 3b): hash chain + คัดกรองคนแดง ---------- */}
       <TriageDashboard students={students} summaries={summaries} canExport={examState === 'finished'} />
+
+      {/* ---------- TOFU device enrollment: ครูเห็น/block/ลบเครื่องที่ join มาแล้ว ---------- */}
+      <DeviceEnrollmentPanel />
 
       {/* ---------- Attestations (Phase 4): DEV MODE banner + สวิตช์บังคับตรวจลายเซ็น ---------- */}
       {/* NC-09: production (devMode=false) แสดงสถานะย่อด้วย — ครูเห็นว่ากำลังบังคับลายเซ็นจริงอยู่ */}

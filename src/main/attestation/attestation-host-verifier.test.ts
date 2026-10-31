@@ -10,6 +10,7 @@ import {
   type AttestationSampleRange,
   type SignedAppManifest
 } from '@shared/attestation-schema'
+import { deriveDeviceId } from '@shared/device-roster-schema'
 import {
   buildManifestBodyFromBuffers,
   buildNativeAttestationPayload,
@@ -155,7 +156,7 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
       isDev: () => isDev,
       isSignatureEnforced: () => enforced,
       ...(minVersion !== undefined ? { minAppVersion: () => minVersion } : {}),
-      nativePublicKeyHex: () => nativeKeyHex,
+      devicePublicKeyHex: () => nativeKeyHex,
       onVerified: (ok) => successes.push(ok.studentId),
       onFailed: (failure) => failures.push({ studentId: failure.studentId, reason: failure.reason }),
       randomInterval: () => 45_000
@@ -166,8 +167,9 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
   function wireResponder(
     host: AttestationHostService,
     snapshot: AttestationSnapshot = snapshotCtx.snapshot,
-    options: { isDev?: boolean; nativeSigner?: NativeAttestationSigner } = {}
+    options: { isDev?: boolean; nativeSigner?: NativeAttestationSigner; deviceId?: string | null } = {}
   ): AttestationResponder {
+    const deviceId = options.deviceId === undefined ? 'd'.repeat(32) : options.deviceId
     return new AttestationResponder({
       sendToHost: (_type, payload) => {
         host.handleResponse('s1', payload)
@@ -175,6 +177,7 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
       getTlsExporter: () => exporter,
       getSnapshot: () => snapshot,
       isDev: () => options.isDev ?? true,
+      getDeviceId: () => deviceId,
       nativeSigner: options.nativeSigner ?? { signAttestation: () => null }
     })
   }
@@ -456,6 +459,7 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
       responseHmac: bootstrapHmac,
       manifestHash: snapshotCtx.snapshot.manifestHash,
       manifest: snapshotCtx.manifest,
+      deviceId: 'd'.repeat(32),
       sampleCount: bootstrap.sampleRanges.length
     })
     expect(first.ok).toBe(true)
@@ -471,6 +475,7 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
       challengeId: challenge.challengeId,
       responseHmac,
       manifestHash: snapshotCtx.snapshot.manifestHash,
+      deviceId: 'd'.repeat(32),
       sampleCount: challenge.sampleRanges.length
     })
     expect(outcome.ok).toBe(false)
@@ -520,5 +525,130 @@ describe('AttestationHostService + AttestationResponder (E2E logic)', () => {
     expect(responder.respond(challenge)).toBe(true)
     const payload = sendToHost.mock.calls[0]?.[1] as { nativeSignature?: string }
     expect(payload.nativeSignature).toBeTruthy()
+  })
+
+  it('production: ไม่มี deviceId → ปฏิเสธ device-id-missing', () => {
+    const host = new AttestationHostService({
+      getRoom: () => rooms.room as never,
+      isDev: () => false,
+      isSignatureEnforced: () => true,
+      devicePublicKeyHex: () => nativeKeyHex,
+      onVerified: (ok) => successes.push(ok.studentId),
+      onFailed: (failure) => failures.push({ studentId: failure.studentId, reason: failure.reason }),
+      randomInterval: () => 45_000
+    })
+    const responder = new AttestationResponder({
+      sendToHost: (_type, payload) => {
+        host.handleResponse('s1', payload)
+      },
+      getTlsExporter: () => exporter,
+      getSnapshot: () => snapshotCtx.snapshot,
+      isDev: () => false,
+      nativeSigner: makeNativeSigner(nativeKeys.privateKey)
+    })
+    host.startExam(['s1'])
+    vi.advanceTimersByTime(1_500)
+    responder.handleChallengeMessage(rooms.server.sent[0]!.payload)
+    expect(successes).toHaveLength(0)
+    expect(failures.map((f) => f.reason)).toContain('device-id-missing')
+  })
+
+  it('TOFU: device ใหม่ enroll ครั้งแรกแล้วผ่าน challenge ถัดไป', () => {
+    const deviceId = deriveDeviceId(nativeKeyHex)
+    const enrolledKey = new Map<string, string>()
+    const host = new AttestationHostService({
+      getRoom: () => rooms.room as never,
+      isDev: () => false,
+      isSignatureEnforced: () => true,
+      devicePublicKeyHex: (id) => (id === null ? null : (enrolledKey.get(id) ?? null)),
+      enrollDevice: ({ deviceId: id, publicKeyHex }) => {
+        enrolledKey.set(id, publicKeyHex)
+        return { ok: true, publicKeyHex }
+      },
+      deviceStudentId: (id) => (id === deviceId ? 's1' : null),
+      onVerified: (ok) => successes.push(ok.studentId),
+      onFailed: (failure) => failures.push({ studentId: failure.studentId, reason: failure.reason }),
+      randomInterval: () => 45_000
+    })
+    const responder = new AttestationResponder({
+      sendToHost: (_type, payload) => {
+        host.handleResponse('s1', payload)
+      },
+      getTlsExporter: () => exporter,
+      getSnapshot: () => snapshotCtx.snapshot,
+      isDev: () => false,
+      getDeviceId: () => deviceId,
+      getDevicePublicKey: () => nativeKeyHex,
+      nativeSigner: makeNativeSigner(nativeKeys.privateKey)
+    })
+    host.startExam(['s1'])
+    vi.advanceTimersByTime(1_500)
+    responder.handleChallengeMessage(rooms.server.sent[0]!.payload)
+    expect(failures).toHaveLength(0)
+    expect(successes).toEqual(['s1'])
+    expect(enrolledKey.get(deviceId)).toBe(nativeKeyHex)
+
+    vi.advanceTimersByTime(45_000)
+    responder.handleChallengeMessage(rooms.server.sent[1]!.payload)
+    expect(failures).toHaveLength(0)
+    expect(successes).toEqual(['s1', 's1'])
+  })
+
+  it('TOFU: device ที่ถูก block → ปฏิเสธ device-blocked', () => {
+    const deviceId = deriveDeviceId(nativeKeyHex)
+    const host = new AttestationHostService({
+      getRoom: () => rooms.room as never,
+      isDev: () => false,
+      isSignatureEnforced: () => true,
+      devicePublicKeyHex: () => null,
+      enrollDevice: () => ({ ok: false, reason: 'device-blocked' }),
+      onVerified: (ok) => successes.push(ok.studentId),
+      onFailed: (failure) => failures.push({ studentId: failure.studentId, reason: failure.reason }),
+      randomInterval: () => 45_000
+    })
+    const responder = new AttestationResponder({
+      sendToHost: (_type, payload) => {
+        host.handleResponse('s1', payload)
+      },
+      getTlsExporter: () => exporter,
+      getSnapshot: () => snapshotCtx.snapshot,
+      isDev: () => false,
+      getDeviceId: () => deviceId,
+      getDevicePublicKey: () => nativeKeyHex,
+      nativeSigner: makeNativeSigner(nativeKeys.privateKey)
+    })
+    host.startExam(['s1'])
+    vi.advanceTimersByTime(1_500)
+    responder.handleChallengeMessage(rooms.server.sent[0]!.payload)
+    expect(failures.map((f) => f.reason)).toContain('device-blocked')
+  })
+
+  it('production: deviceId ที่ไม่อยู่ใน roster → ปฏิเสธ native-device-unknown', () => {
+    const host = new AttestationHostService({
+      getRoom: () => rooms.room as never,
+      isDev: () => false,
+      isSignatureEnforced: () => true,
+      devicePublicKeyHex: (deviceId) => (deviceId === 'd'.repeat(32) ? nativeKeyHex : null),
+      onVerified: (ok) => successes.push(ok.studentId),
+      onFailed: (failure) => failures.push({ studentId: failure.studentId, reason: failure.reason }),
+      randomInterval: () => 45_000
+    })
+    const responder = new AttestationResponder({
+      sendToHost: (_type, payload) => {
+        host.handleResponse('s1', payload)
+      },
+      getTlsExporter: () => exporter,
+      getSnapshot: () => snapshotCtx.snapshot,
+      isDev: () => false,
+      getDeviceId: () => 'e'.repeat(32),
+      nativeSigner: makeNativeSigner(nativeKeys.privateKey)
+    })
+    host.startExam(['s1'])
+    vi.advanceTimersByTime(1_500)
+    responder.handleChallengeMessage(rooms.server.sent[0]!.payload)
+    // bootstrap ยังไม่มี targets → ยังไม่บังคับ native; รอบถัดไปบังคับ + deviceId ไม่อยู่ใน roster
+    vi.advanceTimersByTime(45_000)
+    responder.handleChallengeMessage(rooms.server.sent[1]!.payload)
+    expect(failures.map((f) => f.reason)).toContain('native-device-unknown')
   })
 })

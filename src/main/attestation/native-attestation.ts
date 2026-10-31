@@ -5,7 +5,7 @@ import path from 'node:path'
 /* ============================================================
  * VULN-05 — Native attestation signer bridge
  * - โหลด os_guard.node แบบ lazy (ตำแหน่งเดียวกับ native-bridge)
- * - Native เป็นคน hash app.asar และเซ็นด้วย seed ที่ฝังใน addon
+ * - Native เป็นคน hash app.asar และเซ็นด้วย per-device seed ที่ JS ส่งเข้ามาตอน boot (ไม่มี key ฝังในไบนารี)
  * - JS เรียกได้แค่ signAttestation(request) — ไม่มีทางข้ามการตรวจไฟล์
  * ============================================================ */
 
@@ -22,11 +22,13 @@ export interface NativeAttestationRequest {
 }
 
 interface NativeAttestationAddon {
+  attestationSetDeviceSeed?(seedHex: string): boolean
   attestationSign(requestJson: string): string | null
   attestationPublicKey(): string
 }
 
 export interface NativeAttestationSigner {
+  setDeviceSeed?(seedHex: string): boolean
   signAttestation(request: NativeAttestationRequest): string | null
   getPublicKey?(): string | null
 }
@@ -65,6 +67,14 @@ function currentSigner(): NativeAttestationSigner | null {
   const addon = loadedAddon
   if (!addon) return null
   return {
+    setDeviceSeed: (seedHex) => {
+      if (typeof addon.attestationSetDeviceSeed !== 'function') return false
+      try {
+        return addon.attestationSetDeviceSeed(seedHex)
+      } catch {
+        return false
+      }
+    },
     signAttestation: (request) => {
       try {
         return addon.attestationSign(JSON.stringify(request))
@@ -85,6 +95,17 @@ function currentSigner(): NativeAttestationSigner | null {
 
 export function isNativeAttestationAvailable(): boolean {
   return currentSigner() !== null
+}
+
+/** ตั้ง per-device seed ให้ native signer (เรียกครั้งเดียวตอน boot ก่อนตอบ challenge) */
+export function setNativeDeviceSeed(seedHex: string): boolean {
+  const signer = currentSigner()
+  if (!signer?.setDeviceSeed) return false
+  try {
+    return signer.setDeviceSeed(seedHex)
+  } catch {
+    return false
+  }
 }
 
 export function signAttestation(request: NativeAttestationRequest): string | null {

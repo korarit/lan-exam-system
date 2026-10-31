@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, powerMonitor, safeStorage, screen } from 'electron'
+import fs from 'node:fs'
 import path from 'node:path'
 import { pbkdf2Sync } from 'node:crypto'
 import { IpcEventSchemas, type IpcEventChannel } from '@shared/ipc-channels'
@@ -18,6 +19,7 @@ import { registerDomainHandlers } from './ipc/domain-handlers'
 import { registerAuditHandlers } from './ipc/audit-handlers'
 import { registerScreenHandlers } from './ipc/screen-handlers'
 import { registerAttestationHandlers } from './ipc/attestation-handlers'
+import { registerDeviceEnrollmentHandlers } from './ipc/device-handlers'
 import { registerModeHandlers } from './ipc/mode-handlers'
 import { registerDynamicFormHandlers } from './ipc/dynamic-form-handlers'
 import { registerFormResponseHandlers } from './ipc/form-response-handlers'
@@ -55,6 +57,16 @@ import type { RuntimeBinding } from '@shared/attestation-schema'
 import { AttestationResponder } from './attestation/client-responder'
 import { AttestationHostService, type AttestationFailure } from './attestation/host-verifier'
 import { ensureLocalManifestSnapshot } from './attestation/manifest'
+import { deviceKeyFilePath, loadOrCreateDeviceIdentity } from './attestation/device-key'
+import {
+  buildDeviceRosterLookup,
+  emptyDeviceRosterLookup,
+  loadDeviceRoster,
+  type DeviceRosterLookup
+} from './attestation/device-roster'
+import { setNativeDeviceSeed } from './attestation/native-attestation'
+import { trustedKeyPemSet } from './attestation/trusted-keys'
+import { DeviceEnrollmentService } from './host/device-enrollment'
 import { inspectLaunch, describeFindings, isAllowedInDev, type LaunchFinding } from './guard/launch-guard'
 import { applyProcessMitigations } from './guard/process-mitigations'
 
@@ -194,6 +206,16 @@ let typingMonitor: TypingMonitor | null = null
 let nativeKeyboardGuard: NativeKeyboardGuard | null = null
 let attestationResponder: AttestationResponder | null = null
 let attestationHost: AttestationHostService | null = null
+/** deviceId ของเครื่องนี้ (per-device key ที่ลงทะเบียนใน roster) */
+let currentDeviceId: string | null = null
+/** public key ของเครื่องนี้ (แนบไปกับ attestation เพื่อ enroll ครั้งแรก) */
+let currentDevicePublicKey: string | null = null
+/** host: lookup public key จาก signed device roster */
+let deviceRosterLookup: DeviceRosterLookup | null = null
+/** host: มี signed roster ที่ configure แล้วหรือไม่ (strict mode = ไม่ auto-enroll) */
+let deviceRosterStrict = false
+/** host: TOFU enrollment store (SQLite) */
+let deviceEnrollmentService: DeviceEnrollmentService | null = null
 /** IP เครื่องแม่จากการ join ล่าสุด (NetworkInspector ยกเว้นเฉพาะพอร์ตสอบ) */
 let lastJoinedHostIp: string | null = null
 /** พอร์ต TLS ของห้องสอบที่ join ล่าสุด (null = ยังไม่รู้) */
@@ -1041,6 +1063,82 @@ function currentRuntimeBinding(): RuntimeBinding {
   }
 }
 
+/**
+ * path ของ device key ระดับเครื่อง (ไม่ผูกกับ profile instance-*)
+ * - 1 เครื่อง = 1 identity แม้เปิดหลาย profile (host/student)
+ * - ใช้ appData root: <userData>/device-key.json
+ */
+function deviceKeyStorePath(): string {
+  const profileUserData = app.getPath('userData')
+  const base = path.basename(profileUserData).startsWith('instance-')
+    ? path.dirname(profileUserData)
+    : profileUserData
+  return deviceKeyFilePath(base)
+}
+
+/**
+ * Phase 4 (per-device): โหลด/สร้าง Ed25519 key ของเครื่องนี้
+ * - seed ถูกเข้ารหัสด้วย machine identity (ไม่ใช่ TPM/DPAPI ตามข้อกำหนด)
+ * - ส่ง seed เข้า native addon ในหน่วยความจำเท่านั้น
+ * - คืน null = ใช้ไม่ได้ (fail-closed; production จะตอบ attestation ไม่ได้)
+ */
+function ensureDeviceIdentity(): string | null {
+  if (currentDeviceId !== null) return currentDeviceId
+  try {
+    const identity = loadOrCreateDeviceIdentity({
+      filePath: deviceKeyStorePath()
+    })
+    const seeded = setNativeDeviceSeed(identity.seedHex)
+    if (!seeded) {
+      console.warn('[device-key] ตั้ง seed ให้ native addon ไม่สำเร็จ (addon ไม่พร้อม/ยังไม่ build)')
+    }
+    currentDeviceId = identity.deviceId
+    currentDevicePublicKey = identity.publicKeyHex
+    if (!identity.hardwareBound) {
+      console.warn('[device-key] machine identity ใช้ fallback (ไม่ผูก MachineGuid/machine-id)')
+    }
+    return currentDeviceId
+  } catch (error) {
+    console.error(
+      `[device-key] ใช้ identity ไม่ได้ (fail-closed): ${error instanceof Error ? error.message : 'unknown'}`
+    )
+    return null
+  }
+}
+
+/**
+ * host: โหลด signed device roster
+ * - production: resources/device-roster.sig.json
+ * - dev: env ZTEXAM_DEVICE_ROSTER
+ * ไม่มี/ตรวจไม่ผ่าน = ไม่ยอมรับ native signature ของ device ใด ๆ
+ */
+function ensureDeviceRosterLookup(): DeviceRosterLookup {
+  if (deviceRosterLookup) return deviceRosterLookup
+  const rosterPath = IS_PACKAGED
+    ? (process.resourcesPath ? path.join(process.resourcesPath, 'device-roster.sig.json') : null)
+    : (process.env.ZTEXAM_DEVICE_ROSTER ?? null)
+  const configured = rosterPath !== null && fs.existsSync(rosterPath)
+  const body = loadDeviceRoster(rosterPath, trustedKeyPemSet())
+  if (configured && !body) {
+    // มีไฟล์แต่ลายเซ็น/รูปแบบเสีย → strict + fail-closed (ห้าม fallback ไป TOFU)
+    deviceRosterStrict = true
+    console.error('[device-roster] พบไฟล์แต่ตรวจไม่ผ่าน — ใช้ strict mode (ไม่ auto-enroll)')
+  } else if (body) {
+    deviceRosterStrict = true
+  } else {
+    deviceRosterStrict = false
+    console.warn('[device-roster] ไม่มี roster — ใช้ TOFU enrollment (auto-accept จาก join)')
+  }
+  deviceRosterLookup = body ? buildDeviceRosterLookup(body) : emptyDeviceRosterLookup()
+  return deviceRosterLookup
+}
+
+/** host: TOFU enrollment store — ใช้เมื่อไม่มี signed roster (หรือ roster ไม่ครอบ device นี้) */
+function ensureDeviceEnrollment(): DeviceEnrollmentService {
+  deviceEnrollmentService ??= new DeviceEnrollmentService(ensureHostDatabase())
+  return deviceEnrollmentService
+}
+
 /** Phase 4: นักเรียน — ผู้ตอบคำถามความถูกต้องของไฟล์แอป (ผูกกับ TLS session) */
 function ensureAttestationResponder(resetOnly: boolean): AttestationResponder {
   attestationResponder ??= new AttestationResponder({
@@ -1048,7 +1146,9 @@ function ensureAttestationResponder(resetOnly: boolean): AttestationResponder {
     getTlsExporter: () => studentClient?.exporter ?? null,
     getSnapshot: () => ensureLocalManifestSnapshot(IS_DEV_BUILD),
     isDev: () => IS_DEV_BUILD,
-    getRuntimeBinding: () => currentRuntimeBinding()
+    getRuntimeBinding: () => currentRuntimeBinding(),
+    getDeviceId: () => ensureDeviceIdentity(),
+    getDevicePublicKey: () => currentDevicePublicKey
   })
   void resetOnly
   return attestationResponder
@@ -1062,6 +1162,31 @@ function ensureAttestationHostService(): AttestationHostService {
     isSignatureEnforced: () => attestationStrictToggle.enforced,
     minAppVersion: () => deploymentConfig?.minAppVersion ?? null,
     requireRuntimeBinding: () => IS_PACKAGED,
+    devicePublicKeyHex: (deviceId) => {
+      if (deviceId === null) return null
+      return (
+        ensureDeviceRosterLookup().publicKeyHexFor(deviceId) ??
+        ensureDeviceEnrollment().lookupPublicKey(deviceId)
+      )
+    },
+    deviceStudentId: (deviceId) => {
+      if (deviceId === null) return null
+      return (
+        ensureDeviceRosterLookup().studentIdFor(deviceId) ??
+        ensureDeviceEnrollment().studentIdFor(deviceId)
+      )
+    },
+    enrollDevice: ({ deviceId, publicKeyHex, studentId }) => {
+      ensureDeviceRosterLookup()
+      // signed roster = strict mode: ห้าม auto-enroll device ที่ไม่อยู่ใน roster
+      if (deviceRosterStrict) return { ok: false, reason: 'native-device-unknown' }
+      const result = ensureDeviceEnrollment().observe({ deviceId, publicKeyHex, studentId })
+      if (!result.ok) return { ok: false, reason: `device-${result.reason}` }
+      if (result.status === 'enrolled') {
+        console.warn(`[device-enrollment] enrolled ${studentId} ← ${deviceId}`)
+      }
+      return { ok: true, publicKeyHex: result.publicKeyHex }
+    },
     onVerified: (ok, isNew) => {
       if (isNew && ok.signedOnDevice) {
         console.warn(`[attestation] ยืนยันไฟล์แอปผ่าน (ลายเซ็นตรง): ${ok.studentId}`)
@@ -1311,6 +1436,9 @@ void app.whenReady().then(() => {
     isDev: () => IS_DEV_BUILD,
     strictToggle: attestationStrictToggle
   })
+  registerDeviceEnrollmentHandlers(router, state, {
+    getEnrollment: ensureDeviceEnrollment
+  })
   registerDomainHandlers(router, state, {
     getSessionManager: ensureSessionManager,
     getDocPreview: ensureDocPreview,
@@ -1416,6 +1544,8 @@ void app.whenReady().then(() => {
   if (runtime.role === 'student') {
     // เปิดฟัง UDP beacon ตั้งแต่เปิดแอปในห้องคอม (หน้า Room Browser)
     discovery.start()
+    // per-device attestation key: เตรียมตั้งแต่ boot (fail-closed ถ้าใช้ไม่ได้)
+    ensureDeviceIdentity()
   }
 
   // VULN-48: lock/unlock ระหว่างสอบ (Windows/macOS; Linux ใช้ SessionSwitchGuard)

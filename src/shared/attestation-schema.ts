@@ -131,6 +131,10 @@ export const AttestationResponseSchema = z
     sampleCount: z.number().int().nonnegative().optional(),
     /** Ed25519 signature จาก native addon (base64) — ผูกกับไฟล์จริงที่ native hash เอง */
     nativeSignature: z.string().min(1).max(200).optional(),
+    /** deviceId ของเครื่อง (sha256 ของ public key 32 hex) — host เลือก public key จาก signed roster */
+    deviceId: z.string().regex(/^[0-9a-f]{32}$/).optional(),
+    /** raw Ed25519 public key ของเครื่อง — ใช้ enroll ครั้งแรก (TOFU) เมื่อยังไม่มี roster */
+    publicKeyHex: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
     /** keyId ของ native key (optional, diagnostics) */
     nativeKeyId: z.string().min(1).max(80).optional(),
     /** runtime binding สำหรับตรวจ wrapper / การรันโค้ดจากที่อื่น */

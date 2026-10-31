@@ -1,9 +1,10 @@
 // native/src/attestation_native.cc — Native attestation signer (N-API)
 //
 // ทำหน้าที่เดียว: ตรวจ sha256 ของไฟล์ที่กำลังรันอยู่ (app.asar) ด้วยโค้ด native
-// แล้วเซ็น canonical payload ด้วย Ed25519 seed ที่ฝังมาใน build
+// แล้วเซ็น canonical payload ด้วย Ed25519 seed ต่อเครื่องที่ JS ส่งเข้ามาตอน boot
+// - attestationSetDeviceSeed(hex64) ตั้ง seed (ไม่ persist ใน addon; อยู่ใน memory เท่านั้น)
 // - JS เรียกได้แค่ attestationSign(requestJson) — อ่านไฟล์เองไม่ได้
-// - ถ้าไฟล์หาย/อ่านไม่ได้/hash ไม่ตรง → คืน null (ไม่เซ็น)
+// - ถ้าไฟล์หาย/อ่านไม่ได้/hash ไม่ตรง/ยังไม่ตั้ง seed → คืน null (ไม่เซ็น)
 // - root ของ resources มาจากตำแหน่ง .node ที่โหลดอยู่จริง ไม่ได้มาจาก JS
 #include "napi.h"
 
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -20,15 +22,12 @@
 #include "vendor/sha256.h"
 #include "vendor/tweetnacl_ed25519.h"
 
-#if defined(__has_include)
-#if __has_include("generated/native_attestation_key.h")
-#include "generated/native_attestation_key.h"
-#define ZTEXAM_HAS_NATIVE_ATTESTATION_KEY 1
-#endif
-#endif
-#if !defined(ZTEXAM_HAS_NATIVE_ATTESTATION_KEY)
-#pragma message("native attestation key header missing — run `npm run keys:native` or `npm run build:native`")
-#endif
+/*
+ * ไม่มี signing key ฝังในไบนารีอีกต่อไป (เดิม kSeedShareA/B อยู่ในไฟล์นี้)
+ * - JS/TS สร้าง per-device Ed25519 keypair แล้วส่ง seed เข้ามาผ่าน attestationSetDeviceSeed()
+ * - seed อยู่ในหน่วยความจำของ process เท่านั้น, ไม่ถูกเขียนลงดิสก์แบบ plaintext
+ * - host ตรวจ public key กับ signed device roster (ไม่เชื่อ key ที่ client ส่งมา)
+ */
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -330,27 +329,73 @@ struct KeyMaterial {
   unsigned char public_key[32] = {};
 };
 
-const KeyMaterial& GetKeyMaterial() {
-#if defined(ZTEXAM_HAS_NATIVE_ATTESTATION_KEY)
-  static const KeyMaterial material = [] {
-    KeyMaterial result;
-    // seed ไม่ถูกเก็บเป็น plaintext: ประกอบจากสอง share ตอนรันไทม์แล้วลบทิ้ง
-    unsigned char seed[32] = {};
-    for (size_t i = 0; i < sizeof(seed); ++i) {
-      seed[i] = static_cast<unsigned char>(zt_exam_native_attestation::kSeedShareA[i] ^
-                                           zt_exam_native_attestation::kSeedShareB[i]);
-    }
-    if (crypto_sign_seed_keypair(result.public_key, result.secret_key, seed) == 0) {
-      result.ok = true;
-    }
-    for (size_t i = 0; i < sizeof(seed); ++i) seed[i] = 0;
-    return result;
-  }();
-  return material;
-#else
-  static const KeyMaterial material;
-  return material;
-#endif
+std::mutex g_key_mutex;
+KeyMaterial g_key_material;
+
+/** คัดลอก key ใต้ mutex (กัน race ระหว่าง set seed กับการเซ็น) */
+bool GetKeySnapshot(KeyMaterial& out) {
+  std::lock_guard<std::mutex> lock(g_key_mutex);
+  out = g_key_material;
+  return out.ok;
+}
+
+/** ล้างหน่วยความจำแบบไม่ให้ compiler optimize ทิ้ง */
+void WipeBytes(unsigned char* data, size_t length) {
+  volatile unsigned char* cursor = data;
+  while (length-- > 0) *cursor++ = 0;
+}
+
+bool ParseHex32(const std::string& hex, unsigned char out[32]) {
+  if (hex.size() != 64) return false;
+  auto nibble = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+  };
+  for (size_t i = 0; i < 32; ++i) {
+    const int high = nibble(hex[i * 2]);
+    const int low = nibble(hex[i * 2 + 1]);
+    if (high < 0 || low < 0) return false;
+    out[i] = static_cast<unsigned char>((high << 4) | low);
+  }
+  return true;
+}
+
+/**
+ * ตั้ง per-device seed (hex 64 ตัว) — เรียกจาก main process ตอน boot
+ * - seed ว่าง = ล้าง key (fail-closed)
+ * - คืน false เมื่อรูปแบบผิด/derive key ไม่สำเร็จ
+ */
+Napi::Value AttestationSetDeviceSeed(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsString()) return Napi::Boolean::New(env, false);
+  const std::string hex = info[0].As<Napi::String>().Utf8Value();
+  if (hex.empty()) {
+    std::lock_guard<std::mutex> lock(g_key_mutex);
+    WipeBytes(g_key_material.secret_key, sizeof(g_key_material.secret_key));
+    WipeBytes(g_key_material.public_key, sizeof(g_key_material.public_key));
+    g_key_material.ok = false;
+    return Napi::Boolean::New(env, true);
+  }
+  unsigned char seed[32] = {};
+  if (!ParseHex32(hex, seed)) return Napi::Boolean::New(env, false);
+  unsigned char public_key[32] = {};
+  unsigned char secret_key[64] = {};
+  const int result = crypto_sign_seed_keypair(public_key, secret_key, seed);
+  WipeBytes(seed, sizeof(seed));
+  if (result != 0) {
+    WipeBytes(secret_key, sizeof(secret_key));
+    return Napi::Boolean::New(env, false);
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_key_mutex);
+    std::memcpy(g_key_material.secret_key, secret_key, sizeof(secret_key));
+    std::memcpy(g_key_material.public_key, public_key, sizeof(public_key));
+    g_key_material.ok = true;
+  }
+  WipeBytes(secret_key, sizeof(secret_key));
+  return Napi::Boolean::New(env, true);
 }
 
 std::string ToHex(const unsigned char* bytes, size_t length) {
@@ -613,8 +658,8 @@ Napi::Value AttestationSign(const Napi::CallbackInfo& info) {
     sampleDigests.push_back(std::move(digest));
   }
 
-  const KeyMaterial& key = GetKeyMaterial();
-  if (!key.ok) return env.Null();
+  KeyMaterial key;
+  if (!GetKeySnapshot(key)) return env.Null();
 
   const std::string payload = BuildPayload(challengeId, serverNonce, manifestHash, sampleDigests,
                                            CanonicalTargets(targets));
@@ -631,14 +676,15 @@ Napi::Value AttestationSign(const Napi::CallbackInfo& info) {
 
 Napi::Value AttestationPublicKey(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  const KeyMaterial& key = GetKeyMaterial();
-  if (!key.ok) return Napi::String::New(env, "");
+  KeyMaterial key;
+  if (!GetKeySnapshot(key)) return Napi::String::New(env, "");
   return Napi::String::New(env, ToHex(key.public_key, sizeof(key.public_key)));
 }
 
 }  // namespace
 
 void RegisterAttestationFunctions(Napi::Env env, Napi::Object exports) {
+  exports.Set("attestationSetDeviceSeed", Napi::Function::New(env, AttestationSetDeviceSeed));
   exports.Set("attestationSign", Napi::Function::New(env, AttestationSign));
   exports.Set("attestationPublicKey", Napi::Function::New(env, AttestationPublicKey));
 }

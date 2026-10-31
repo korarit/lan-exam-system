@@ -27,6 +27,8 @@ import {
 } from './exam-schema'
 import { DetectionEventSchema, type DetectionEvent } from './policy-schema'
 export type { DetectionEvent } from './policy-schema'
+import { EnrolledDeviceViewSchema, type EnrolledDeviceView } from './device-roster-schema'
+export type { EnrolledDeviceView } from './device-roster-schema'
 import {
   ProctorWarningPayloadSchema,
   FreezeStatePayloadSchema
@@ -294,6 +296,16 @@ export interface AttestationConfigResponse {
   signatureEnforced: boolean
   platform: string
   trackedStudents: AttestationTrackedStudent[]
+}
+
+/* ---------- TOFU device enrollment (auto-accept ตอน join) ---------- */
+
+export interface ListEnrolledDevicesResponse {
+  devices: EnrolledDeviceView[]
+}
+export interface SetEnrolledDeviceStatusRequest {
+  deviceId: string
+  status: 'active' | 'blocked'
 }
 
 /* ---------- Screen Monitoring payloads (Phase 3c) ---------- */
@@ -1004,6 +1016,10 @@ export interface IpcInvokeMap {
   /* ---------- Attestation (Phase 4) ---------- */
   'host:get-attestation-config': { req: void; res: AttestationConfigResponse }
   'host:set-attestation-enforce': { req: { enforced: boolean }; res: OkResponse }
+  /* ---------- TOFU device enrollment ---------- */
+  'host:list-enrolled-devices': { req: void; res: ListEnrolledDevicesResponse }
+  'host:set-enrolled-device-status': { req: SetEnrolledDeviceStatusRequest; res: OkResponse }
+  'host:remove-enrolled-device': { req: { deviceId: string }; res: OkResponse }
   /* ---------- Screen Monitoring (Phase 3c) ---------- */
   'student:screen-get-sources': { req: void; res: StudentScreenSourcesResponse }
   'student:screen-segment': { req: StudentScreenSegmentRequest; res: OkResponse }
@@ -1428,6 +1444,25 @@ export const IpcInvokeSchemas: {
   },
   'host:set-attestation-enforce': {
     request: z.object({ enforced: z.boolean() }).strict(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'host:list-enrolled-devices': {
+    request: z.void(),
+    response: z
+      .object({ devices: z.array(EnrolledDeviceViewSchema).max(2_000) })
+      .strict()
+  },
+  'host:set-enrolled-device-status': {
+    request: z
+      .object({
+        deviceId: z.string().regex(/^[0-9a-f]{32}$/),
+        status: z.enum(['active', 'blocked'])
+      })
+      .strict(),
+    response: z.object({ ok: z.boolean() }).strict()
+  },
+  'host:remove-enrolled-device': {
+    request: z.object({ deviceId: z.string().regex(/^[0-9a-f]{32}$/) }).strict(),
     response: z.object({ ok: z.boolean() }).strict()
   },
   'student:screen-get-sources': {

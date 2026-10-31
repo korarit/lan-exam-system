@@ -87,6 +87,10 @@ export interface ZtExamApi {
   /* ---------- Attestation (Phase 4) ---------- */
   getAttestationConfig(): Promise<IpcInvokeMap['host:get-attestation-config']['res']>
   setAttestationEnforce(req: IpcInvokeMap['host:set-attestation-enforce']['req']): Promise<IpcInvokeMap['host:set-attestation-enforce']['res']>
+  /* ---------- TOFU device enrollment ---------- */
+  listEnrolledDevices(): Promise<IpcInvokeMap['host:list-enrolled-devices']['res']>
+  setEnrolledDeviceStatus(req: IpcInvokeMap['host:set-enrolled-device-status']['req']): Promise<IpcInvokeMap['host:set-enrolled-device-status']['res']>
+  removeEnrolledDevice(req: IpcInvokeMap['host:remove-enrolled-device']['req']): Promise<IpcInvokeMap['host:remove-enrolled-device']['res']>
   /* ---------- Screen Monitoring (Phase 3c) ---------- */
   getScreenSources(): Promise<IpcInvokeMap['student:screen-get-sources']['res']>
   sendScreenSegment(req: IpcInvokeMap['student:screen-segment']['req']): Promise<IpcInvokeMap['student:screen-segment']['res']>
