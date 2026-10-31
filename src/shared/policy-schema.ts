@@ -171,6 +171,10 @@ export const DetectionEventCatalog = {
   SCREEN_EVIDENCE_STALE: { category: 'stealth-overlay', severity: 'critical', score: 40 },
   /* ---------- Phase 4: Attestation & Native Guard ---------- */
   ATTESTATION_VERIFICATION_FAILED: { category: 'app-tamper', severity: 'critical', score: 80 },
+  /** client 2 ตัวต่อจาก IP เดียวกัน (เครื่องเดียวกัน) — ครูต้องตรวจก่อนปลด Freeze */
+  DUPLICATE_CLIENT_IP_DETECTED: { category: 'app-tamper', severity: 'critical', score: 40 },
+  /** deviceId เดิมถูกใช้กับ studentId อื่น — กันเอาเครื่อง/key ของคนอื่นมาใช้ */
+  DUPLICATE_CLIENT_DEVICE_DETECTED: { category: 'app-tamper', severity: 'critical', score: 50 },
   BLOCKED_SYSTEM_SHORTCUT: { category: 'kiosk-escape', severity: 'warning', score: 15 },
   /* ---------- Phase 5: Mode 2 docs viewer & Mode 3 external tools ---------- */
   /* ---------- Phase 9: code-ide sandbox (โปรเซสลูกที่อนุญาตยิงออกนอก loopback) ---------- */

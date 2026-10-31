@@ -52,6 +52,7 @@ import { HardwareVmGuard } from './guard/hardware-vm-guard'
 import { TypingMonitor } from './guard/typing-monitor'
 import { signedOrDevEnv } from './policy-env'
 import { makeDetectionEvent } from './guard/process-inspector'
+import type { DetectionEvent } from '@shared/policy-schema'
 import { NativeKeyboardGuard, resolveNativeAddonPath } from './guard/native-bridge'
 import type { RuntimeBinding } from '@shared/attestation-schema'
 import { AttestationResponder } from './attestation/client-responder'
@@ -224,6 +225,8 @@ let lastJoinedHostPort: number | null = null
 let lastJoinedRoomId: string | null = null
 /** สถานะออนไลน์รอบก่อนของแต่ละคน (ใช้ตรวจการเปลี่ยนสถานะ) */
 const studentOnlineState = new Map<string, boolean>()
+/** นักเรียนที่ตรวจพบ client ซ้ำตอน lobby — freeze ทันทีเมื่อเริ่มสอบ (studentId → reason/event) */
+const pendingDuplicateClientFreezes = new Map<string, { reason: string; event: DetectionEvent }>()
 /** ช่วงสอบฝั่งนักเรียนกำลังทำงานอยู่หรือไม่ (ใช้ตัดสินว่าจะรายงาน focus หรือไม่) */
 let studentExamRunning = false
 let studentExamMode: 'closed' | 'in-app-docs' | 'external-tools' = 'closed'
@@ -308,6 +311,16 @@ function ensureSessionManager(): CoreSessionManager {
     },
     onExamStarted: (roomId, policy) => {
       ensureTriageService().startRoom(roomId, policy)
+      // client ซ้ำที่ตรวจพบตอน lobby → freeze รอครูตรวจทันทีที่เริ่มสอบ
+      for (const [studentId, pending] of pendingDuplicateClientFreezes) {
+        try {
+          ensureTriageService().recordStudentEvents(studentId, [pending.event])
+          ensureTriageService().setFrozen(studentId, true, pending.reason)
+        } catch {
+          // ครูยังเห็น event ใน triage และปลด/จัดการได้
+        }
+      }
+      pendingDuplicateClientFreezes.clear()
       // VULN-51/52: เฝ้าหลักฐานหน้าจอฝั่ง host ตลอดการสอบ
       startScreenLivenessMonitor()
       // Phase 2 (ท่อกลาง modules): ดัน stripped code-ide package ให้ทุกคนตอนเริ่มสอบ
@@ -321,6 +334,7 @@ function ensureSessionManager(): CoreSessionManager {
     },
     onExamEnded: (roomId, reason) => {
       stopScreenLivenessMonitor()
+      pendingDuplicateClientFreezes.clear()
       ensureTriageService().endRoom(roomId, reason)
       // F-2: finalize โมดูลที่ผูกไว้ (เลื่อน draft ค้างเป็น submission + ปั๊มสถานะ)
       try {
@@ -722,6 +736,7 @@ function ensureRoomManager(): HostRoomManager {
     onRoomClosed: () => {
       sendEventToWindow('host:students-updated', { students: [] })
       studentOnlineState.clear()
+      pendingDuplicateClientFreezes.clear()
       // Phase 3a-plus: เก็บกวาดของค้างของห้องเก่า (preview + ค่าทับ enforcement)
       docPreview?.close()
       ensureDomainAllowlist().setEnforcementOverride(null)
@@ -736,6 +751,13 @@ function ensureRoomManager(): HostRoomManager {
     onStudentEstablished: (studentId) => {
       // deferred: session manager ยังไม่ถูกสร้าง ณ เวลา create room ก็ยังได้ (late-binding)
       studentEstablishedHandler?.(studentId)
+    },
+    onDuplicateClientIp: (studentId, existingStudentId, ip) => {
+      const event = makeDetectionEvent('DUPLICATE_CLIENT_IP_DETECTED', 'duplicate-client-guard', {
+        ip,
+        otherStudentId: existingStudentId
+      })
+      flagDuplicateClient(studentId, event, DUPLICATE_IP_FREEZE_REASON)
     },
     // Phase 3c: binary frame (ภาพย่อ / เซกเมนต์) จากนักเรียน → ProctorViewService
     onStudentBinary: (studentId, subType, payload) => {
@@ -1202,18 +1224,19 @@ function ensureAttestationHostService(): AttestationHostService {
 /** Phase 4: attestation ล้มเหลว → คนแดงใน triage + hash chain + freeze จอข้อสอบทันที */
 function handleAttestationFailure(failure: AttestationFailure): void {
   console.error(`[attestation] ตรวจไม่ผ่าน: ${failure.studentId} (${failure.reason})`)
-  const event = {
-    eventId: `attest-${failure.challengeId}`,
-    code: 'ATTESTATION_VERIFICATION_FAILED',
-    severity: 'critical',
-    score: 80,
-    detectorId: 'attestation-verifier',
-    detail: {
-      reason: failure.reason,
-      challengeId: failure.challengeId.slice(0, 60)
-    },
-    occurredAtMs: Date.now()
-  } as const
+  const duplicateDevice =
+    failure.reason === 'device-student-mismatch' || failure.reason === 'device-student-conflict'
+  const detail = {
+    reason: failure.reason,
+    challengeId: failure.challengeId.slice(0, 60)
+  }
+  const event = duplicateDevice
+    ? makeDetectionEvent('DUPLICATE_CLIENT_DEVICE_DETECTED', 'attestation-verifier', detail)
+    : makeDetectionEvent('ATTESTATION_VERIFICATION_FAILED', 'attestation-verifier', detail)
+  if (duplicateDevice) {
+    flagDuplicateClient(failure.studentId, event, DUPLICATE_DEVICE_FREEZE_REASON)
+    return
+  }
   try {
     ensureTriageService().recordStudentEvents(failure.studentId, [event])
   } catch {
@@ -1225,6 +1248,41 @@ function handleAttestationFailure(failure: AttestationFailure): void {
     frozen: true,
     reason: 'ยืนยันความถูกต้องของไฟล์แอปไม่ผ่าน (Attestation Failed)'
   })
+}
+
+const DUPLICATE_IP_FREEZE_REASON = 'ตรวจพบ client ที่ 2 จาก IP เดียวกัน — รอครูตรวจสอบ'
+const DUPLICATE_DEVICE_FREEZE_REASON = 'ตรวจพบเครื่องเดิมถูกใช้กับบัญชีนักเรียนอื่น — รอครูตรวจสอบ'
+
+/**
+ * ตรวจพบ client ซ้ำ (IP เดียวกัน หรือ device เดียวกัน):
+ * - แจ้งครูทันทีผ่าน toast + audit chain (ถ้าเริ่มสอบแล้ว)
+ * - freeze นักเรียนที่เพิ่งเข้ามา รอครูตรวจ/ปลด
+ * - ถ้ายังอยู่ lobby จะ freeze ทันทีที่เริ่มสอบ (เพราะ setFrozen ต้องมีห้องที่ start แล้ว)
+ */
+function flagDuplicateClient(studentId: string, event: DetectionEvent, reason: string): void {
+  console.warn(`[duplicate-client] ${studentId}: ${event.code}`)
+  sendEventToWindow('host:guard-events', { studentId, events: [event] })
+  const triage = ensureTriageService()
+  try {
+    triage.recordStudentEvents(studentId, [event])
+  } catch {
+    // chain ยังไม่พร้อม — toast ด้านบนแจ้งครูแล้ว
+  }
+  if (triage.roomId !== null) {
+    try {
+      triage.setFrozen(studentId, true, reason)
+      return
+    } catch {
+      // ตกไปส่ง freeze ตรงแบบ fail-closed ด้านล่าง
+    }
+    roomManager?.tlsServerInstance?.sendToStudent(studentId, NetMsgType.freezeExam, {
+      frozen: true,
+      reason
+    })
+    return
+  }
+  // ยังอยู่ lobby — เก็บไว้ freeze ทันทีที่เริ่มสอบ (ตอนนี้ยังไม่มี exam ให้ล็อก)
+  pendingDuplicateClientFreezes.set(studentId, { reason, event })
 }
 
 /** Phase 4: native addon บล็อกปุ่มลัดระดับระบบ (Windows) / fallback ตามแพลตฟอร์ม */

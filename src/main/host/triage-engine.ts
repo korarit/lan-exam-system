@@ -112,6 +112,10 @@ export function buildEventSummary(event: DetectionEvent): string {
       return `สัญญาณว่าถูกควบคุมจากระยะไกล${process ? ` (${process})` : ''}`
     case 'ATTESTATION_VERIFICATION_FAILED':
       return `ยืนยันความถูกต้องของไฟล์แอปไม่ผ่าน: ${d.reason ?? 'ไม่ทราบสาเหตุ'}`
+    case 'DUPLICATE_CLIENT_IP_DETECTED':
+      return `พบ client ที่ 2 จาก IP เดียวกัน (${d.ip ?? 'ไม่ทราบ IP'}) — อาจมีนักเรียน 2 คนใช้เครื่องเดียว`
+    case 'DUPLICATE_CLIENT_DEVICE_DETECTED':
+      return `เครื่องเดิมถูกใช้กับบัญชีนักเรียนอื่น (${d.reason ?? 'device mismatch'})`
     case 'BLOCKED_SYSTEM_SHORTCUT':
       return `พยายามกดปุ่มลัดระดับระบบที่ถูกบล็อก: ${d.shortcut ?? 'ไม่ทราบปุ่ม'}`
     case 'UNAUTHORIZED_DOCS_URL_ATTEMPT':

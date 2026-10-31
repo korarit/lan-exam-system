@@ -24,6 +24,10 @@ interface StudentRecord {
   reconnectToken: string
   /** จำนวนครั้งที่กลับเข้ามาหลัง join แรก (ใช้จำกัด reconnect) */
   reconnectCount: number
+  /** IP ต้นทางของท่อล่าสุด (normalize IPv4-mapped IPv6 แล้ว) */
+  clientIp: string
+  /** รายงาน IP ซ้ำไปแล้วหรือยัง — กันแจ้งซ้ำทุก heartbeat */
+  duplicateIpReported: boolean
 }
 
 interface PendingHandshake {
@@ -48,6 +52,10 @@ export interface ExamTlsServerOptions {
   roster?: readonly string[]
   /** จำนวน reconnect สูงสุดต่อคนหลัง join แรก (0 = ไม่จำกัด, default 5) */
   maxReconnectsPerStudent?: number
+  /** ตรวจจับนักเรียนต่างคนที่เชื่อมต่อจาก IP เดียวกัน (default true) */
+  detectDuplicateClientIp?: boolean
+  /** เรียกเมื่อพบนักเรียน 2 คนขึ้นไป online จาก IP เดียวกัน (เครื่องเดียวกัน) */
+  onDuplicateClientIp?: (studentId: string, existingStudentId: string, ip: string) => void
   onStudentsChanged: (students: HostStudentStatus[]) => void
   onStudentJoined?: (studentId: string, studentName: string) => void
   /** เรียกเมื่อ handshake/RESUME สำเร็จ — CoreSessionManager ใช้ส่ง STATE_RECOVERY */
@@ -58,6 +66,14 @@ export interface ExamTlsServerOptions {
 }
 
 export const TLS_EXPORTER_LABEL = 'EXPORTER-ZT-EXAM-V1'
+
+/** IPv4-mapped IPv6 → IPv4, ::1 → 127.0.0.1 (ให้เทียบ IP ตรงกันข้ามท่อได้) */
+function normalizePeerAddress(raw: string | undefined): string {
+  const ip = (raw ?? '').trim()
+  if (ip.startsWith('::ffff:')) return ip.slice(7)
+  if (ip === '::1') return '127.0.0.1'
+  return ip
+}
 
 export type ExamMessageHandler = (
   studentId: string,
@@ -306,7 +322,9 @@ export class ExamTlsServer {
           this.rejectJoin(connection, 'room-full')
           return
         }
-        this.finishJoin(connection, req, existing?.reconnectCount ?? 0)
+        const clientIp = normalizePeerAddress(connection.remoteAddress)
+        this.finishJoin(connection, req, existing?.reconnectCount ?? 0, clientIp)
+        this.reportDuplicateClientIp(req.studentId, clientIp)
         return
       }
 
@@ -330,6 +348,8 @@ export class ExamTlsServer {
         record.reconnectCount += 1
         record.online = true
         record.lastSeenAtMs = Date.now()
+        const clientIp = normalizePeerAddress(connection.remoteAddress)
+        record.clientIp = clientIp
         connection.send(NetMsgType.joinAccepted, {
           sessionToken: record.sessionToken,
           dynamicSessionKey: record.sessionKey.toString('base64'),
@@ -342,6 +362,7 @@ export class ExamTlsServer {
         this.pending.delete(connection)
         this.attachEstablished(connection, record)
         this.notifyStudentsChanged()
+        this.reportDuplicateClientIp(record.studentId, clientIp)
         return
       }
 
@@ -353,7 +374,8 @@ export class ExamTlsServer {
   private finishJoin(
     connection: SecureConnection,
     req: { studentId: string; studentName: string; reconnectToken?: string },
-    reconnectCount = 0
+    reconnectCount = 0,
+    clientIp = ''
   ): void {
     const sessionToken = generateSessionToken()
     const sessionKey = randomBytes(32)
@@ -372,7 +394,9 @@ export class ExamTlsServer {
       lastSeenAtMs: Date.now(),
       exporter,
       reconnectToken,
-      reconnectCount
+      reconnectCount,
+      clientIp,
+      duplicateIpReported: false
     }
     this.students.set(req.studentId, record)
     // ส่ง JOIN_ACCEPTED ก่อนตั้ง session key ฝั่ง server:
@@ -467,6 +491,24 @@ export class ExamTlsServer {
   private rejectJoin(connection: SecureConnection, reason: string): void {
     connection.send(NetMsgType.joinRejected, { reason })
     connection.destroy()
+  }
+
+  /**
+   * ตรวจว่านักเรียนต่างคนกำลัง online จาก IP เดียวกันหรือไม่
+   * - เรียกหลัง join/resume สำเร็จเท่านั้น (คนแรกไม่ถูกแจ้ง)
+   * - คนที่มาทีหลังจะถูกแจ้งครั้งเดียวต่อ session (ไม่ spam)
+   */
+  private reportDuplicateClientIp(studentId: string, clientIp: string): void {
+    if (this.opts.detectDuplicateClientIp === false || clientIp === '') return
+    const record = this.students.get(studentId)
+    if (!record || record.duplicateIpReported) return
+    for (const other of this.students.values()) {
+      if (other.studentId === studentId || !other.online) continue
+      if (other.clientIp !== clientIp) continue
+      record.duplicateIpReported = true
+      this.opts.onDuplicateClientIp?.(studentId, other.studentId, clientIp)
+      return
+    }
   }
 
   private notifyStudentsChanged(): void {

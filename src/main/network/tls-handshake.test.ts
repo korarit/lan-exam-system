@@ -29,7 +29,12 @@ interface TestServer {
 
 async function startServer(
   pin: string,
-  extra: { roster?: readonly string[]; maxReconnectsPerStudent?: number } = {}
+  extra: {
+    roster?: readonly string[]
+    maxReconnectsPerStudent?: number
+    detectDuplicateClientIp?: boolean
+    onDuplicateClientIp?: (studentId: string, existingStudentId: string, ip: string) => void
+  } = {}
 ): Promise<TestServer> {
   const cert = await generateEphemeralCert()
   const server = new ExamTlsServer({
@@ -180,6 +185,78 @@ describe('TLS 1.3 + PIN handshake (integration)', () => {
       (err: unknown) => err instanceof JoinRejectedError && err.reason === 'not-on-roster'
     )
   })
+
+  it('detects two different students joining from the same source IP', async () => {
+    const pin = generateRoomPin()
+    const duplicates: Array<{ studentId: string; existingStudentId: string; ip: string }> = []
+    const { server, port } = await startServer(pin, {
+      onDuplicateClientIp: (studentId, existingStudentId, ip) =>
+        duplicates.push({ studentId, existingStudentId, ip })
+    })
+
+    const first = new ExamTlsClient({ onConnectionState: () => undefined })
+    CLEANUPS.push(() => first.stop())
+    await first.connect({
+      host: '127.0.0.1',
+      port,
+      roomId: ROOM_ID,
+      roomPin: pin,
+      studentId: 'std-ip-first',
+      studentName: 'คนแรก'
+    })
+
+    const second = new ExamTlsClient({ onConnectionState: () => undefined })
+    CLEANUPS.push(() => second.stop())
+    await second.connect({
+      host: '127.0.0.1',
+      port,
+      roomId: ROOM_ID,
+      roomPin: pin,
+      studentId: 'std-ip-second',
+      studentName: 'คนที่สอง'
+    })
+
+    expect(server.studentCount).toBe(2)
+    expect(duplicates).toEqual([
+      { studentId: 'std-ip-second', existingStudentId: 'std-ip-first', ip: '127.0.0.1' }
+    ])
+  }, 15000)
+
+  it('does not report a duplicate IP when the same student reconnects', async () => {
+    const pin = generateRoomPin()
+    const duplicates: Array<{ studentId: string; existingStudentId: string; ip: string }> = []
+    const { port } = await startServer(pin, {
+      onDuplicateClientIp: (studentId, existingStudentId, ip) =>
+        duplicates.push({ studentId, existingStudentId, ip })
+    })
+
+    const first = new ExamTlsClient({ onConnectionState: () => undefined })
+    CLEANUPS.push(() => first.stop())
+    const joined = await first.connect({
+      host: '127.0.0.1',
+      port,
+      roomId: ROOM_ID,
+      roomPin: pin,
+      studentId: 'std-ip-rejoin',
+      studentName: 'ผู้เรียนเดิม'
+    })
+    first.stop()
+    await wait(150)
+
+    const returning = new ExamTlsClient({ onConnectionState: () => undefined })
+    CLEANUPS.push(() => returning.stop())
+    await returning.connect({
+      host: '127.0.0.1',
+      port,
+      roomId: ROOM_ID,
+      roomPin: pin,
+      studentId: 'std-ip-rejoin',
+      studentName: 'ผู้เรียนเดิม',
+      reconnectToken: joined.reconnectToken
+    })
+
+    expect(duplicates).toHaveLength(0)
+  }, 15000)
 
   it('caps the number of reconnects per student', async () => {
     const pin = generateRoomPin()

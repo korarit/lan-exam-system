@@ -43,6 +43,10 @@ export interface HostRoomManagerOptions {
   roster?: readonly string[]
   /** จำนวน reconnect สูงสุดต่อคน (0 = ไม่จำกัด) */
   maxReconnectsPerStudent?: number
+  /** ตรวจจับนักเรียนต่างคนที่ต่อจาก IP เดียวกัน (default true) */
+  detectDuplicateClientIp?: boolean
+  /** แจ้งเมื่อพบนักเรียน 2 คน online จาก IP เดียวกัน (เครื่องเดียวกัน) */
+  onDuplicateClientIp?: (studentId: string, existingStudentId: string, ip: string) => void
   onStudentsChanged: (students: HostStudentStatus[]) => void
   onRoomClosed?: () => void
   onAnomaly?: (source: string | null, reason: string) => void
@@ -113,6 +117,12 @@ export class HostRoomManager extends EventEmitter {
       ...(this.opts.roster !== undefined ? { roster: this.opts.roster } : {}),
       ...(this.opts.maxReconnectsPerStudent !== undefined
         ? { maxReconnectsPerStudent: this.opts.maxReconnectsPerStudent }
+        : {}),
+      ...(this.opts.detectDuplicateClientIp !== undefined
+        ? { detectDuplicateClientIp: this.opts.detectDuplicateClientIp }
+        : {}),
+      ...(this.opts.onDuplicateClientIp !== undefined
+        ? { onDuplicateClientIp: this.opts.onDuplicateClientIp }
         : {}),
       onStudentsChanged: (students) => {
         if (this.beacon) {

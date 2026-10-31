@@ -178,7 +178,7 @@ export class TriageService {
     return delivered
   }
 
-  setFrozen(studentId: string, frozen: boolean): boolean {
+  setFrozen(studentId: string, frozen: boolean, reason = ''): boolean {
     const roomId = this.activeRoomId
     if (!roomId) return false
     const tlsServer = this.opts.getRoom()?.tlsServerInstance
@@ -187,7 +187,7 @@ export class TriageService {
       tlsServer.sendToStudent(
         studentId,
         frozen ? NetMsgType.freezeExam : NetMsgType.unfreezeExam,
-        { frozen, reason: frozen ? 'ผู้คุมสอบสั่งแช่เครื่องชั่วคราว' : '' }
+        { frozen, reason: frozen ? reason || 'ผู้คุมสอบสั่งแช่เครื่องชั่วคราว' : '' }
       )
     }
     // อัปเดตสถานะในตาราง students (frozen ↔ taking)
@@ -204,7 +204,9 @@ export class TriageService {
       severity: 'normal',
       scoreDelta: 0,
       summaryText: frozen
-        ? 'ผู้คุมสอบสั่ง Freeze เครื่องนักเรียน'
+        ? reason
+          ? `Freeze อัตโนมัติ: ${reason}`
+          : 'ผู้คุมสอบสั่ง Freeze เครื่องนักเรียน'
         : 'ผู้คุมสอบปลด Freeze เครื่องนักเรียน',
       evidence: { targetStudentId: studentId, delivered }
     })
